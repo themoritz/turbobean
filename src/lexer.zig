@@ -1,30 +1,30 @@
 const std = @import("std");
 
-pub const Token = struct {
-    tag: Tag,
-    loc: Loc,
-
-    pub const Loc = struct {
-        start: usize,
-        end: usize,
-    };
-
-    pub const Tag = enum {
-        date,
-        number,
-        star,
-        bang,
-        string,
-        account,
-        currency,
-        invalid,
-        eof,
-    };
-};
-
 pub const Lexer = struct {
     buffer: [:0]const u8,
     index: usize,
+
+    pub const Token = struct {
+        tag: Tag,
+        loc: Loc,
+
+        pub const Loc = struct {
+            start: usize,
+            end: usize,
+        };
+
+        pub const Tag = enum {
+            date,
+            number,
+            star,
+            bang,
+            string,
+            account,
+            currency,
+            invalid,
+            eof,
+        };
+    };
 
     pub fn init(buffer: [:0]const u8) Lexer {
         return .{
@@ -68,7 +68,7 @@ pub const Lexer = struct {
                         continue :state .invalid;
                     }
                 },
-                ' ', '\n', '\t', '\r' => {
+                ' ', '\n', '\r' => {
                     self.index += 1;
                     result.loc.start = self.index;
                     continue :state .start;
@@ -77,13 +77,19 @@ pub const Lexer = struct {
                     result.tag = .string;
                     continue :state .string;
                 },
-                '0'...'9' => {
+                '-', '0'...'9' => {
                     result.tag = .number;
                     self.index += 1;
                     continue :state .int;
                 },
-                '*' => result.tag = .star,
-                '!' => result.tag = .bang,
+                '*' => {
+                    self.index += 1;
+                    result.tag = .star;
+                },
+                '!' => {
+                    self.index += 1;
+                    result.tag = .bang;
+                },
                 'A'...'Z' => {
                     result.tag = .currency;
                     self.index += 1;
@@ -204,9 +210,15 @@ test "lexer" {
     try testLex("Usd", &.{.account});
     try testLex("Assets:Checking", &.{.account});
     try testLex("Assets:Foo 100 USD", &.{ .account, .number, .currency });
+
+    try testLex(
+        \\ 2025-04-22 * "Buy coffee"
+        \\     Assets:Checking  -100.10 USD
+        \\     Expenses:Food
+    , &.{ .date, .star, .string, .account, .number, .currency, .account });
 }
 
-fn testLex(source: [:0]const u8, expected_tags: []const Token.Tag) !void {
+fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
     var lexer = Lexer.init(source);
     for (expected_tags) |tag| {
         const token = lexer.next();
