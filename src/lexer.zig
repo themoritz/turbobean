@@ -36,6 +36,9 @@ pub const Lexer = struct {
         start,
         invalid,
         string,
+        int,
+        date,
+        number,
     };
 
     pub fn next(self: *Lexer) Token {
@@ -62,19 +65,93 @@ pub const Lexer = struct {
                         continue :state .invalid;
                     }
                 },
+                ' ', '\n', '\t', '\r' => {
+                    self.index += 1;
+                    result.loc.start = self.index;
+                    continue :state .start;
+                },
                 '"' => {
                     result.tag = .string;
                     continue :state .string;
                 },
+                '0'...'9' => {
+                    result.tag = .number;
+                    self.index += 1;
+                    continue :state .int;
+                },
                 else => continue :state .invalid,
             },
+
             .invalid => result.tag = .invalid,
+
             .string => {
                 self.index += 1;
                 switch (self.buffer[self.index]) {
+                    0 => continue :state .invalid,
                     '"' => self.index += 1,
                     else => continue :state .string,
                 }
+            },
+
+            .int => switch (self.buffer[self.index]) {
+                '0'...'9' => {
+                    self.index += 1;
+                    continue :state .int;
+                },
+                '-' => {
+                    self.index += 1;
+                    // Make sure we're at 5th digit
+                    if (self.index - result.loc.start == 5) {
+                        result.tag = .date;
+                        continue :state .date;
+                    } else {
+                        continue :state .invalid;
+                    }
+                },
+                '.' => {
+                    self.index += 1;
+                    continue :state .number;
+                },
+                else => {},
+            },
+
+            .number => switch (self.buffer[self.index]) {
+                '0'...'9' => {
+                    self.index += 1;
+                    continue :state .number;
+                },
+                0, '\n', ' ', '\r' => {},
+                else => {
+                    continue :state .invalid;
+                },
+            },
+
+            .date => switch (self.buffer[self.index]) {
+                '0'...'9' => {
+                    self.index += 1;
+                    // Check valid positions of digits
+                    switch (self.index - result.loc.start) {
+                        6, 7, 9, 10 => continue :state .date,
+                        else => continue :state .invalid,
+                    }
+                },
+                '-' => {
+                    self.index += 1;
+                    // Check valid positions of hyphens
+                    switch (self.index - result.loc.start) {
+                        5, 8 => continue :state .date,
+                        else => continue :state .invalid,
+                    }
+                },
+                0, ' ', '\n', '\r' => {
+                    self.index += 1;
+                    // Check valid length
+                    switch (self.index - result.loc.start) {
+                        11 => {},
+                        else => continue :state .invalid,
+                    }
+                },
+                else => continue :state .invalid,
             },
         }
 
@@ -85,6 +162,11 @@ pub const Lexer = struct {
 
 test "lexer" {
     try testLex("\"foo\"", &.{.string});
+    try testLex("15", &.{.number});
+    try testLex("15.5", &.{.number});
+    try testLex("2014-15-20", &.{.date});
+    try testLex("5 1949-41-09", &.{ .number, .date });
+    try testLex("\"bar\" 12.1 4 2025-01-01", &.{ .string, .number, .number, .date });
 }
 
 fn testLex(source: [:0]const u8, expected_tags: []const Token.Tag) !void {
