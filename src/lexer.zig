@@ -154,9 +154,8 @@ pub const Lexer = struct {
                     }
                 },
                 0, ' ', '\n', '\r' => {
-                    self.index += 1;
                     // Check valid length
-                    switch (self.index - result.loc.start) {
+                    switch (self.index + 1 - result.loc.start) {
                         11 => {},
                         else => continue :state .invalid,
                     }
@@ -213,4 +212,8 @@ fn testLex(source: [:0]const u8, expected_tags: []const Token.Tag) !void {
         const token = lexer.next();
         try std.testing.expectEqual(tag, token.tag);
     }
+    const last_token = lexer.next();
+    try std.testing.expectEqual(last_token.tag, .eof);
+    try std.testing.expectEqual(source.len, last_token.loc.start);
+    try std.testing.expectEqual(source.len, last_token.loc.end);
 }
