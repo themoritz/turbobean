@@ -13,9 +13,10 @@ pub const Token = struct {
         date,
         number,
         star,
+        bang,
         string,
-        colon,
-        identifier,
+        account,
+        currency,
         invalid,
         eof,
     };
@@ -39,6 +40,8 @@ pub const Lexer = struct {
         int,
         date,
         number,
+        account,
+        currency,
     };
 
     pub fn next(self: *Lexer) Token {
@@ -78,6 +81,13 @@ pub const Lexer = struct {
                     result.tag = .number;
                     self.index += 1;
                     continue :state .int;
+                },
+                '*' => result.tag = .star,
+                '!' => result.tag = .bang,
+                'A'...'Z' => {
+                    result.tag = .currency;
+                    self.index += 1;
+                    continue :state .currency;
                 },
                 else => continue :state .invalid,
             },
@@ -153,6 +163,29 @@ pub const Lexer = struct {
                 },
                 else => continue :state .invalid,
             },
+
+            .currency => switch (self.buffer[self.index]) {
+                'A'...'Z' => {
+                    self.index += 1;
+                    continue :state .currency;
+                },
+                'a'...'z', ':' => {
+                    result.tag = .account;
+                    self.index += 1;
+                    continue :state .account;
+                },
+                0, ' ', '\n', '\r' => {},
+                else => continue :state .invalid,
+            },
+
+            .account => switch (self.buffer[self.index]) {
+                'a'...'z', 'A'...'Z', '_', ':' => {
+                    self.index += 1;
+                    continue :state .account;
+                },
+                0, ' ', '\n', '\r' => {},
+                else => continue :state .invalid,
+            },
         }
 
         result.loc.end = self.index;
@@ -167,6 +200,11 @@ test "lexer" {
     try testLex("2014-15-20", &.{.date});
     try testLex("5 1949-41-09", &.{ .number, .date });
     try testLex("\"bar\" 12.1 4 2025-01-01", &.{ .string, .number, .number, .date });
+
+    try testLex("USD", &.{.currency});
+    try testLex("Usd", &.{.account});
+    try testLex("Assets:Checking", &.{.account});
+    try testLex("Assets:Foo 100 USD", &.{ .account, .number, .currency });
 }
 
 fn testLex(source: [:0]const u8, expected_tags: []const Token.Tag) !void {
