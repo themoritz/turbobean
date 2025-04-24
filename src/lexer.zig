@@ -98,7 +98,19 @@ pub const Lexer = struct {
                 else => continue :state .invalid,
             },
 
-            .invalid => result.tag = .invalid,
+            .invalid => {
+                self.index += 1;
+                switch (self.buffer[self.index]) {
+                    0 => if (self.index == self.buffer.len) {
+                        result.tag = .invalid;
+                    } else {
+                        continue :state .invalid;
+                    },
+                    // Recovers to parse a new token after newline.
+                    '\n' => result.tag = .invalid,
+                    else => continue :state .invalid,
+                }
+            },
 
             .string => {
                 self.index += 1;
@@ -210,6 +222,8 @@ test "lexer" {
     try testLex("Usd", &.{.account});
     try testLex("Assets:Checking", &.{.account});
     try testLex("Assets:Foo 100 USD", &.{ .account, .number, .currency });
+
+    try testLex("#", &.{.invalid});
 
     try testLex(
         \\ 2025-04-22 * "Buy coffee"

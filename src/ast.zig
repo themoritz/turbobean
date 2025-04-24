@@ -23,6 +23,8 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) !Ast {
     var tokens = TokenList{};
     defer tokens.deinit(gpa);
 
+    try tokens.ensureTotalCapacity(gpa, source.len / 8);
+
     var lexer = Lexer.init(source);
     while (true) {
         const token = lexer.next();
@@ -38,9 +40,15 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) !Ast {
         .tokens = tokens.slice(),
         .nodes = .{},
         .extra_data = .{},
+        .scratch = .{},
+        .token_index = 0,
+        .err = null,
     };
     defer parser.nodes.deinit(gpa);
     defer parser.extra_data.deinit(gpa);
+    defer parser.scratch.deinit(gpa);
+
+    try parser.nodes.ensureTotalCapacity(gpa, (tokens.len + 2) / 2);
 
     try parser.parseRoot();
 
@@ -54,8 +62,8 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) !Ast {
 
 pub fn deinit(ast: *Ast, gpa: Allocator) void {
     ast.tokens.deinit(gpa);
-    // ast.nodes.deinit(gpa);
-    // gpa.free(ast.extra_data);
+    ast.nodes.deinit(gpa);
+    gpa.free(ast.extra_data);
 }
 
 pub const Node = struct {
@@ -66,28 +74,30 @@ pub const Node = struct {
         root: ExtraRange,
         transaction: struct {
             date: TokenIndex,
-            status: TokenIndex,
+            flag: TokenIndex,
             message: TokenIndex,
             legs: ExtraRange,
         },
         leg: struct {
             account: TokenIndex,
-            amount: ?NodeIndex,
-        },
-        amount: struct {
-            amount: TokenIndex,
-            currency: TokenIndex,
+            amount: ?TokenIndex,
+            currency: ?TokenIndex,
         },
     };
 
     pub const ExtraRange = struct {
         start: ExtraIndex,
+        /// Exclusive
         end: ExtraIndex,
     };
 };
 
-test {
-    const gpa = std.testing.allocator;
-    var ast = try Ast.parse(gpa, "100");
-    defer ast.deinit(gpa);
-}
+pub const Error = struct {
+    tag: Tag,
+    token: TokenIndex,
+    expected: ?Lexer.Token.Tag,
+
+    pub const Tag = enum {
+        expected_token,
+    };
+};
