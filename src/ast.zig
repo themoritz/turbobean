@@ -17,7 +17,7 @@ pub const ByteOffset = u32;
 
 pub const ExtraData = std.ArrayListUnmanaged(u32);
 pub const NodeList = std.MultiArrayList(Node);
-pub const TokenList = std.MultiArrayList(struct { tag: Lexer.Token.Tag, start: ByteOffset });
+pub const TokenList = std.MultiArrayList(struct { tag: Lexer.Token.Tag, start: ByteOffset, end: ByteOffset });
 
 pub fn parse(gpa: Allocator, source: [:0]const u8) !Ast {
     var tokens = TokenList{};
@@ -31,6 +31,7 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) !Ast {
         try tokens.append(gpa, .{
             .tag = token.tag,
             .start = @intCast(token.loc.start),
+            .end = @intCast(token.loc.end),
         });
         if (token.tag == .eof) break;
     }

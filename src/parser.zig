@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const Ast = @import("ast.zig");
 const Parser = @This();
 const Lexer = @import("lexer.zig").Lexer;
+const Render = @import("render.zig");
 
 pub const Error = error{ParseError} || Allocator.Error;
 
@@ -126,6 +127,7 @@ fn expectTransaction(p: *Parser) !Ast.NodeIndex {
     return self;
 }
 
+/// flag <- * | !
 fn parseFlag(p: *Parser) !Ast.TokenIndex {
     if (p.tryToken(.bang)) |t| {
         return t;
@@ -158,14 +160,33 @@ test "parser" {
         \\  Foo 100 USD
         \\  Bar -2 EUR
     );
+
+    try testParse(
+        \\2024-93-01 * "Foo"
+    );
+
+    try testParse(
+        \\2015-01-01 * ""
+        \\  Aa 10 USD
+        \\  Ba 30 USD
+        \\
+        \\2016-01-01 * ""
+        \\  Ca 10 USD
+        \\  Da 20 USD
+    );
 }
 
 fn testParse(source: [:0]const u8) !void {
     const gpa = std.testing.allocator;
+
     var ast = try Ast.parse(gpa, source);
-    std.debug.print("Tokens: {any}\n", .{ast.tokens.items(.tag)});
-    std.debug.print("Node tokens: {any}\n", .{ast.nodes.items(.token)});
-    std.debug.print("Extra data: {any}\n", .{ast.extra_data});
-    std.debug.print("Node data: {any}\n", .{ast.nodes.items(.data)});
     defer ast.deinit(gpa);
+
+    // const pretty = @import("pretty.zig");
+    // try pretty.print(gpa, ast.tokens.items(.tag), .{});
+
+    const rendered = try Render.dump(gpa, &ast);
+    defer gpa.free(rendered);
+
+    try std.testing.expectEqualSlices(u8, source, rendered);
 }

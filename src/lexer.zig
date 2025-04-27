@@ -74,6 +74,7 @@ pub const Lexer = struct {
                     continue :state .start;
                 },
                 '"' => {
+                    self.index += 1;
                     result.tag = .string;
                     continue :state .string;
                 },
@@ -113,11 +114,13 @@ pub const Lexer = struct {
             },
 
             .string => {
-                self.index += 1;
                 switch (self.buffer[self.index]) {
                     0 => continue :state .invalid,
                     '"' => self.index += 1,
-                    else => continue :state .string,
+                    else => {
+                        self.index += 1;
+                        continue :state .string;
+                    },
                 }
             },
 
@@ -211,6 +214,8 @@ pub const Lexer = struct {
 };
 
 test "lexer" {
+    try testLex("\"\"", &.{.string});
+    try testLex("\"\" Au", &.{ .string, .account });
     try testLex("\"foo\"", &.{.string});
     try testLex("15", &.{.number});
     try testLex("15.5", &.{.number});
