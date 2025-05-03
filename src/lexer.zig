@@ -4,6 +4,10 @@ pub const Lexer = struct {
     buffer: [:0]const u8,
     index: usize,
 
+    pub fn token_slice(lexer: *Lexer, token: *const Token) []const u8 {
+        return lexer.buffer[token.loc.start..token.loc.end];
+    }
+
     pub const Token = struct {
         tag: Tag,
         loc: Loc,

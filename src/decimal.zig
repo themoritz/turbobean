@@ -1,10 +1,11 @@
 const std = @import("std");
+const ParseFloatError = std.fmt.ParseFloatError;
 
 const SCALE_FACTOR = 10000; // 4 decimal places (e.g., 1.2345 stored as 12345)
 const MAX_DIGITS = 18; // Maximum digits before decimal point to prevent overflow
 
 // Decimal struct to hold the value
-const Decimal = struct {
+pub const Decimal = struct {
     value: i64,
 
     pub fn fromFloat(f: f64) Decimal {
@@ -14,6 +15,10 @@ const Decimal = struct {
 
     pub fn fromInt(i: i64) Decimal {
         return Decimal{ .value = i * SCALE_FACTOR };
+    }
+
+    pub fn fromSlice(bytes: []const u8) ParseFloatError!Decimal {
+        return fromFloat(try std.fmt.parseFloat(f64, bytes));
     }
 
     pub fn toFloat(self: Decimal) f64 {
@@ -44,9 +49,17 @@ const Decimal = struct {
         const float_val = self.toFloat();
         return std.fmt.allocPrint(allocator, "{d:.4}", .{float_val});
     }
+
+    pub fn format(self: Decimal, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try std.fmt.format(writer, "{d:.4}", .{self.toFloat()});
+    }
 };
 
 test Decimal {
+    try std.testing.expectEqual(Decimal.fromFloat(1.13), try Decimal.fromSlice("1.13"));
+
     const a = Decimal.fromFloat(1.2345);
     const b = Decimal.fromFloat(2.3456);
 

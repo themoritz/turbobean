@@ -1,192 +1,178 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Ast = @import("ast.zig");
-const Parser = @This();
+const Data = @import("data.zig");
+const Date = @import("date.zig").Date;
+const Self = @This();
 const Lexer = @import("lexer.zig").Lexer;
-const Render = @import("render.zig");
+const Decimal = @import("decimal.zig").Decimal;
 
-pub const Error = error{ParseError} || Allocator.Error;
+pub const Error = error{ ParseError, InvalidCharacter } || Allocator.Error;
 
 gpa: Allocator,
-tokens: Ast.TokenList.Slice,
-nodes: Ast.NodeList,
-extra_data: Ast.ExtraData,
-scratch: std.ArrayListUnmanaged(Ast.NodeIndex),
-token_index: u32,
-err: ?Ast.Error,
+lexer: *Lexer,
+directives: Data.Directives,
+legs: Data.Legs,
+err: ?ErrorDetails,
+current_token: Lexer.Token,
 
-/// Returns index of previous token.
-fn nextToken(p: *Parser) Ast.TokenIndex {
-    const result = p.token_index;
-    p.token_index += 1;
+pub const ErrorDetails = struct {
+    tag: Tag,
+    token: Lexer.Token,
+    expected: ?Lexer.Token.Tag,
+
+    pub const Tag = enum {
+        expected_token,
+    };
+};
+
+fn addLeg(p: *Self, leg: Data.Leg) !usize {
+    const result = p.legs.len;
+    try p.legs.append(p.gpa, leg);
     return result;
 }
 
-fn currentToken(p: *Parser) Lexer.Token.Tag {
-    return p.tokens.items(.tag)[p.token_index];
+fn addDirective(p: *Self, directive: Data.Directive) !usize {
+    const result = p.directives.items.len;
+    try p.directives.append(directive);
+    return result;
 }
 
-fn addNode(p: *Parser, node: Ast.Node) !Ast.NodeIndex {
-    const result = p.nodes.len;
-    try p.nodes.append(p.gpa, node);
-    return @intCast(result);
+/// Advances the lexer and stores the next token in `current_token`.
+/// Returns the previous token.
+fn advanceToken(p: *Self) Lexer.Token {
+    const result = p.current_token;
+    p.current_token = p.lexer.next();
+    return result;
 }
 
-fn setNode(p: *Parser, i: Ast.NodeIndex, node: Ast.Node) Ast.NodeIndex {
-    p.nodes.set(@intCast(i), node);
-    return i;
+fn currentToken(p: *Self) Lexer.Token {
+    return p.current_token;
 }
 
-fn reserveNode(p: *Parser) !Ast.NodeIndex {
-    try p.nodes.resize(p.gpa, p.nodes.len + 1);
-    return @intCast(p.nodes.len - 1);
-}
-
-fn setError(p: *Parser, err: Ast.Error) void {
-    p.err = err;
-}
-
-fn storeNewItems(p: *Parser, new_items: []const Ast.NodeIndex) !Ast.Node.ExtraRange {
-    try p.extra_data.appendSlice(p.gpa, @ptrCast(new_items));
-    return .{
-        .start = @intCast(p.extra_data.items.len - new_items.len),
-        .end = @intCast(p.extra_data.items.len),
-    };
-}
-
-/// If successful, returns the current token index.
-fn expectToken(p: *Parser, tag: Lexer.Token.Tag) Error!Ast.TokenIndex {
+/// If successful, returns the token looked for and advances
+/// the lexer.
+fn expectToken(p: *Self, tag: Lexer.Token.Tag) Error!Lexer.Token {
     const current = p.currentToken();
-    if (current != tag) {
-        p.setError(.{
+    if (current.tag != tag) {
+        p.err = .{
             .tag = .expected_token,
-            .token = p.token_index,
+            .token = current,
             .expected = tag,
-        });
+        };
         return error.ParseError;
     } else {
-        return p.nextToken();
+        return p.advanceToken();
     }
 }
 
-fn tryToken(p: *Parser, tag: Lexer.Token.Tag) ?Ast.TokenIndex {
-    if (p.currentToken() != tag) {
-        return null;
+fn expectTokenSlice(p: *Self, tag: Lexer.Token.Tag) Error![]const u8 {
+    const token = try p.expectToken(tag);
+    return p.lexer.token_slice(&token);
+}
+
+/// If successful, returns the token looked for and advances the
+/// lexer.
+fn tryToken(p: *Self, tag: Lexer.Token.Tag) ?Lexer.Token {
+    if (p.currentToken().tag == tag) {
+        return p.advanceToken();
     } else {
-        return p.nextToken();
+        return null;
     }
 }
 
-pub fn parseRoot(p: *Parser) !void {
-    const scratch_top = p.scratch.items.len;
-    defer p.scratch.shrinkRetainingCapacity(scratch_top);
-
-    p.nodes.appendAssumeCapacity(.{
-        .token = 0,
-        .data = undefined,
-    });
-
+pub fn parse(p: *Self) !void {
     while (true) {
-        const tx = p.expectTransaction() catch |err| switch (err) {
-            error.ParseError => break,
+        _ = p.parseDirective() catch |err| switch (err) {
+            error.ParseError => {
+                // std.debug.print("{any}\n", .{p.err});
+                break;
+            },
             else => return err,
         };
-        try p.scratch.append(p.gpa, tx);
     }
-    const items = p.scratch.items[scratch_top..];
-    p.nodes.items(.data)[0] = .{ .root = try p.storeNewItems(items) };
 }
 
-/// tx <- date status message (leg)*
-fn expectTransaction(p: *Parser) !Ast.NodeIndex {
-    const scratch_top = p.scratch.items.len;
-    defer p.scratch.shrinkRetainingCapacity(scratch_top);
-
-    const date = try p.expectToken(.date);
+/// Returns index of newly parsed directive in directives array.
+fn parseDirective(p: *Self) !usize {
+    const date_slice = try p.expectTokenSlice(.date);
+    const date = try Date.fromSlice(date_slice);
     const flag = try p.parseFlag();
-    const msg = try p.expectToken(.string);
-    const self = try p.reserveNode(); // Before children
+    const msg = try p.expectTokenSlice(.string);
 
+    const legs_top = p.legs.len;
     while (true) {
-        const leg = p.parseLeg() catch |err| switch (err) {
+        _ = p.parseLeg() catch |err| switch (err) {
             error.ParseError => break,
             else => return err,
         };
-        try p.scratch.append(p.gpa, leg);
     }
-    const items = p.scratch.items[scratch_top..];
-
-    const node = Ast.Node{ .token = date, .data = .{ .transaction = .{
-        .date = date,
-        .flag = flag,
-        .message = msg,
-        .legs = try p.storeNewItems(items),
+    const directive = Data.Directive{ .transaction = .{ .date = date, .flag = flag, .message = msg, .legs = .{
+        .start = legs_top,
+        .end = p.legs.len,
     } } };
 
-    _ = p.setNode(self, node);
-    return self;
+    return p.addDirective(directive);
 }
 
-/// flag <- * | !
-fn parseFlag(p: *Parser) !Ast.TokenIndex {
-    if (p.tryToken(.bang)) |t| {
-        return t;
+fn parseFlag(p: *Self) !Data.Flag {
+    if (p.tryToken(.bang)) |_| {
+        return .bang;
     } else {
-        return p.expectToken(.star);
+        _ = try p.expectToken(.star);
+        return .star;
     }
 }
 
-/// leg <- account amount currency
-fn parseLeg(p: *Parser) Error!Ast.NodeIndex {
-    // TODO: Commit to this after seeing indentation.
-    const account = try p.expectToken(.account);
-    const amount = try p.expectToken(.number);
-    const currency = try p.expectToken(.currency);
-    const node = Ast.Node{
-        .token = account,
-        .data = .{ .leg = .{
-            .account = account,
-            .amount = amount,
-            .currency = currency,
-        } },
+fn parseLeg(p: *Self) Error!usize {
+    const account = try p.expectTokenSlice(.account);
+    const amount_slice = try p.expectTokenSlice(.number);
+    const amount = try Decimal.fromSlice(amount_slice);
+    const currency = try p.expectTokenSlice(.currency);
+
+    const leg = Data.Leg{
+        .account = account,
+        .amount = amount,
+        .currency = currency,
     };
 
-    return try p.addNode(node);
+    return p.addLeg(leg);
 }
 
 test "parser" {
     try testParse(
         \\2015-11-01 * "Test"
-        \\  Foo 100 USD
-        \\  Bar -2 EUR
+        \\  Foo 100.0000 USD
+        \\  Bar -2.0000 EUR
     );
 
     try testParse(
-        \\2024-93-01 * "Foo"
+        \\2024-12-01 * "Foo"
     );
 
     try testParse(
         \\2015-01-01 * ""
-        \\  Aa 10 USD
-        \\  Ba 30 USD
+        \\  Aa 10.0000 USD
+        \\  Ba 30.0000 USD
         \\
         \\2016-01-01 * ""
-        \\  Ca 10 USD
-        \\  Da 20 USD
+        \\  Ca 10.0000 USD
+        \\  Da 20.0000 USD
     );
 }
 
 fn testParse(source: [:0]const u8) !void {
-    const gpa = std.testing.allocator;
+    const alloc = std.testing.allocator;
 
-    var ast = try Ast.parse(gpa, source);
-    defer ast.deinit(gpa);
+    var data = try Data.parse(alloc, source);
+    defer data.deinit(alloc);
 
     // const pretty = @import("pretty.zig");
-    // try pretty.print(gpa, ast.tokens.items(.tag), .{});
+    // try pretty.print(alloc, data.directives, .{});
+    // try pretty.print(alloc, data.legs.items(.amount), .{});
 
-    const rendered = try Render.dump(gpa, &ast);
-    defer gpa.free(rendered);
+    const Render = @import("render.zig");
+    const rendered = try Render.dump(alloc, &data);
+    defer alloc.free(rendered);
 
     try std.testing.expectEqualSlices(u8, source, rendered);
 }
