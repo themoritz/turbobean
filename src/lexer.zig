@@ -91,6 +91,8 @@ pub const Lexer = struct {
         number,
         account,
         currency,
+        /// For special characters in the middle. Can't end on this.
+        currency_special,
         keyword,
         comment,
     };
@@ -159,16 +161,19 @@ pub const Lexer = struct {
             },
 
             .invalid => {
-                self.index += 1;
                 switch (self.buffer[self.index]) {
                     0 => if (self.index == self.buffer.len) {
                         result.tag = .invalid;
                     } else {
+                        self.index += 1;
                         continue :state .invalid;
                     },
                     // Recovers to parse a new token after newline.
                     '\n' => result.tag = .invalid,
-                    else => continue :state .invalid,
+                    else => {
+                        self.index += 1;
+                        continue :state .invalid;
+                    },
                 }
             },
 
@@ -244,9 +249,13 @@ pub const Lexer = struct {
             },
 
             .currency => switch (self.buffer[self.index]) {
-                'A'...'Z' => {
+                'A'...'Z', '0'...'9' => {
                     self.index += 1;
                     continue :state .currency;
+                },
+                '\'', '.', '_', '-' => {
+                    self.index += 1;
+                    continue :state .currency_special;
                 },
                 'a'...'z', ':' => {
                     result.tag = .account;
@@ -254,6 +263,18 @@ pub const Lexer = struct {
                     continue :state .account;
                 },
                 0, ' ', '\n', '\r' => {},
+                else => continue :state .invalid,
+            },
+
+            .currency_special => switch (self.buffer[self.index]) {
+                'A'...'Z', '0'...'9' => {
+                    self.index += 1;
+                    continue :state .currency;
+                },
+                '\'', '.', '_', '-' => {
+                    self.index += 1;
+                    continue :state .currency_special;
+                },
                 else => continue :state .invalid,
             },
 
@@ -319,6 +340,15 @@ test "lexer" {
         \\     Assets:Checking  -100.10 USD
         \\     Expenses:Food
     , &.{ .date, .star, .string, .account, .number, .currency, .account });
+}
+
+test "currency" {
+    try testLex("EUR", &.{.currency});
+    try testLex("E.R", &.{.currency});
+    try testLex("EUR.1", &.{.currency});
+    try testLex("EUR.", &.{.invalid});
+    try testLex("_EUR.", &.{.invalid});
+    try testLex("E*R", &.{.invalid});
 }
 
 test "keywords" {
