@@ -17,6 +17,32 @@ pub const Lexer = struct {
             end: usize,
         };
 
+        pub const keywords = std.StaticStringMap(Tag).initComptime(.{
+            .{ "txn", .keyword_txn },
+            .{ "balance", .keyword_balance },
+            .{ "open", .keyword_open },
+            .{ "close", .keyword_close },
+            .{ "commodity", .keyword_commodity },
+            .{ "pad", .keyword_pad },
+            .{ "event", .keyword_event },
+            .{ "query", .keyword_query },
+            .{ "custom", .keyword_custom },
+            .{ "price", .keyword_price },
+            .{ "note", .keyword_note },
+            .{ "document", .keyword_document },
+            .{ "pushtag", .keyword_pushtag },
+            .{ "poptag", .keyword_poptag },
+            .{ "pushmeta", .keyword_pushmeta },
+            .{ "popmeta", .keyword_popmeta },
+            .{ "option", .keyword_option },
+            .{ "plugin", .keyword_plugin },
+            .{ "include", .keyword_include },
+        });
+
+        pub fn getKeyword(bytes: []const u8) ?Tag {
+            return keywords.get(bytes);
+        }
+
         pub const Tag = enum {
             date,
             number,
@@ -25,6 +51,25 @@ pub const Lexer = struct {
             string,
             account,
             currency,
+            keyword_txn,
+            keyword_balance,
+            keyword_open,
+            keyword_close,
+            keyword_commodity,
+            keyword_pad,
+            keyword_event,
+            keyword_query,
+            keyword_custom,
+            keyword_price,
+            keyword_note,
+            keyword_document,
+            keyword_pushtag,
+            keyword_poptag,
+            keyword_pushmeta,
+            keyword_popmeta,
+            keyword_option,
+            keyword_plugin,
+            keyword_include,
             invalid,
             eof,
         };
@@ -46,6 +91,8 @@ pub const Lexer = struct {
         number,
         account,
         currency,
+        keyword,
+        comment,
     };
 
     pub fn next(self: *Lexer) Token {
@@ -99,6 +146,14 @@ pub const Lexer = struct {
                     result.tag = .currency;
                     self.index += 1;
                     continue :state .currency;
+                },
+                'a'...'z' => {
+                    self.index += 1;
+                    continue :state .keyword;
+                },
+                ';' => {
+                    self.index += 1;
+                    continue :state .comment;
                 },
                 else => continue :state .invalid,
             },
@@ -210,6 +265,30 @@ pub const Lexer = struct {
                 0, ' ', '\n', '\r' => {},
                 else => continue :state .invalid,
             },
+
+            .keyword => switch (self.buffer[self.index]) {
+                'a'...'z' => {
+                    self.index += 1;
+                    continue :state .keyword;
+                },
+                0, ' ', '\n', '\r' => {
+                    const keyword = self.buffer[result.loc.start..self.index];
+                    if (Token.getKeyword(keyword)) |tag| {
+                        result.tag = tag;
+                    } else {
+                        continue :state .invalid;
+                    }
+                },
+                else => continue :state .invalid,
+            },
+
+            .comment => switch (self.buffer[self.index]) {
+                0, '\n', '\r' => continue :state .start,
+                else => {
+                    self.index += 1;
+                    continue :state .comment;
+                },
+            },
         }
 
         result.loc.end = self.index;
@@ -218,6 +297,7 @@ pub const Lexer = struct {
 };
 
 test "lexer" {
+    try testLex("\"café 😊\"", &.{.string});
     try testLex("\"\"", &.{.string});
     try testLex("\"\" Au", &.{ .string, .account });
     try testLex("\"foo\"", &.{.string});
@@ -239,6 +319,20 @@ test "lexer" {
         \\     Assets:Checking  -100.10 USD
         \\     Expenses:Food
     , &.{ .date, .star, .string, .account, .number, .currency, .account });
+}
+
+test "keywords" {
+    try testLex("open", &.{.keyword_open});
+    try testLex("close", &.{.keyword_close});
+    try testLex("pad 15", &.{ .keyword_pad, .number });
+}
+
+test "comments" {
+    try testLex("10 ; number", &.{.number});
+    try testLex(
+        \\; Blah
+        \\2015-01-01
+    , &.{.date});
 }
 
 fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
