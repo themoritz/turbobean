@@ -51,6 +51,8 @@ pub const Lexer = struct {
             string,
             account,
             currency,
+            eol,
+            indent,
             keyword_txn,
             keyword_balance,
             keyword_open,
@@ -121,7 +123,11 @@ pub const Lexer = struct {
                         continue :state .invalid;
                     }
                 },
-                ' ', '\n', '\r' => {
+                '\n' => {
+                    self.index += 1;
+                    result.tag = .eol;
+                },
+                ' ', '\t' => {
                     self.index += 1;
                     result.loc.start = self.index;
                     continue :state .start;
@@ -215,7 +221,7 @@ pub const Lexer = struct {
                     self.index += 1;
                     continue :state .number;
                 },
-                0, '\n', ' ', '\r' => {},
+                0, '\n', ' ' => {},
                 else => {
                     continue :state .invalid;
                 },
@@ -238,7 +244,7 @@ pub const Lexer = struct {
                         else => continue :state .invalid,
                     }
                 },
-                0, ' ', '\n', '\r' => {
+                0, ' ', '\n' => {
                     // Check valid length
                     switch (self.index + 1 - result.loc.start) {
                         11 => {},
@@ -262,10 +268,11 @@ pub const Lexer = struct {
                     self.index += 1;
                     continue :state .account;
                 },
-                0, ' ', '\n', '\r' => {},
+                0, ' ', '\n' => {},
                 else => continue :state .invalid,
             },
 
+            // TODO: Only max 22 of these according to beancount spec.
             .currency_special => switch (self.buffer[self.index]) {
                 'A'...'Z', '0'...'9' => {
                     self.index += 1;
@@ -283,7 +290,7 @@ pub const Lexer = struct {
                     self.index += 1;
                     continue :state .account;
                 },
-                0, ' ', '\n', '\r' => {},
+                0, ' ', '\n' => {},
                 else => continue :state .invalid,
             },
 
@@ -292,7 +299,7 @@ pub const Lexer = struct {
                     self.index += 1;
                     continue :state .keyword;
                 },
-                0, ' ', '\n', '\r' => {
+                0, ' ', '\n' => {
                     const keyword = self.buffer[result.loc.start..self.index];
                     if (Token.getKeyword(keyword)) |tag| {
                         result.tag = tag;
@@ -304,7 +311,12 @@ pub const Lexer = struct {
             },
 
             .comment => switch (self.buffer[self.index]) {
-                0, '\n', '\r' => continue :state .start,
+                0 => continue :state .start,
+                '\n' => {
+                    self.index += 1;
+                    result.loc.start = self.index;
+                    continue :state .start;
+                },
                 else => {
                     self.index += 1;
                     continue :state .comment;
@@ -339,7 +351,7 @@ test "lexer" {
         \\ 2025-04-22 * "Buy coffee"
         \\     Assets:Checking  -100.10 USD
         \\     Expenses:Food
-    , &.{ .date, .star, .string, .account, .number, .currency, .account });
+    , &.{ .date, .star, .string, .eol, .account, .number, .currency, .eol, .account });
 }
 
 test "currency" {

@@ -98,6 +98,7 @@ fn parseDirective(p: *Self) !usize {
     const date = try Date.fromSlice(date_slice);
     const flag = try p.parseFlag();
     const msg = try p.expectTokenSlice(.string);
+    _ = p.tryToken(.eol);
 
     const legs_top = p.legs.len;
     while (true) {
@@ -110,6 +111,8 @@ fn parseDirective(p: *Self) !usize {
         .start = legs_top,
         .end = p.legs.len,
     } } };
+
+    _ = p.tryToken(.eol);
 
     return p.addDirective(directive);
 }
@@ -128,6 +131,7 @@ fn parseLeg(p: *Self) Error!usize {
     const amount_slice = try p.expectTokenSlice(.number);
     const amount = try Decimal.fromSlice(amount_slice);
     const currency = try p.expectTokenSlice(.currency);
+    _ = p.tryToken(.eol);
 
     const leg = Data.Leg{
         .account = account,
