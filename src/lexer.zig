@@ -45,6 +45,16 @@ pub const Lexer = struct {
             return keywords.get(bytes);
         }
 
+        pub const literals = std.StaticStringMap(Tag).initComptime(.{
+            .{ "TRUE", .true },
+            .{ "FALSE", .false },
+            .{ "NULL", .none },
+        });
+
+        pub fn getLiteral(bytes: []const u8) ?Tag {
+            return literals.get(bytes);
+        }
+
         pub const Tag = enum {
             date,
             number,
@@ -59,7 +69,23 @@ pub const Lexer = struct {
             eol,
             indent,
 
+            pipe,
+            atat,
+            at,
+            lcurllcurl,
+            rcurlrcurl,
+            lcurl,
+            rcurl,
+            comma,
+            tilde,
+            plus,
+            minus,
+            slash,
+            lparen,
+            rparen,
+            hash,
             asterisk,
+            colon,
 
             keyword_txn,
             keyword_balance,
@@ -80,6 +106,10 @@ pub const Lexer = struct {
             keyword_option,
             keyword_plugin,
             keyword_include,
+
+            true,
+            false,
+            none,
 
             invalid,
             eof,
@@ -115,6 +145,10 @@ pub const Lexer = struct {
         indent,
         flag,
         flag_special,
+        at,
+        lcurl,
+        rcurl,
+        minus,
     };
 
     /// Consumes one unicode code point if it is encoded properly. If not
@@ -214,14 +248,63 @@ pub const Lexer = struct {
                     result.tag = .string;
                     continue :state .string;
                 },
-                '-', '0'...'9' => {
+                '0'...'9' => {
                     self.consume();
                     result.tag = .number;
                     continue :state .int;
                 },
+                '|' => {
+                    self.consume();
+                    result.tag = .pipe;
+                },
+                '@' => {
+                    self.consume();
+                    continue :state .at;
+                },
+                '{' => {
+                    self.consume();
+                    continue :state .lcurl;
+                },
+                '}' => {
+                    self.consume();
+                    continue :state .rcurl;
+                },
+                ',' => {
+                    self.consume();
+                    result.tag = .comma;
+                },
+                '~' => {
+                    self.consume();
+                    result.tag = .tilde;
+                },
+                '+' => {
+                    self.consume();
+                    result.tag = .plus;
+                },
+                '-' => {
+                    self.consume();
+                    continue :state .minus;
+                },
+                '/' => {
+                    self.consume();
+                    result.tag = .slash;
+                },
+                '(' => {
+                    self.consume();
+                    result.tag = .lparen;
+                },
+                ')' => {
+                    self.consume();
+                    result.tag = .rparen;
+                },
+                // TODO: Hash?
                 '*' => {
                     self.consume();
                     result.tag = .asterisk;
+                },
+                ':' => {
+                    self.consume();
+                    result.tag = .colon;
                 },
                 '#' => {
                     self.consume();
@@ -394,6 +477,41 @@ pub const Lexer = struct {
                 else => continue :state .invalid,
             },
 
+            .at => switch (self.current()) {
+                '@' => {
+                    self.consume();
+                    result.tag = .atat;
+                },
+                else => result.tag = .at,
+            },
+
+            .lcurl => switch (self.current()) {
+                '{' => {
+                    self.consume();
+                    result.tag = .lcurllcurl;
+                },
+                else => result.tag = .lcurl,
+            },
+
+            .rcurl => switch (self.current()) {
+                '}' => {
+                    self.consume();
+                    result.tag = .rcurlrcurl;
+                },
+                else => result.tag = .rcurl,
+            },
+
+            .minus => switch (self.current()) {
+                '0'...'9' => {
+                    self.consume();
+                    result.tag = .number;
+                    continue :state .int;
+                },
+                else => {
+                    result.tag = .minus;
+                },
+            },
+
             .saw_hash => switch (self.current()) {
                 'A'...'Z', 'a'...'z', '0'...'9', '-', '_', '/', '.' => {
                     self.consume();
@@ -437,7 +555,17 @@ pub const Lexer = struct {
                     result.tag = .account;
                     continue :state .account;
                 },
-                0, ' ', '\t', '\n' => {},
+                0, ' ', '\t', '\n' => {
+                    // Check for TRUE, FALSE, NULL here since they look like currency symbols.
+                    const literal = self.buffer[result.loc.start..self.index];
+                    if (Token.getLiteral(literal)) |tag| {
+                        result.tag = tag;
+                    }
+                    // Check at most 24 (22 middle + start + end) chars
+                    if (self.index - result.loc.start > 24) {
+                        continue :state .invalid;
+                    }
+                },
                 else => continue :state .invalid,
             },
 
@@ -515,7 +643,7 @@ pub const Lexer = struct {
                     }
                 },
                 ':' => {
-                    self.consume();
+                    // Don't consume so that we can match the : as a `.colon`.
                     result.tag = .key;
                 },
                 else => continue :state .invalid,
@@ -541,7 +669,7 @@ pub const Lexer = struct {
     }
 };
 
-test "lexer" {
+test "combined" {
     try testLex("\"café 😊\"", &.{.string});
     try testLex("\"\"", &.{.string});
     try testLex("\"\" Au", &.{ .string, .account });
@@ -588,12 +716,16 @@ test "currency" {
     try testLex("EUR.", &.{.invalid});
     try testLex("_EUR.", &.{.invalid});
     try testLex("E*R", &.{.invalid});
+    try testLex("ABCDEFGHIJKLMNOPQRSTUVWX", &.{.currency});
+    try testLex("ABCDEFGHIJKLMNOPQRSTUVWXY", &.{.invalid});
 }
 
 test "keywords" {
     try testLex("open", &.{.keyword_open});
     try testLex("close", &.{.keyword_close});
     try testLex("pad 15", &.{ .keyword_pad, .number });
+
+    try testLex("TRUE FALSE NULL", &.{ .true, .false, .none });
 }
 
 test "comments" {
@@ -616,7 +748,7 @@ test "flag" {
 }
 
 test "key" {
-    try testLex("my1: open 15", &.{ .key, .keyword_open, .number });
+    try testLex("my1: open 15", &.{ .key, .colon, .keyword_open, .number });
 }
 
 test "link" {
