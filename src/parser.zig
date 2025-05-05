@@ -127,6 +127,7 @@ fn parseFlag(p: *Self) !Data.Flag {
 }
 
 fn parseLeg(p: *Self) Error!usize {
+    _ = try p.expectToken(.indent);
     const account = try p.expectTokenSlice(.account);
     const amount_slice = try p.expectTokenSlice(.number);
     const amount = try Decimal.fromSlice(amount_slice);

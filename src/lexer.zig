@@ -3,6 +3,7 @@ const std = @import("std");
 pub const Lexer = struct {
     buffer: [:0]const u8,
     index: usize,
+    at_line_start: bool,
 
     pub fn token_slice(lexer: *Lexer, token: *const Token) []const u8 {
         return lexer.buffer[token.loc.start..token.loc.end];
@@ -81,6 +82,7 @@ pub const Lexer = struct {
         return .{
             .buffer = buffer,
             .index = 0,
+            .at_line_start = true,
         };
     }
 
@@ -97,7 +99,25 @@ pub const Lexer = struct {
         currency_special,
         keyword,
         comment,
+        indent,
     };
+
+    /// Consume the current character. If it's a newline,
+    /// we're at the start of the line for the next character. Otherwise,
+    /// we're not.
+    inline fn consume(self: *Lexer) void {
+        switch (self.buffer[self.index]) {
+            '\n' => self.at_line_start = true,
+            else => self.at_line_start = false,
+        }
+
+        self.index += 1;
+    }
+
+    /// Return character we're currently looking at.
+    inline fn current(self: *Lexer) u8 {
+        return self.buffer[self.index];
+    }
 
     pub fn next(self: *Lexer) Token {
         var result: Token = .{
@@ -109,98 +129,120 @@ pub const Lexer = struct {
         };
 
         state: switch (State.start) {
-            .start => switch (self.buffer[self.index]) {
+            .start => switch (self.current()) {
                 0 => {
                     if (self.index == self.buffer.len) {
-                        return .{
-                            .tag = .eof,
-                            .loc = .{
-                                .start = self.index,
-                                .end = self.index,
-                            },
-                        };
+                        result.tag = .eof;
                     } else {
                         continue :state .invalid;
                     }
                 },
                 '\n' => {
-                    self.index += 1;
+                    self.consume();
                     result.tag = .eol;
                 },
                 ' ', '\t' => {
-                    self.index += 1;
-                    result.loc.start = self.index;
-                    continue :state .start;
+                    if (self.at_line_start) {
+                        self.consume();
+                        continue :state .indent;
+                    } else {
+                        self.consume();
+                        result.loc.start = self.index;
+                        continue :state .start;
+                    }
                 },
                 '"' => {
-                    self.index += 1;
+                    self.consume();
                     result.tag = .string;
                     continue :state .string;
                 },
                 '-', '0'...'9' => {
+                    self.consume();
                     result.tag = .number;
-                    self.index += 1;
                     continue :state .int;
                 },
                 '*' => {
-                    self.index += 1;
+                    self.consume();
                     result.tag = .star;
                 },
                 '!' => {
-                    self.index += 1;
+                    self.consume();
                     result.tag = .bang;
                 },
                 'A'...'Z' => {
+                    self.consume();
                     result.tag = .currency;
-                    self.index += 1;
                     continue :state .currency;
                 },
                 'a'...'z' => {
-                    self.index += 1;
+                    self.consume();
                     continue :state .keyword;
                 },
                 ';' => {
-                    self.index += 1;
+                    self.consume();
                     continue :state .comment;
                 },
                 else => continue :state .invalid,
             },
 
             .invalid => {
-                switch (self.buffer[self.index]) {
+                switch (self.current()) {
                     0 => if (self.index == self.buffer.len) {
                         result.tag = .invalid;
                     } else {
-                        self.index += 1;
+                        self.consume();
                         continue :state .invalid;
                     },
                     // Recovers to parse a new token after newline.
-                    '\n' => result.tag = .invalid,
+                    '\n' => {
+                        self.consume();
+                        result.tag = .invalid;
+                    },
                     else => {
-                        self.index += 1;
+                        self.consume();
                         continue :state .invalid;
                     },
                 }
             },
 
+            .indent => switch (self.current()) {
+                ' ', '\t' => {
+                    self.consume();
+                    continue :state .indent;
+                },
+                '\n' => {
+                    result.loc.start = self.index;
+                    self.consume();
+                    result.tag = .eol;
+                },
+                0 => {
+                    if (self.index == self.buffer.len) {
+                        result.tag = .eof;
+                    } else {
+                        continue :state .invalid;
+                    }
+                },
+                else => result.tag = .indent,
+            },
+
             .string => {
-                switch (self.buffer[self.index]) {
+                switch (self.current()) {
                     0 => continue :state .invalid,
-                    '"' => self.index += 1,
+                    '"' => self.consume(),
                     else => {
-                        self.index += 1;
+                        self.consume();
                         continue :state .string;
                     },
                 }
             },
 
-            .int => switch (self.buffer[self.index]) {
+            .int => switch (self.current()) {
                 '0'...'9' => {
-                    self.index += 1;
+                    self.consume();
                     continue :state .int;
                 },
                 '-' => {
-                    self.index += 1;
+                    self.consume();
                     // Make sure we're at 5th digit
                     if (self.index - result.loc.start == 5) {
                         result.tag = .date;
@@ -210,15 +252,15 @@ pub const Lexer = struct {
                     }
                 },
                 '.' => {
-                    self.index += 1;
+                    self.consume();
                     continue :state .number;
                 },
                 else => {},
             },
 
-            .number => switch (self.buffer[self.index]) {
+            .number => switch (self.current()) {
                 '0'...'9' => {
-                    self.index += 1;
+                    self.consume();
                     continue :state .number;
                 },
                 0, '\n', ' ' => {},
@@ -227,9 +269,9 @@ pub const Lexer = struct {
                 },
             },
 
-            .date => switch (self.buffer[self.index]) {
+            .date => switch (self.current()) {
                 '0'...'9' => {
-                    self.index += 1;
+                    self.consume();
                     // Check valid positions of digits
                     switch (self.index - result.loc.start) {
                         6, 7, 9, 10 => continue :state .date,
@@ -237,7 +279,7 @@ pub const Lexer = struct {
                     }
                 },
                 '-' => {
-                    self.index += 1;
+                    self.consume();
                     // Check valid positions of hyphens
                     switch (self.index - result.loc.start) {
                         5, 8 => continue :state .date,
@@ -254,18 +296,18 @@ pub const Lexer = struct {
                 else => continue :state .invalid,
             },
 
-            .currency => switch (self.buffer[self.index]) {
+            .currency => switch (self.current()) {
                 'A'...'Z', '0'...'9' => {
-                    self.index += 1;
+                    self.consume();
                     continue :state .currency;
                 },
                 '\'', '.', '_', '-' => {
-                    self.index += 1;
+                    self.consume();
                     continue :state .currency_special;
                 },
                 'a'...'z', ':' => {
                     result.tag = .account;
-                    self.index += 1;
+                    self.consume();
                     continue :state .account;
                 },
                 0, ' ', '\n' => {},
@@ -273,30 +315,30 @@ pub const Lexer = struct {
             },
 
             // TODO: Only max 22 of these according to beancount spec.
-            .currency_special => switch (self.buffer[self.index]) {
+            .currency_special => switch (self.current()) {
                 'A'...'Z', '0'...'9' => {
-                    self.index += 1;
+                    self.consume();
                     continue :state .currency;
                 },
                 '\'', '.', '_', '-' => {
-                    self.index += 1;
+                    self.consume();
                     continue :state .currency_special;
                 },
                 else => continue :state .invalid,
             },
 
-            .account => switch (self.buffer[self.index]) {
+            .account => switch (self.current()) {
                 'a'...'z', 'A'...'Z', '_', ':' => {
-                    self.index += 1;
+                    self.consume();
                     continue :state .account;
                 },
                 0, ' ', '\n' => {},
                 else => continue :state .invalid,
             },
 
-            .keyword => switch (self.buffer[self.index]) {
+            .keyword => switch (self.current()) {
                 'a'...'z' => {
-                    self.index += 1;
+                    self.consume();
                     continue :state .keyword;
                 },
                 0, ' ', '\n' => {
@@ -310,15 +352,16 @@ pub const Lexer = struct {
                 else => continue :state .invalid,
             },
 
-            .comment => switch (self.buffer[self.index]) {
+            .comment => switch (self.current()) {
                 0 => continue :state .start,
                 '\n' => {
-                    self.index += 1;
+                    self.consume();
                     result.loc.start = self.index;
                     continue :state .start;
                 },
                 else => {
-                    self.index += 1;
+                    self.consume();
+                    result.loc.start = self.index;
                     continue :state .comment;
                 },
             },
@@ -348,10 +391,10 @@ test "lexer" {
     try testLex("#", &.{.invalid});
 
     try testLex(
-        \\ 2025-04-22 * "Buy coffee"
-        \\     Assets:Checking  -100.10 USD
-        \\     Expenses:Food
-    , &.{ .date, .star, .string, .eol, .account, .number, .currency, .eol, .account });
+        \\2025-04-22 * "Buy coffee"
+        \\    Assets:Checking  -100.10 USD
+        \\    Expenses:Food
+    , &.{ .date, .star, .string, .eol, .indent, .account, .number, .currency, .eol, .indent, .account });
 }
 
 test "currency" {
@@ -375,6 +418,13 @@ test "comments" {
         \\; Blah
         \\2015-01-01
     , &.{.date});
+}
+
+test "indent" {
+    try testLex(
+        \\open 
+        \\  close
+    , &.{ .keyword_open, .eol, .indent, .keyword_close });
 }
 
 fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
