@@ -1,4 +1,5 @@
 const std = @import("std");
+const unicode = std.unicode;
 
 pub const Lexer = struct {
     buffer: [:0]const u8,
@@ -100,6 +101,8 @@ pub const Lexer = struct {
         int,
         date,
         number,
+        accounttype_first,
+        accountname_first,
         account,
         link,
         tag,
@@ -113,6 +116,50 @@ pub const Lexer = struct {
         flag,
         flag_special,
     };
+
+    /// Consumes one unicode code point if it is encoded properly. If not
+    /// encoded properly returns null, otherwise the number of bytes consumed.
+    fn consumeUnicode(self: *Lexer) ?u3 {
+        const length = unicode.utf8ByteSequenceLength(self.current()) catch {
+            return null;
+        };
+        // Make sure we have enough bytes in the buffer
+        if (self.index + length > self.buffer.len) {
+            return null;
+        }
+        switch (length) {
+            1 => {
+                if (self.current() < 0x80) {
+                    return null;
+                }
+            },
+            2 => {
+                // Decode and consume
+                const bytes = .{ self.buffer[self.index], self.buffer[self.index + 1] };
+                _ = unicode.utf8Decode2(bytes) catch {
+                    return null;
+                };
+            },
+            3 => {
+                // Decode and consume
+                const bytes = .{ self.buffer[self.index], self.buffer[self.index + 1], self.buffer[self.index + 2] };
+                _ = unicode.utf8Decode3(bytes) catch {
+                    return null;
+                };
+            },
+            4 => {
+                // Decode and consume
+                const bytes = .{ self.buffer[self.index], self.buffer[self.index + 1], self.buffer[self.index + 2], self.buffer[self.index + 3] };
+                _ = unicode.utf8Decode4(bytes) catch {
+                    return null;
+                };
+            },
+            else => unreachable,
+        }
+        self.index += length;
+        self.at_line_start = false;
+        return length;
+    }
 
     /// Consume the current character. If it's a newline, we're at the start of
     /// the line for the next character. Otherwise, we're not.
@@ -213,7 +260,14 @@ pub const Lexer = struct {
                     result.tag = .link;
                     continue :state .link;
                 },
-                else => continue :state .invalid,
+                else => {
+                    if (self.consumeUnicode()) |_| {
+                        result.tag = .account;
+                        continue :state .account;
+                    } else {
+                        continue :state .invalid;
+                    }
+                },
             },
 
             .invalid => {
@@ -274,8 +328,8 @@ pub const Lexer = struct {
                 },
                 '-', '/' => {
                     self.consume();
-                    // Make sure we're at 5th digit
-                    if (self.index - result.loc.start == 5) {
+                    // Make sure we're at least 5th digit
+                    if (self.index - result.loc.start >= 5) {
                         result.tag = .date;
                         continue :state .date;
                     } else {
@@ -381,7 +435,6 @@ pub const Lexer = struct {
                 },
                 'a'...'z', ':' => {
                     result.tag = .account;
-                    self.consume();
                     continue :state .account;
                 },
                 0, ' ', '\t', '\n' => {},
@@ -401,13 +454,51 @@ pub const Lexer = struct {
                 else => continue :state .invalid,
             },
 
-            .account => switch (self.current()) {
-                'a'...'z', 'A'...'Z', '_', ':' => {
+            .accounttype_first => switch (self.current()) {
+                'A'...'Z' => {
                     self.consume();
                     continue :state .account;
                 },
-                0, ' ', '\n' => {},
-                else => continue :state .invalid,
+                else => {
+                    if (self.consumeUnicode()) |_| {
+                        continue :state .account;
+                    } else {
+                        continue :state .invalid;
+                    }
+                },
+            },
+
+            .accountname_first => switch (self.current()) {
+                'A'...'Z', '0'...'9' => {
+                    self.consume();
+                    continue :state .account;
+                },
+                else => {
+                    if (self.consumeUnicode()) |_| {
+                        continue :state .account;
+                    } else {
+                        continue :state .invalid;
+                    }
+                },
+            },
+
+            .account => switch (self.current()) {
+                'A'...'Z', 'a'...'z', '0'...'9', '-' => {
+                    self.consume();
+                    continue :state .account;
+                },
+                ':' => {
+                    self.consume();
+                    continue :state .accountname_first;
+                },
+                0, ' ', '\t', '\n' => {},
+                else => {
+                    if (self.consumeUnicode()) |_| {
+                        continue :state .account;
+                    } else {
+                        continue :state .invalid;
+                    }
+                },
             },
 
             .keyword => switch (self.current()) {
@@ -469,6 +560,19 @@ test "lexer" {
         \\    Assets:Checking  -100.10 USD
         \\    Expenses:Food
     , &.{ .date, .asterisk, .string, .eol, .indent, .account, .number, .currency, .eol, .indent, .account });
+}
+
+test "account" {
+    try testLex("Foo:Bar", &.{.account});
+    try testLex("ΑβγⅠ:ΑβγⅠ", &.{.account});
+    try testLex("ابجا:ابجا", &.{.account});
+    try testLex("F:B", &.{.account});
+    try testLex("F:B CU", &.{ .account, .currency });
+    try testLex("Fo:9-", &.{.account});
+    try testLex("😊:😊", &.{.account});
+    try testLex("😊:`", &.{.invalid});
+    try testLex("😊:Fð", &.{.account});
+    try testLex("𠁑𠁑:𠁑𠁑", &.{.account});
 }
 
 test "date" {
