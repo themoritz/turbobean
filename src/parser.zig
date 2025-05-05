@@ -147,7 +147,7 @@ test "parser" {
     try testParse(
         \\2015-11-01 * "Test"
         \\  Foo 100.0000 USD
-        \\  Bar -2.0000 EUR
+        \\  Bar 2.0000 EUR
     );
 
     try testParse(

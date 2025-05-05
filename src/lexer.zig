@@ -148,7 +148,6 @@ pub const Lexer = struct {
         at,
         lcurl,
         rcurl,
-        minus,
     };
 
     /// Consumes one unicode code point if it is encoded properly. If not
@@ -283,7 +282,7 @@ pub const Lexer = struct {
                 },
                 '-' => {
                     self.consume();
-                    continue :state .minus;
+                    result.tag = .minus;
                 },
                 '/' => {
                     self.consume();
@@ -438,29 +437,11 @@ pub const Lexer = struct {
             },
 
             .date => switch (self.current()) {
-                '0'...'9' => {
+                '0'...'9', '-', '/' => {
                     self.consume();
-                    // Check valid positions of digits
-                    switch (self.index - result.loc.start) {
-                        6, 7, 9, 10 => continue :state .date,
-                        else => continue :state .invalid,
-                    }
+                    continue :state .date;
                 },
-                '-', '/' => {
-                    self.consume();
-                    // Check valid positions of hyphens
-                    switch (self.index - result.loc.start) {
-                        5, 8 => continue :state .date,
-                        else => continue :state .invalid,
-                    }
-                },
-                0, ' ', '\n' => {
-                    // Check valid length
-                    switch (self.index + 1 - result.loc.start) {
-                        11 => {},
-                        else => continue :state .invalid,
-                    }
-                },
+                0, ' ', '\n' => {},
                 else => continue :state .invalid,
             },
 
@@ -499,17 +480,6 @@ pub const Lexer = struct {
                     result.tag = .rcurlrcurl;
                 },
                 else => result.tag = .rcurl,
-            },
-
-            .minus => switch (self.current()) {
-                '0'...'9' => {
-                    self.consume();
-                    result.tag = .number;
-                    continue :state .int;
-                },
-                else => {
-                    result.tag = .minus;
-                },
             },
 
             .saw_hash => switch (self.current()) {
@@ -687,7 +657,7 @@ test "combined" {
         \\2025-04-22 * "Buy coffee"
         \\    Assets:Checking  -100.10 USD
         \\    Expenses:Food
-    , &.{ .date, .asterisk, .string, .eol, .indent, .account, .number, .currency, .eol, .indent, .account });
+    , &.{ .date, .asterisk, .string, .eol, .indent, .account, .minus, .number, .currency, .eol, .indent, .account });
 }
 
 test "account" {
@@ -757,6 +727,61 @@ test "link" {
 
 test "tag" {
     try testLex("# #abcA7 #", &.{ .flag, .tag, .flag });
+}
+
+test "beancount1" {
+    try testLex(
+        \\2013-05-18 2014-01-02 2014/01/02
+        \\Assets:US:Bank:Checking
+        \\Liabilities:US:Bank:Credit
+        \\Other:Bank
+        \\USD HOOL TEST_D TEST_3 TEST-D TEST-3 NT
+        \\"Nice dinner at Mermaid Inn"
+        \\""
+        \\123 123.45 123.456789 -123 -123.456789
+        \\#sometag123
+        \\^sometag123
+        \\somekey:
+        \\
+    , &.{
+        .date,
+        .date,
+        .date,
+        .eol,
+        .account,
+        .eol,
+        .account,
+        .eol,
+        .account,
+        .eol,
+        .currency,
+        .currency,
+        .currency,
+        .currency,
+        .currency,
+        .currency,
+        .currency,
+        .eol,
+        .string,
+        .eol,
+        .string,
+        .eol,
+        .number,
+        .number,
+        .number,
+        .minus,
+        .number,
+        .minus,
+        .number,
+        .eol,
+        .tag,
+        .eol,
+        .link,
+        .eol,
+        .key,
+        .colon,
+        .eol,
+    });
 }
 
 fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
