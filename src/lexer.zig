@@ -53,6 +53,7 @@ pub const Lexer = struct {
             flag,
             key,
             link,
+            tag,
 
             eol,
             indent,
@@ -101,6 +102,8 @@ pub const Lexer = struct {
         number,
         account,
         link,
+        tag,
+        saw_hash,
         currency,
         /// For special characters in the middle. Can't end on this.
         currency_special,
@@ -173,7 +176,11 @@ pub const Lexer = struct {
                     self.consume();
                     result.tag = .asterisk;
                 },
-                '!', '&', '#', '?', '%' => {
+                '#' => {
+                    self.consume();
+                    continue :state .saw_hash; // Could be flag or tag
+                },
+                '!', '&', '?', '%' => { // Rest of the flag chars
                     self.consume();
                     result.tag = .flag;
                     continue :state .flag_special;
@@ -265,7 +272,7 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .int;
                 },
-                '-' => {
+                '-', '/' => {
                     self.consume();
                     // Make sure we're at 5th digit
                     if (self.index - result.loc.start == 5) {
@@ -302,7 +309,7 @@ pub const Lexer = struct {
                         else => continue :state .invalid,
                     }
                 },
-                '-' => {
+                '-', '/' => {
                     self.consume();
                     // Check valid positions of hyphens
                     switch (self.index - result.loc.start) {
@@ -329,6 +336,27 @@ pub const Lexer = struct {
             },
 
             .flag_special => switch (self.current()) {
+                0, ' ', '\t', '\n' => {},
+                else => continue :state .invalid,
+            },
+
+            .saw_hash => switch (self.current()) {
+                'A'...'Z', 'a'...'z', '0'...'9', '-', '_', '/', '.' => {
+                    self.consume();
+                    result.tag = .tag;
+                    continue :state .tag;
+                },
+                0, ' ', '\t', '\n' => {
+                    result.tag = .flag;
+                },
+                else => continue :state .invalid,
+            },
+
+            .tag => switch (self.current()) {
+                'A'...'Z', 'a'...'z', '0'...'9', '-', '_', '/', '.' => {
+                    self.consume();
+                    continue :state .tag;
+                },
                 0, ' ', '\t', '\n' => {},
                 else => continue :state .invalid,
             },
@@ -429,8 +457,6 @@ test "lexer" {
     try testLex("\"foo\"", &.{.string});
     try testLex("15", &.{.number});
     try testLex("15.5", &.{.number});
-    try testLex("2014-15-20", &.{.date});
-    try testLex("5 1949-41-09", &.{ .number, .date });
     try testLex("\"bar\" 12.1 4 2025-01-01", &.{ .string, .number, .number, .date });
 
     try testLex("USD", &.{.currency});
@@ -443,6 +469,12 @@ test "lexer" {
         \\    Assets:Checking  -100.10 USD
         \\    Expenses:Food
     , &.{ .date, .asterisk, .string, .eol, .indent, .account, .number, .currency, .eol, .indent, .account });
+}
+
+test "date" {
+    try testLex("2014-15-20", &.{.date});
+    try testLex("2014/12/20", &.{.date});
+    try testLex("5 1949-41-09", &.{ .number, .date });
 }
 
 test "currency" {
@@ -485,6 +517,10 @@ test "key" {
 
 test "link" {
     try testLex("# ^/App.", &.{ .flag, .link });
+}
+
+test "tag" {
+    try testLex("# #abcA7 #", &.{ .flag, .tag, .flag });
 }
 
 fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
