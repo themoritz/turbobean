@@ -47,13 +47,16 @@ pub const Lexer = struct {
         pub const Tag = enum {
             date,
             number,
-            star,
-            bang,
             string,
             account,
             currency,
+            flag,
+
             eol,
             indent,
+
+            asterisk,
+
             keyword_txn,
             keyword_balance,
             keyword_open,
@@ -73,6 +76,7 @@ pub const Lexer = struct {
             keyword_option,
             keyword_plugin,
             keyword_include,
+
             invalid,
             eof,
         };
@@ -100,11 +104,12 @@ pub const Lexer = struct {
         keyword,
         comment,
         indent,
+        flag,
+        flag_special,
     };
 
-    /// Consume the current character. If it's a newline,
-    /// we're at the start of the line for the next character. Otherwise,
-    /// we're not.
+    /// Consume the current character. If it's a newline, we're at the start of
+    /// the line for the next character. Otherwise, we're not.
     inline fn consume(self: *Lexer) void {
         switch (self.buffer[self.index]) {
             '\n' => self.at_line_start = true,
@@ -163,13 +168,20 @@ pub const Lexer = struct {
                 },
                 '*' => {
                     self.consume();
-                    result.tag = .star;
+                    result.tag = .asterisk;
                 },
-                '!' => {
+                'P', 'S', 'T', 'C', 'U', 'R', 'M' => {
                     self.consume();
-                    result.tag = .bang;
+                    result.tag = .flag;
+                    continue :state .flag;
                 },
-                'A'...'Z' => {
+                '!', '&', '#', '?', '%' => {
+                    self.consume();
+                    result.tag = .flag;
+                    continue :state .flag_special;
+                },
+                // All except flags
+                'A', 'B', 'D'...'L', 'N', 'O', 'Q', 'V'...'Z' => {
                     self.consume();
                     result.tag = .currency;
                     continue :state .currency;
@@ -296,6 +308,19 @@ pub const Lexer = struct {
                 else => continue :state .invalid,
             },
 
+            .flag => switch (self.current()) {
+                0, ' ', '\t', '\n' => {},
+                else => {
+                    result.tag = .currency;
+                    continue :state .currency;
+                },
+            },
+
+            .flag_special => switch (self.current()) {
+                0, ' ', '\t', '\n' => {},
+                else => continue :state .invalid,
+            },
+
             .currency => switch (self.current()) {
                 'A'...'Z', '0'...'9' => {
                     self.consume();
@@ -388,13 +413,11 @@ test "lexer" {
     try testLex("Assets:Checking", &.{.account});
     try testLex("Assets:Foo 100 USD", &.{ .account, .number, .currency });
 
-    try testLex("#", &.{.invalid});
-
     try testLex(
         \\2025-04-22 * "Buy coffee"
         \\    Assets:Checking  -100.10 USD
         \\    Expenses:Food
-    , &.{ .date, .star, .string, .eol, .indent, .account, .number, .currency, .eol, .indent, .account });
+    , &.{ .date, .asterisk, .string, .eol, .indent, .account, .number, .currency, .eol, .indent, .account });
 }
 
 test "currency" {
@@ -425,6 +448,10 @@ test "indent" {
         \\open 
         \\  close
     , &.{ .keyword_open, .eol, .indent, .keyword_close });
+}
+
+test "flag" {
+    try testLex("# ? CURM", &.{ .flag, .flag, .currency });
 }
 
 fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {

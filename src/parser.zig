@@ -118,11 +118,11 @@ fn parseDirective(p: *Self) !usize {
 }
 
 fn parseFlag(p: *Self) !Data.Flag {
-    if (p.tryToken(.bang)) |_| {
-        return .bang;
-    } else {
-        _ = try p.expectToken(.star);
+    if (p.tryToken(.asterisk)) |_| {
         return .star;
+    } else {
+        _ = try p.expectToken(.flag);
+        return .bang;
     }
 }
 
