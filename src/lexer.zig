@@ -51,6 +51,8 @@ pub const Lexer = struct {
             account,
             currency,
             flag,
+            key,
+            link,
 
             eol,
             indent,
@@ -98,6 +100,7 @@ pub const Lexer = struct {
         date,
         number,
         account,
+        link,
         currency,
         /// For special characters in the middle. Can't end on this.
         currency_special,
@@ -170,21 +173,25 @@ pub const Lexer = struct {
                     self.consume();
                     result.tag = .asterisk;
                 },
-                'P', 'S', 'T', 'C', 'U', 'R', 'M' => {
-                    self.consume();
-                    result.tag = .flag;
-                    continue :state .flag;
-                },
                 '!', '&', '#', '?', '%' => {
                     self.consume();
                     result.tag = .flag;
                     continue :state .flag_special;
                 },
-                // All except flags
-                'A', 'B', 'D'...'L', 'N', 'O', 'Q', 'V'...'Z' => {
-                    self.consume();
-                    result.tag = .currency;
-                    continue :state .currency;
+                'A'...'Z' => {
+                    switch (self.current()) {
+                        // Flags
+                        'P', 'S', 'T', 'C', 'U', 'R', 'M' => {
+                            self.consume();
+                            result.tag = .flag;
+                            continue :state .flag;
+                        },
+                        else => {
+                            self.consume();
+                            result.tag = .currency;
+                            continue :state .currency;
+                        },
+                    }
                 },
                 'a'...'z' => {
                     self.consume();
@@ -193,6 +200,11 @@ pub const Lexer = struct {
                 ';' => {
                     self.consume();
                     continue :state .comment;
+                },
+                '^' => {
+                    self.consume();
+                    result.tag = .link;
+                    continue :state .link;
                 },
                 else => continue :state .invalid,
             },
@@ -321,6 +333,15 @@ pub const Lexer = struct {
                 else => continue :state .invalid,
             },
 
+            .link => switch (self.current()) {
+                'A'...'Z', 'a'...'z', '0'...'9', '-', '_', '/', '.' => {
+                    self.consume();
+                    continue :state .link;
+                },
+                0, ' ', '\t', '\n' => {},
+                else => continue :state .invalid,
+            },
+
             .currency => switch (self.current()) {
                 'A'...'Z', '0'...'9' => {
                     self.consume();
@@ -335,7 +356,7 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .account;
                 },
-                0, ' ', '\n' => {},
+                0, ' ', '\t', '\n' => {},
                 else => continue :state .invalid,
             },
 
@@ -362,7 +383,7 @@ pub const Lexer = struct {
             },
 
             .keyword => switch (self.current()) {
-                'a'...'z' => {
+                'a'...'z', 'A'...'Z', '0'...'9', '-', '_' => {
                     self.consume();
                     continue :state .keyword;
                 },
@@ -373,6 +394,10 @@ pub const Lexer = struct {
                     } else {
                         continue :state .invalid;
                     }
+                },
+                ':' => {
+                    self.consume();
+                    result.tag = .key;
                 },
                 else => continue :state .invalid,
             },
@@ -452,6 +477,14 @@ test "indent" {
 
 test "flag" {
     try testLex("# ? CURM", &.{ .flag, .flag, .currency });
+}
+
+test "key" {
+    try testLex("my1: open 15", &.{ .key, .keyword_open, .number });
+}
+
+test "link" {
+    try testLex("# ^/App.", &.{ .flag, .link });
 }
 
 fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
