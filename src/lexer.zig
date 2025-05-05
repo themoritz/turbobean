@@ -800,6 +800,23 @@ test "beancount comma currencies" {
     try testLex("USD,CAD,AUD", &.{ .currency, .comma, .currency, .comma, .currency });
 }
 
+test "beancount number okay" {
+    try testValid(
+        \\1001 USD
+        \\1002.00 USD
+        \\-1001 USD
+        \\-1002.00 USD
+        \\+1001 USD
+        \\+1002.00 USD
+        \\1,001 USD
+        \\1,002.00 USD
+        \\-1,001 USD
+        \\-1,002.00 USD
+        \\+1,001 USD
+        \\+1,002.00 USD
+    );
+}
+
 fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
     var lexer = Lexer.init(source);
     for (expected_tags) |tag| {
@@ -811,4 +828,18 @@ fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
     try std.testing.expectEqual(last_token.tag, .eof);
     try std.testing.expectEqual(source.len, last_token.loc.start);
     try std.testing.expectEqual(source.len, last_token.loc.end);
+}
+
+fn testValid(source: [:0]const u8) !void {
+    var lexer = Lexer.init(source);
+    var i: u32 = 0;
+    while (true) {
+        const token = lexer.next();
+        std.testing.expect(token.tag != .invalid) catch |err| {
+            std.debug.print("token {d}\n", .{i});
+            return err;
+        };
+        if (token.tag == .eof) break;
+        i += 1;
+    }
 }
