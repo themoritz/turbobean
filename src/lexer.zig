@@ -360,8 +360,8 @@ pub const Lexer = struct {
                         self.consume();
                         continue :state .invalid;
                     },
-                    // Recovers to parse a new token after newline.
-                    '\n' => {
+                    // Recovers to parse a new token after whitespace.
+                    ' ', '\t', '\n' => {
                         self.consume();
                         result.tag = .invalid;
                     },
@@ -525,7 +525,7 @@ pub const Lexer = struct {
                     result.tag = .account;
                     continue :state .account;
                 },
-                0, ' ', '\t', '\n' => {
+                0, ',', ' ', '\t', '\n' => {
                     // Check for TRUE, FALSE, NULL here since they look like currency symbols.
                     const literal = self.buffer[result.loc.start..self.index];
                     if (Token.getLiteral(literal)) |tag| {
@@ -729,7 +729,7 @@ test "tag" {
     try testLex("# #abcA7 #", &.{ .flag, .tag, .flag });
 }
 
-test "beancount1" {
+test "beancount iter" {
     try testLex(
         \\2013-05-18 2014-01-02 2014/01/02
         \\Assets:US:Bank:Checking
@@ -742,7 +742,6 @@ test "beancount1" {
         \\#sometag123
         \\^sometag123
         \\somekey:
-        \\
     , &.{
         .date,
         .date,
@@ -780,13 +779,31 @@ test "beancount1" {
         .eol,
         .key,
         .colon,
-        .eol,
     });
+}
+
+test "beancount unicode account" {
+    try testLex(
+        \\Other:Bank Óthяr:Bあnk
+        \\abc1:abc1 ΑβγⅠ:ΑβγⅠ ابجا:ابجا
+    , &.{ .account, .account, .eol, .key, .colon, .invalid, .account, .account });
+}
+
+test "beancount indent" {
+    try testLex(
+        \\2014-07-05 *
+        \\  Equity:Something
+    , &.{ .date, .asterisk, .eol, .indent, .account });
+}
+
+test "beancount comma currencies" {
+    try testLex("USD,CAD,AUD", &.{ .currency, .comma, .currency, .comma, .currency });
 }
 
 fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
     var lexer = Lexer.init(source);
     for (expected_tags) |tag| {
+        // std.debug.print("{}\n", .{ tag });
         const token = lexer.next();
         try std.testing.expectEqual(tag, token.tag);
     }
