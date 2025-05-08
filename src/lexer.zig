@@ -452,8 +452,7 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .number_dot;
                 },
-                0, ' ', '\n', '\t' => {},
-                else => continue :state .invalid,
+                else => {},
             },
 
             .number => switch (self.current()) {
@@ -469,8 +468,7 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .number_dot;
                 },
-                0, '\n', '\t', ' ' => {},
-                else => continue :state .invalid,
+                else => {},
             },
 
             .number_comma => switch (self.current()) {
@@ -486,8 +484,7 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .number_dot;
                 },
-                0, '\n', '\t', ' ', ',' => {},
-                else => continue :state .invalid,
+                else => {},
             },
 
             .date => switch (self.current()) {
@@ -495,8 +492,7 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .date;
                 },
-                0, ' ', '\n' => {},
-                else => continue :state .invalid,
+                else => {},
             },
 
             .flag => switch (self.current()) {
@@ -642,12 +638,9 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .accountname_first;
                 },
-                0, ' ', '\t', '\n' => {},
                 else => {
                     if (self.consumeUnicode()) |_| {
                         continue :state .account;
-                    } else {
-                        continue :state .invalid;
                     }
                 },
             },
@@ -718,10 +711,10 @@ test "number" {
     try testLex("1,000,000.00", &.{.number});
     try testLex("1,000.", &.{.number});
     try testLex("1,000,0.", &.{.number});
-    try testLex("1,00x.", &.{.invalid});
+    try testLex("1,00x.", &.{ .number, .invalid });
     try testLex("1,000,,0.", &.{.invalid});
     try testLex("10.0,0", &.{ .number, .comma, .number });
-    try testLex("10..00", &.{.invalid});
+    try testLex("10..00", &.{ .number, .invalid });
     try testLex("10 10", &.{ .number, .number });
 }
 
@@ -735,7 +728,7 @@ test "account" {
     try testLex("😊:😊", &.{.account});
     try testLex("😊:`", &.{.invalid});
     try testLex("😊:Fð", &.{.account});
-    try testLex("𠁑𠁑:𠁑𠁑", &.{.account});
+    try testLex("𠁑𠁑:𠁑𠁑; 1", &.{.account});
 }
 
 test "date" {
@@ -767,6 +760,7 @@ test "comments" {
         \\; Blah
         \\2015-01-01
     , &.{.date});
+    try testLex("Assets:Foo; comment", &.{.account});
 }
 
 test "indent" {
@@ -888,7 +882,7 @@ test "beancount number space" {
 }
 
 test "beancount number dots" {
-    try testLex("1.234.00 USD", &.{ .invalid, .currency });
+    try testLex("1.234.00 USD", &.{ .number, .invalid, .currency });
 }
 
 test "beancount number no integer" {
@@ -1002,7 +996,7 @@ test "beancount exception recovery" {
         \\2000$13-32 open Assets:Something
         \\
         \\2000-01-02 open Assets:Working
-    , &.{ .invalid, .keyword_open, .account, .eol, .eol, .date, .keyword_open, .account });
+    , &.{ .number, .invalid, .keyword_open, .account, .eol, .eol, .date, .keyword_open, .account });
 }
 
 // exception date
