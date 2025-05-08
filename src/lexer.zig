@@ -223,136 +223,149 @@ pub const Lexer = struct {
         };
 
         state: switch (State.start) {
-            .start => switch (self.current()) {
-                0 => {
-                    if (self.index == self.buffer.len) {
-                        result.tag = .eof;
-                    } else {
-                        continue :state .invalid;
-                    }
-                },
-                '\n' => {
-                    self.consume();
-                    result.tag = .eol;
-                },
-                ' ', '\t' => {
-                    if (self.at_line_start) {
-                        self.consume();
-                        continue :state .indent;
-                    } else {
-                        self.consume();
-                        result.loc.start = self.index;
-                        continue :state .start;
-                    }
-                },
-                '"' => {
-                    self.consume();
-                    result.tag = .string;
-                    continue :state .string;
-                },
-                '0'...'9' => {
-                    self.consume();
-                    result.tag = .number;
-                    continue :state .int;
-                },
-                '|' => {
-                    self.consume();
-                    result.tag = .pipe;
-                },
-                '@' => {
-                    self.consume();
-                    continue :state .at;
-                },
-                '{' => {
-                    self.consume();
-                    continue :state .lcurl;
-                },
-                '}' => {
-                    self.consume();
-                    continue :state .rcurl;
-                },
-                ',' => {
-                    self.consume();
-                    result.tag = .comma;
-                },
-                '~' => {
-                    self.consume();
-                    result.tag = .tilde;
-                },
-                '+' => {
-                    self.consume();
-                    result.tag = .plus;
-                },
-                '-' => {
-                    self.consume();
-                    result.tag = .minus;
-                },
-                '/' => {
-                    self.consume();
-                    result.tag = .slash;
-                },
-                '(' => {
-                    self.consume();
-                    result.tag = .lparen;
-                },
-                ')' => {
-                    self.consume();
-                    result.tag = .rparen;
-                },
-                // TODO: Hash?
-                '*' => {
-                    self.consume();
-                    result.tag = .asterisk;
-                },
-                ':' => {
-                    self.consume();
-                    result.tag = .colon;
-                },
-                '#' => {
-                    self.consume();
-                    continue :state .saw_hash; // Could be flag or tag
-                },
-                '!', '&', '?', '%' => { // Rest of the flag chars
-                    self.consume();
-                    result.tag = .flag;
-                    continue :state .flag_special;
-                },
-                'A'...'Z' => {
+            .start => {
+                // Lines starting with an asterisk, a colon, a hash or a flag
+                // character are ignored.
+                if (self.at_line_start) {
                     switch (self.current()) {
-                        // Flags
-                        'P', 'S', 'T', 'C', 'U', 'R', 'M' => {
-                            self.consume();
-                            result.tag = .flag;
-                            continue :state .flag;
+                        '*', ':', '#', '!', '&', '?', '%', 'P', 'S', 'T', 'C', 'U', 'R', 'M' => {
+                            continue :state .comment;
                         },
-                        else => {
+                        else => {},
+                    }
+                }
+
+                switch (self.current()) {
+                    0 => {
+                        if (self.index == self.buffer.len) {
+                            result.tag = .eof;
+                        } else {
+                            continue :state .invalid;
+                        }
+                    },
+                    '\n' => {
+                        self.consume();
+                        result.tag = .eol;
+                    },
+                    ' ', '\t' => {
+                        if (self.at_line_start) {
                             self.consume();
-                            result.tag = .currency;
-                            continue :state .currency;
-                        },
-                    }
-                },
-                'a'...'z' => {
-                    self.consume();
-                    continue :state .keyword;
-                },
-                ';' => {
-                    self.consume();
-                    continue :state .comment;
-                },
-                '^' => {
-                    self.consume();
-                    result.tag = .link;
-                    continue :state .link;
-                },
-                else => {
-                    if (self.consumeUnicode()) |_| {
-                        result.tag = .account;
-                        continue :state .account;
-                    } else {
-                        continue :state .invalid;
-                    }
-                },
+                            continue :state .indent;
+                        } else {
+                            self.consume();
+                            result.loc.start = self.index;
+                            continue :state .start;
+                        }
+                    },
+                    '"' => {
+                        self.consume();
+                        result.tag = .string;
+                        continue :state .string;
+                    },
+                    '0'...'9' => {
+                        self.consume();
+                        result.tag = .number;
+                        continue :state .int;
+                    },
+                    '|' => {
+                        self.consume();
+                        result.tag = .pipe;
+                    },
+                    '@' => {
+                        self.consume();
+                        continue :state .at;
+                    },
+                    '{' => {
+                        self.consume();
+                        continue :state .lcurl;
+                    },
+                    '}' => {
+                        self.consume();
+                        continue :state .rcurl;
+                    },
+                    ',' => {
+                        self.consume();
+                        result.tag = .comma;
+                    },
+                    '~' => {
+                        self.consume();
+                        result.tag = .tilde;
+                    },
+                    '+' => {
+                        self.consume();
+                        result.tag = .plus;
+                    },
+                    '-' => {
+                        self.consume();
+                        result.tag = .minus;
+                    },
+                    '/' => {
+                        self.consume();
+                        result.tag = .slash;
+                    },
+                    '(' => {
+                        self.consume();
+                        result.tag = .lparen;
+                    },
+                    ')' => {
+                        self.consume();
+                        result.tag = .rparen;
+                    },
+                    // TODO: Hash?
+                    '*' => {
+                        self.consume();
+                        result.tag = .asterisk;
+                    },
+                    ':' => {
+                        self.consume();
+                        result.tag = .colon;
+                    },
+                    '#' => {
+                        self.consume();
+                        continue :state .saw_hash; // Could be flag or tag
+                    },
+                    '!', '&', '?', '%' => { // Rest of the flag chars
+                        self.consume();
+                        result.tag = .flag;
+                        continue :state .flag_special;
+                    },
+                    'A'...'Z' => {
+                        switch (self.current()) {
+                            // Flags
+                            'P', 'S', 'T', 'C', 'U', 'R', 'M' => {
+                                self.consume();
+                                result.tag = .flag;
+                                continue :state .flag;
+                            },
+                            else => {
+                                self.consume();
+                                result.tag = .currency;
+                                continue :state .currency;
+                            },
+                        }
+                    },
+                    'a'...'z' => {
+                        self.consume();
+                        continue :state .keyword;
+                    },
+                    ';' => {
+                        self.consume();
+                        continue :state .comment;
+                    },
+                    '^' => {
+                        self.consume();
+                        result.tag = .link;
+                        continue :state .link;
+                    },
+                    else => {
+                        if (self.consumeUnicode()) |_| {
+                            result.tag = .account;
+                            continue :state .account;
+                        } else {
+                            continue :state .invalid;
+                        }
+                    },
+                }
             },
 
             .invalid => {
@@ -473,7 +486,7 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .number_dot;
                 },
-                0, '\n', '\t', ' ' => {},
+                0, '\n', '\t', ' ', ',' => {},
                 else => continue :state .invalid,
             },
 
@@ -688,8 +701,8 @@ test "combined" {
     try testLex("15.5", &.{.number});
     try testLex("\"bar\" 12.1 4 2025-01-01", &.{ .string, .number, .number, .date });
 
-    try testLex("USD", &.{.currency});
-    try testLex("Usd", &.{.account});
+    try testLex(" USD", &.{ .indent, .currency });
+    try testLex(" Usd", &.{ .indent, .account });
     try testLex("Assets:Checking", &.{.account});
     try testLex("Assets:Foo 100 USD", &.{ .account, .number, .currency });
 
@@ -707,7 +720,7 @@ test "number" {
     try testLex("1,000,0.", &.{.number});
     try testLex("1,00x.", &.{.invalid});
     try testLex("1,000,,0.", &.{.invalid});
-    try testLex("10.0,0", &.{.invalid});
+    try testLex("10.0,0", &.{ .number, .comma, .number });
     try testLex("10..00", &.{.invalid});
     try testLex("10 10", &.{ .number, .number });
 }
@@ -746,8 +759,6 @@ test "keywords" {
     try testLex("open", &.{.keyword_open});
     try testLex("close", &.{.keyword_close});
     try testLex("pad 15", &.{ .keyword_pad, .number });
-
-    try testLex("TRUE FALSE NULL", &.{ .true, .false, .none });
 }
 
 test "comments" {
@@ -766,7 +777,7 @@ test "indent" {
 }
 
 test "flag" {
-    try testLex("# ? CURM", &.{ .flag, .flag, .currency });
+    try testLex(" # ? CURM", &.{ .indent, .flag, .flag, .currency });
 }
 
 test "key" {
@@ -774,11 +785,11 @@ test "key" {
 }
 
 test "link" {
-    try testLex("# ^/App.", &.{ .flag, .link });
+    try testLex(" # ^/App.", &.{ .indent, .flag, .link });
 }
 
 test "tag" {
-    try testLex("# #abcA7 #", &.{ .flag, .tag, .flag });
+    try testLex(" # #abcA7 #", &.{ .indent, .flag, .tag, .flag });
 }
 
 test "beancount iter" {
@@ -787,11 +798,11 @@ test "beancount iter" {
         \\Assets:US:Bank:Checking
         \\Liabilities:US:Bank:Credit
         \\Other:Bank
-        \\USD HOOL TEST_D TEST_3 TEST-D TEST-3 NT
+        \\ USD HOOL TEST_D TEST_3 TEST-D TEST-3 NT
         \\"Nice dinner at Mermaid Inn"
         \\""
         \\123 123.45 123.456789 -123 -123.456789
-        \\#sometag123
+        \\ #sometag123
         \\^sometag123
         \\somekey:
     , &.{
@@ -805,6 +816,7 @@ test "beancount iter" {
         .eol,
         .account,
         .eol,
+        .indent, // Inserted because of FLAG rule
         .currency,
         .currency,
         .currency,
@@ -825,6 +837,7 @@ test "beancount iter" {
         .minus,
         .number,
         .eol,
+        .indent, // FLAG rule
         .tag,
         .eol,
         .link,
@@ -849,7 +862,8 @@ test "beancount indent" {
 }
 
 test "beancount comma currencies" {
-    try testLex("USD,CAD,AUD", &.{ .currency, .comma, .currency, .comma, .currency });
+    // Indent because of FLAG rule
+    try testLex(" USD,CAD,AUD", &.{ .indent, .currency, .comma, .currency, .comma, .currency });
 }
 
 test "beancount number okay" {
@@ -886,7 +900,8 @@ test "beancount currency number" {
 }
 
 test "beancount currency dash" {
-    try testLex("TEST-DA", &.{.currency});
+    // Indent because of FLAG rule
+    try testLex(" TEST-DA", &.{ .indent, .currency });
 }
 
 // bad date
@@ -909,7 +924,7 @@ test "beancount account names with dash" {
 }
 
 test "beancount invalid directive" {
-    try testLex("2008-03-01 check Assets:BestBank:Savings 2340.19 USD", &.{ .date, .invalid, .account, .number, .currency });
+    try testInvalid("2008-03-01 check Assets:BestBank:Savings 2340.19 USD");
 }
 
 // very long string
@@ -943,7 +958,8 @@ test "beancount popmeta" {
 }
 
 test "beancount null true false" {
-    try testLex("TRUE FALSE NULL", &.{ .true, .false, .none });
+    // Indent because of FLAG rule
+    try testLex(" TRUE FALSE NULL", &.{ .indent, .true, .false, .none });
 }
 
 test "beancount ignored long comment" {
@@ -959,6 +975,57 @@ test "beancount ignored indented comment" {
 
 test "beancount ignored something else" {
     try testLex("Regular prose appearing mid-file which starts with a flag character.", &.{});
+}
+
+test "beancount ignored something else non flag" {
+    try testInvalid("Xxx this sentence starts with a non-flag character.");
+}
+
+test "beancount ignored org mode title" {
+    try testLex("* This sentence is an org-mode title.", &.{});
+}
+
+test "beancount ignored org mode drawer" {
+    try testLex(
+        \\:PROPERTIES:
+        \\:this: is an org-mode property drawer
+        \\:END:
+    , &.{});
+}
+
+test "beancount invalid token" {
+    try testLex("2000-01-01 open ` USD", &.{ .date, .keyword_open, .invalid, .currency });
+}
+
+test "beancount exception recovery" {
+    try testLex(
+        \\2000$13-32 open Assets:Something
+        \\
+        \\2000-01-02 open Assets:Working
+    , &.{ .invalid, .keyword_open, .account, .eol, .eol, .date, .keyword_open, .account });
+}
+
+// exception date
+
+test "beancount exception substring with quotes" {
+    try testLex(
+        \\2016-07-15 query "hotels" "SELECT * WHERE account ~ 'Expenses:Accommodation'"
+    , &.{ .date, .keyword_query, .string, .string });
+}
+
+// Unicode stuff
+
+test "beancount valid commas in number" {
+    try testLex("45,234.00", &.{.number});
+}
+
+// TODO:
+test "beancount invalid commas in integral" {
+    // try testLex("45,34.00", &.{.invalid});
+}
+
+test "beancount invalid commas in fractional" {
+    try testLex("45234.000,000", &.{ .number, .comma, .number });
 }
 
 fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
@@ -986,4 +1053,20 @@ fn testValid(source: [:0]const u8) !void {
         if (token.tag == .eof) break;
         i += 1;
     }
+}
+
+fn testInvalid(source: [:0]const u8) !void {
+    var lexer = Lexer.init(source);
+    var i: u32 = 0;
+    var found_invalid = false;
+    while (true) {
+        const token = lexer.next();
+        if (token.tag == .invalid) {
+            found_invalid = true;
+            break;
+        }
+        if (token.tag == .eof) break;
+        i += 1;
+    }
+    try std.testing.expect(found_invalid);
 }
