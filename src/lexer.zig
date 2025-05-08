@@ -128,9 +128,12 @@ pub const Lexer = struct {
         start,
         invalid,
         string,
+        string_backslash,
         int,
         date,
         number,
+        number_dot,
+        number_comma,
         accounttype_first,
         accountname_first,
         account,
@@ -392,15 +395,25 @@ pub const Lexer = struct {
                 else => result.tag = .indent,
             },
 
-            .string => {
-                switch (self.current()) {
-                    0 => continue :state .invalid,
-                    '"' => self.consume(),
-                    else => {
-                        self.consume();
-                        continue :state .string;
-                    },
-                }
+            .string => switch (self.current()) {
+                0 => continue :state .invalid,
+                '"' => self.consume(),
+                '\\' => {
+                    self.consume();
+                    continue :state .string_backslash;
+                },
+                else => {
+                    self.consume();
+                    continue :state .string;
+                },
+            },
+
+            .string_backslash => switch (self.current()) {
+                0 => continue :state .invalid,
+                else => {
+                    self.consume();
+                    continue :state .string;
+                },
             },
 
             .int => switch (self.current()) {
@@ -418,11 +431,16 @@ pub const Lexer = struct {
                         continue :state .invalid;
                     }
                 },
+                ',' => {
+                    self.consume();
+                    continue :state .number_comma;
+                },
                 '.' => {
                     self.consume();
-                    continue :state .number;
+                    continue :state .number_dot;
                 },
-                else => {},
+                0, ' ', '\n', '\t' => {},
+                else => continue :state .invalid,
             },
 
             .number => switch (self.current()) {
@@ -430,10 +448,33 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .number;
                 },
-                0, '\n', ' ' => {},
-                else => {
-                    continue :state .invalid;
+                ',' => {
+                    self.consume();
+                    continue :state .number_comma;
                 },
+                '.' => {
+                    self.consume();
+                    continue :state .number_dot;
+                },
+                0, '\n', '\t', ' ' => {},
+                else => continue :state .invalid,
+            },
+
+            .number_comma => switch (self.current()) {
+                '0'...'9' => {
+                    self.consume();
+                    continue :state .number;
+                },
+                else => continue :state .invalid,
+            },
+
+            .number_dot => switch (self.current()) {
+                '0'...'9' => {
+                    self.consume();
+                    continue :state .number_dot;
+                },
+                0, '\n', '\t', ' ' => {},
+                else => continue :state .invalid,
             },
 
             .date => switch (self.current()) {
@@ -539,7 +580,6 @@ pub const Lexer = struct {
                 else => continue :state .invalid,
             },
 
-            // TODO: Only max 22 of these according to beancount spec.
             .currency_special => switch (self.current()) {
                 'A'...'Z', '0'...'9' => {
                     self.consume();
@@ -658,6 +698,18 @@ test "combined" {
         \\    Assets:Checking  -100.10 USD
         \\    Expenses:Food
     , &.{ .date, .asterisk, .string, .eol, .indent, .account, .minus, .number, .currency, .eol, .indent, .account });
+}
+
+test "number" {
+    try testLex("1,000.00", &.{.number});
+    try testLex("1,000,000.00", &.{.number});
+    try testLex("1,000.", &.{.number});
+    try testLex("1,000,0.", &.{.number});
+    try testLex("1,00x.", &.{.invalid});
+    try testLex("1,000,,0.", &.{.invalid});
+    try testLex("10.0,0", &.{.invalid});
+    try testLex("10..00", &.{.invalid});
+    try testLex("10 10", &.{ .number, .number });
 }
 
 test "account" {
@@ -815,6 +867,98 @@ test "beancount number okay" {
         \\+1,001 USD
         \\+1,002.00 USD
     );
+}
+
+test "beancount number space" {
+    try testValid("- 1002.00 USD");
+}
+
+test "beancount number dots" {
+    try testLex("1.234.00 USD", &.{ .invalid, .currency });
+}
+
+test "beancount number no integer" {
+    try testLex(".2347 USD", &.{ .invalid, .currency });
+}
+
+test "beancount currency number" {
+    try testLex("555.00 CAD.11", &.{ .number, .currency });
+}
+
+test "beancount currency dash" {
+    try testLex("TEST-DA", &.{.currency});
+}
+
+// bad date
+// date followed by number
+
+test "beancount single letter account" {
+    try testLex("Assets:A", &.{.account});
+}
+
+test "beancount account names with numbers" {
+    try testLex(
+        \\Assets:Vouchers:99Ranch
+        \\Assets:99Test
+        \\Assets:signals
+    , &.{ .account, .eol, .account, .eol, .invalid });
+}
+
+test "beancount account names with dash" {
+    try testLex("Equity:Beginning-Balances", &.{.account});
+}
+
+test "beancount invalid directive" {
+    try testLex("2008-03-01 check Assets:BestBank:Savings 2340.19 USD", &.{ .date, .invalid, .account, .number, .currency });
+}
+
+// very long string
+// no final newline
+
+test "beancount string escaped" {
+    try testLex(
+        \\"The Great \"Juju\""
+        \\"The Great \t\n\r\f\b"
+    , &.{ .string, .eol, .string });
+}
+
+test "beancount string newline" {
+    try testLex("\"The Great\nJuju\"", &.{.string});
+}
+
+test "beancount string newline long" {
+    try testLex(
+        \\"Forty
+        \\world
+        \\leaders
+        \\and
+        \\hundreds"
+    , &.{.string});
+}
+
+// string newline toolong
+
+test "beancount popmeta" {
+    try testLex("popmeta location:", &.{ .keyword_popmeta, .key, .colon });
+}
+
+test "beancount null true false" {
+    try testLex("TRUE FALSE NULL", &.{ .true, .false, .none });
+}
+
+test "beancount ignored long comment" {
+    try testLex(";; Long comment line about something something.", &.{});
+}
+
+test "beancount ignored indented comment" {
+    try testLex(
+        \\option "title" "The Title"
+        \\  ;; Something something.
+    , &.{ .keyword_option, .string, .string, .eol, .indent });
+}
+
+test "beancount ignored something else" {
+    try testLex("Regular prose appearing mid-file which starts with a flag character.", &.{});
 }
 
 fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {

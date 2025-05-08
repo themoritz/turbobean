@@ -41,6 +41,7 @@ pub const Date = struct {
             .day = day,
         };
     }
+
     pub fn format(self: Date, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
