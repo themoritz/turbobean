@@ -8,14 +8,27 @@ const parser = @import("parser.zig");
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
-    const file = try std.fs.cwd().openFile("example.bean", .{});
+    const file = try std.fs.cwd().openFile("test.bean", .{});
     defer file.close();
 
-    // Read entire file into a dynamically allocated buffer
-    const source = try file.readToEndAlloc(allocator, 1024 * 1024); // Max size: 1MB
-    defer allocator.free(source); // Free the allocated memory
+    const filesize = try file.getEndPos();
+    const source = try allocator.alloc(u8, filesize + 1);
+    defer allocator.free(source);
 
-    std.debug.print("File content: {s}\n", .{source});
+    _ = try file.readAll(source[0..filesize]);
+
+    source[filesize] = 0;
+    const null_terminated: [:0]u8 = source[0..filesize :0];
+
+    var token_count: u32 = 0;
+    var lexer = lex.Lexer.init(null_terminated);
+    while (true) {
+        const token = lexer.next();
+        token_count += 1;
+        if (token.tag == .eof) break;
+    }
+
+    std.debug.print("{d}\n", .{token_count});
 }
 
 test {
