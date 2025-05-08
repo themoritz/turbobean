@@ -579,18 +579,18 @@ pub const Lexer = struct {
                     result.tag = .account;
                     continue :state .account;
                 },
-                0, ',', ' ', '\t', '\n' => {
+                else => {
                     // Check for TRUE, FALSE, NULL here since they look like currency symbols.
                     const literal = self.buffer[result.loc.start..self.index];
                     if (Token.getLiteral(literal)) |tag| {
                         result.tag = tag;
                     }
-                    // Check at most 24 (22 middle + start + end) chars
-                    if (self.index - result.loc.start > 24) {
+                    // Check at least 2 and most 24 (22 middle + start + end) chars
+                    const length = self.index - result.loc.start;
+                    if (length < 2 or length > 24) {
                         continue :state .invalid;
                     }
                 },
-                else => continue :state .invalid,
             },
 
             .currency_special => switch (self.current()) {

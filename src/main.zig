@@ -8,7 +8,12 @@ const parser = @import("parser.zig");
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
-    const file = try std.fs.cwd().openFile("test.bean", .{});
+
+    const args = try std.process.argsAlloc(allocator);
+    defer allocator.free(args);
+    if (args.len < 2) return error.MissingArgument;
+    const filename = args[1];
+    const file = try std.fs.cwd().openFile(filename, .{});
     defer file.close();
 
     const filesize = try file.getEndPos();
@@ -24,6 +29,7 @@ pub fn main() !void {
     var lexer = lex.Lexer.init(null_terminated);
     while (true) {
         const token = lexer.next();
+        if (token.tag == .invalid) std.debug.print("invalid {s}\n", .{source[token.loc.start - 1 .. token.loc.end + 1]});
         token_count += 1;
         if (token.tag == .eof) break;
     }
