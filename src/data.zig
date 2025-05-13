@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Date = @import("date.zig").Date;
 const Parser = @import("parser.zig");
-const Decimal = @import("decimal.zig").Decimal;
+const Number = @import("number.zig").Number;
 const Lexer = @import("lexer.zig").Lexer;
 
 const Self = @This();
@@ -16,7 +16,7 @@ pub const Legs = std.MultiArrayList(Leg);
 
 pub const Leg = struct {
     account: []const u8,
-    amount: Decimal,
+    amount: Number,
     currency: []const u8,
 };
 

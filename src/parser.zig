@@ -4,7 +4,7 @@ const Data = @import("data.zig");
 const Date = @import("date.zig").Date;
 const Self = @This();
 const Lexer = @import("lexer.zig").Lexer;
-const Decimal = @import("decimal.zig").Decimal;
+const Number = @import("number.zig").Number;
 
 pub const Error = error{ ParseError, InvalidCharacter } || Allocator.Error;
 
@@ -130,7 +130,7 @@ fn parseLeg(p: *Self) Error!usize {
     _ = try p.expectToken(.indent);
     const account = try p.expectTokenSlice(.account);
     const amount_slice = try p.expectTokenSlice(.number);
-    const amount = try Decimal.fromSlice(amount_slice);
+    const amount = try Number.fromSlice(amount_slice);
     const currency = try p.expectTokenSlice(.currency);
     _ = p.tryToken(.eol);
 
