@@ -157,8 +157,17 @@ fn parseEntry(p: *Self) !?usize {
     switch (p.currentToken().tag) {
         .keyword_txn, .flag, .asterisk, .hash => {
             const flag = p.advanceToken();
-            const payee = p.tryTokenSlice(.string);
-            const narration = p.tryTokenSlice(.string);
+
+            const s1 = p.tryTokenSlice(.string);
+            const s2 = p.tryTokenSlice(.string);
+            var payee = s1;
+            var narration = s2;
+
+            if (s2 == null) {
+                payee = null;
+                narration = s1;
+            }
+
             const tagslinks = try p.parseTagsLinks();
             _ = p.tryToken(.eol);
 
@@ -336,10 +345,10 @@ test "pushtag poptat" {
 
 test "meta" {
     try testParse(
-        \\2020-01-01 txn "a"
+        \\2020-01-01 txn
         \\  foo: TRUE
         \\
-        \\2020-02-01 txn "b"
+        \\2020-02-01 txn "a" "b"
         \\  foo: FALSE
         \\  Assets:Foo 10.0000 USD
         \\    bar: NULL

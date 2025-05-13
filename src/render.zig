@@ -63,11 +63,12 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
             try r.format("{}", .{tx.date});
             try r.space();
             try r.buffer.appendSlice(tx.flag.loc);
-            try r.space();
             if (tx.payee) |payee| {
+                try r.space();
                 try r.buffer.appendSlice(payee);
             }
             if (tx.narration) |narration| {
+                try r.space();
                 try r.buffer.appendSlice(narration);
             }
             try r.newline();
