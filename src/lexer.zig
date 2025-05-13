@@ -6,18 +6,9 @@ pub const Lexer = struct {
     index: usize,
     at_line_start: bool,
 
-    pub fn token_slice(lexer: *Lexer, token: *const Token) []const u8 {
-        return lexer.buffer[token.loc.start..token.loc.end];
-    }
-
     pub const Token = struct {
         tag: Tag,
-        loc: Loc,
-
-        pub const Loc = struct {
-            start: usize,
-            end: usize,
-        };
+        loc: []const u8,
 
         pub const keywords = std.StaticStringMap(Tag).initComptime(.{
             .{ "txn", .keyword_txn },
@@ -216,11 +207,9 @@ pub const Lexer = struct {
     pub fn next(self: *Lexer) Token {
         var result: Token = .{
             .tag = undefined,
-            .loc = .{
-                .start = self.index,
-                .end = undefined,
-            },
+            .loc = undefined,
         };
+        var start = self.index;
 
         state: switch (State.start) {
             .start => {
@@ -253,7 +242,7 @@ pub const Lexer = struct {
                             continue :state .indent;
                         } else {
                             self.consume();
-                            result.loc.start = self.index;
+                            start = self.index;
                             continue :state .start;
                         }
                     },
@@ -394,7 +383,7 @@ pub const Lexer = struct {
                     continue :state .indent;
                 },
                 '\n' => {
-                    result.loc.start = self.index;
+                    start = self.index;
                     self.consume();
                     result.tag = .eol;
                 },
@@ -437,7 +426,7 @@ pub const Lexer = struct {
                 '-', '/' => {
                     self.consume();
                     // Make sure we're at least 5th digit
-                    if (self.index - result.loc.start >= 5) {
+                    if (self.index - start >= 5) {
                         result.tag = .date;
                         continue :state .date;
                     } else {
@@ -577,12 +566,12 @@ pub const Lexer = struct {
                 },
                 else => {
                     // Check for TRUE, FALSE, NULL here since they look like currency symbols.
-                    const literal = self.buffer[result.loc.start..self.index];
+                    const literal = self.buffer[start..self.index];
                     if (Token.getLiteral(literal)) |tag| {
                         result.tag = tag;
                     }
                     // Check at least 2 and most 24 (22 middle + start + end) chars
-                    const length = self.index - result.loc.start;
+                    const length = self.index - start;
                     if (length < 2 or length > 24) {
                         continue :state .invalid;
                     }
@@ -651,7 +640,7 @@ pub const Lexer = struct {
                     continue :state .keyword;
                 },
                 0, ' ', '\n' => {
-                    const keyword = self.buffer[result.loc.start..self.index];
+                    const keyword = self.buffer[start..self.index];
                     if (Token.getKeyword(keyword)) |tag| {
                         result.tag = tag;
                     } else {
@@ -669,18 +658,18 @@ pub const Lexer = struct {
                 0 => continue :state .start,
                 '\n' => {
                     self.consume();
-                    result.loc.start = self.index;
+                    start = self.index;
                     continue :state .start;
                 },
                 else => {
                     self.consume();
-                    result.loc.start = self.index;
+                    start = self.index;
                     continue :state .comment;
                 },
             },
         }
 
-        result.loc.end = self.index;
+        result.loc = self.buffer[start..self.index];
         return result;
     }
 };
@@ -1031,8 +1020,9 @@ fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
     }
     const last_token = lexer.next();
     try std.testing.expectEqual(last_token.tag, .eof);
-    try std.testing.expectEqual(source.len, last_token.loc.start);
-    try std.testing.expectEqual(source.len, last_token.loc.end);
+    const first_index = @intFromPtr(last_token.loc.ptr) - @intFromPtr(source.ptr);
+    try std.testing.expectEqual(source.len, first_index);
+    try std.testing.expectEqual(source.len, first_index + last_token.loc.len);
 }
 
 fn testValid(source: [:0]const u8) !void {

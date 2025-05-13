@@ -22,7 +22,7 @@ pub const Posting = struct {
 pub const Entry = union(enum) {
     transaction: struct {
         date: Date,
-        flag: Flag,
+        flag: Lexer.Token,
         message: []const u8,
         postings: struct {
             start: usize,
@@ -42,11 +42,6 @@ pub const Entry = union(enum) {
 pub const Amount = struct {
     number: Number,
     currency: []const u8,
-};
-
-pub const Flag = enum {
-    star,
-    bang,
 };
 
 pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {

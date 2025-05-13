@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Data = @import("data.zig");
 const Render = @This();
+const Lexer = @import("lexer.zig");
 
 buffer: std.ArrayList(u8),
 data: *Data,
@@ -62,7 +63,7 @@ fn render_entry(r: *Render, entry: Data.Entry) !void {
         .transaction => |tx| {
             try r.format("{}", .{tx.date});
             try r.space();
-            try r.renderFlag(tx.flag);
+            try r.buffer.appendSlice(tx.flag.loc);
             try r.space();
             try r.buffer.appendSlice(tx.message);
             const num_postings = tx.postings.end - tx.postings.start;
@@ -77,14 +78,6 @@ fn render_entry(r: *Render, entry: Data.Entry) !void {
         .open => {},
         .close => {},
     }
-}
-
-fn renderFlag(r: *Render, flag: Data.Flag) !void {
-    const char: u8 = switch (flag) {
-        .bang => '!',
-        .star => '*',
-    };
-    try r.buffer.append(char);
 }
 
 fn renderPosting(r: *Render, posting: usize) !void {

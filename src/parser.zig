@@ -23,6 +23,7 @@ pub const ErrorDetails = struct {
     pub const Tag = enum {
         expected_token,
         expected_amount,
+        expected_directive,
     };
 };
 
@@ -84,7 +85,7 @@ fn expectToken(p: *Self, tag: Lexer.Token.Tag) Error!Lexer.Token {
 
 fn expectTokenSlice(p: *Self, tag: Lexer.Token.Tag) Error![]const u8 {
     const token = try p.expectToken(tag);
-    return p.lexer.token_slice(&token);
+    return token.loc;
 }
 
 /// If successful, returns the token looked for and advances the
@@ -99,47 +100,44 @@ fn tryToken(p: *Self, tag: Lexer.Token.Tag) ?Lexer.Token {
 
 pub fn parse(p: *Self) !void {
     while (true) {
-        _ = p.parseEntry() catch |err| switch (err) {
+        const entry = p.parseEntry() catch |err| switch (err) {
             error.ParseError => {
-                // std.debug.print("{any}\n", .{p.err});
+                std.debug.print("{any}\n", .{p.err});
                 break;
             },
             else => return err,
         };
+        if (entry == null) break;
     }
 }
 
 /// Returns index of newly parsed entry in entries array.
-fn parseEntry(p: *Self) !usize {
-    const date_slice = try p.expectTokenSlice(.date);
-    const date = try Date.fromSlice(date_slice);
-    const flag = try p.parseFlag();
-    const msg = try p.expectTokenSlice(.string);
-    _ = p.tryToken(.eol);
+fn parseEntry(p: *Self) !?usize {
+    const date = try p.parseDate() orelse return null;
+    switch (p.currentToken().tag) {
+        .keyword_txn, .flag, .asterisk, .hash => {
+            // Transaction!
+            const flag = p.advanceToken();
+            const msg = try p.expectTokenSlice(.string);
+            _ = p.tryToken(.eol);
 
-    const postings_top = p.postings.len;
-    while (true) {
-        _ = p.parsePosting() catch |err| switch (err) {
-            error.ParseError => break,
-            else => return err,
-        };
-    }
-    const entry = Data.Entry{ .transaction = .{ .date = date, .flag = flag, .message = msg, .postings = .{
-        .start = postings_top,
-        .end = p.postings.len,
-    } } };
+            const postings_top = p.postings.len;
+            while (true) {
+                _ = p.parsePosting() catch |err| switch (err) {
+                    error.ParseError => break,
+                    else => return err,
+                };
+            }
+            const entry = Data.Entry{ .transaction = .{ .date = date, .flag = flag, .message = msg, .postings = .{
+                .start = postings_top,
+                .end = p.postings.len,
+            } } };
 
-    _ = p.tryToken(.eol);
+            _ = p.tryToken(.eol);
 
-    return p.addEntry(entry);
-}
-
-fn parseFlag(p: *Self) !Data.Flag {
-    if (p.tryToken(.asterisk)) |_| {
-        return .star;
-    } else {
-        _ = try p.expectToken(.flag);
-        return .bang;
+            return try p.addEntry(entry);
+        },
+        else => return p.fail(.expected_directive),
     }
 }
 
@@ -166,11 +164,14 @@ fn parseAmount(p: *Self) !?Data.Amount {
     };
 }
 
+fn parseDate(p: *Self) !?Date {
+    const token = p.tryToken(.date) orelse return null;
+    return try Date.fromSlice(token.loc);
+}
+
 fn parseNumber(p: *Self) !?Number {
-    if (p.tryToken(.number)) |token| {
-        const slice = p.lexer.token_slice(&token);
-        return try Number.fromSlice(slice);
-    } else return null;
+    const token = p.tryToken(.number) orelse return null;
+    return try Number.fromSlice(token.loc);
 }
 
 test "parser" {
