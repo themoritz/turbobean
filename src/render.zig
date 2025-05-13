@@ -50,30 +50,45 @@ inline fn indent(r: *Render) !void {
 
 fn render(r: *Render) !void {
     for (r.data.entries, 1..) |entry, i| {
-        try r.render_entry(entry);
+        try r.renderEntry(entry);
+        try r.newline();
         if (i < r.data.entries.len) {
-            try r.newline();
             try r.newline();
         }
     }
 }
 
-fn render_entry(r: *Render, entry: Data.Entry) !void {
+fn renderEntry(r: *Render, entry: Data.Entry) !void {
     switch (entry) {
         .transaction => |tx| {
             try r.format("{}", .{tx.date});
             try r.space();
             try r.buffer.appendSlice(tx.flag.loc);
             try r.space();
-            try r.buffer.appendSlice(tx.message);
-            const num_postings = tx.postings.end - tx.postings.start;
-            if (num_postings > 0) {
-                try r.newline();
+            if (tx.payee) |payee| {
+                try r.buffer.appendSlice(payee);
             }
-            for (tx.postings.start..tx.postings.end) |i| {
-                try r.renderPosting(i);
-                if (i < tx.postings.end - 1) try r.newline();
+            if (tx.narration) |narration| {
+                try r.buffer.appendSlice(narration);
             }
+            if (tx.postings) |postings| {
+                const num_postings = postings.end - postings.start;
+                if (num_postings > 0) {
+                    try r.newline();
+                }
+                for (postings.start..postings.end) |i| {
+                    try r.renderPosting(i);
+                    if (i < postings.end - 1) try r.newline();
+                }
+            }
+        },
+        .pushtag => |tag| {
+            try r.format("pushtag ", .{});
+            try r.buffer.appendSlice(tag);
+        },
+        .poptag => |tag| {
+            try r.format("poptag ", .{});
+            try r.buffer.appendSlice(tag);
         },
         .open => {},
         .close => {},

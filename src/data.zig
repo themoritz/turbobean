@@ -10,9 +10,11 @@ const Self = @This();
 source: [:0]const u8,
 entries: Entries.Slice,
 postings: Postings.Slice,
+tagslinks: TagsLinks.Slice,
 
 pub const Entries = std.ArrayList(Entry);
 pub const Postings = std.MultiArrayList(Posting);
+pub const TagsLinks = std.MultiArrayList(TagLink);
 
 pub const Posting = struct {
     account: []const u8,
@@ -23,11 +25,10 @@ pub const Entry = union(enum) {
     transaction: struct {
         date: Date,
         flag: Lexer.Token,
-        message: []const u8,
-        postings: struct {
-            start: usize,
-            end: usize, // exclusive
-        },
+        payee: ?[]const u8,
+        narration: ?[]const u8,
+        tagslinks: ?Range,
+        postings: ?Range,
     },
     open: struct {
         date: Date,
@@ -37,6 +38,23 @@ pub const Entry = union(enum) {
         date: Date,
         account: []const u8,
     },
+    pushtag: []const u8,
+    poptag: []const u8,
+};
+
+pub const Range = struct {
+    start: usize,
+    end: usize, // exclusive
+};
+
+pub const TagLink = struct {
+    kind: Kind,
+    slice: []const u8,
+
+    pub const Kind = enum {
+        tag,
+        link,
+    };
 };
 
 pub const Amount = struct {
@@ -50,19 +68,28 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
     var parser: Parser = .{
         .gpa = alloc,
         .postings = .{},
+        .tagslinks = .{},
         .entries = Entries.init(alloc),
         .lexer = &lexer,
         .current_token = first_token,
         .err = null,
     };
     defer parser.postings.deinit(alloc);
+    defer parser.tagslinks.deinit(alloc);
     defer parser.entries.deinit();
 
-    try parser.parse();
+    parser.parse() catch |err| switch (err) {
+        error.ParseError => {
+            std.debug.print("{any}\n", .{parser.err});
+            return err;
+        },
+        else => return err,
+    };
 
     return Self{
         .entries = try parser.entries.toOwnedSlice(),
         .postings = parser.postings.toOwnedSlice(),
+        .tagslinks = parser.tagslinks.toOwnedSlice(),
         .source = source,
     };
 }

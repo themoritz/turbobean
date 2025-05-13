@@ -12,6 +12,7 @@ gpa: Allocator,
 lexer: *Lexer,
 entries: Data.Entries,
 postings: Data.Postings,
+tagslinks: Data.TagsLinks,
 err: ?ErrorDetails,
 current_token: Lexer.Token,
 
@@ -23,9 +24,15 @@ pub const ErrorDetails = struct {
     pub const Tag = enum {
         expected_token,
         expected_amount,
-        expected_directive,
+        expected_entry,
     };
 };
+
+fn addEntry(p: *Self, entry: Data.Entry) !usize {
+    const result = p.entries.items.len;
+    try p.entries.append(entry);
+    return result;
+}
 
 fn addPosting(p: *Self, posting: Data.Posting) !usize {
     const result = p.postings.len;
@@ -33,9 +40,9 @@ fn addPosting(p: *Self, posting: Data.Posting) !usize {
     return result;
 }
 
-fn addEntry(p: *Self, entry: Data.Entry) !usize {
-    const result = p.entries.items.len;
-    try p.entries.append(entry);
+fn addTagLink(p: *Self, taglink: Data.TagLink) !usize {
+    const result = p.tagslinks.len;
+    try p.tagslinks.append(p.gpa, taglink);
     return result;
 }
 
@@ -98,17 +105,20 @@ fn tryToken(p: *Self, tag: Lexer.Token.Tag) ?Lexer.Token {
     }
 }
 
+fn tryTokenSlice(p: *Self, tag: Lexer.Token.Tag) ?[]const u8 {
+    const token = p.tryToken(tag) orelse return null;
+    return token.loc;
+}
+
 pub fn parse(p: *Self) !void {
     while (true) {
-        const entry = p.parseEntry() catch |err| switch (err) {
-            error.ParseError => {
-                std.debug.print("{any}\n", .{p.err});
-                break;
-            },
-            else => return err,
-        };
+        const entry = try p.parseDecl();
         if (entry == null) break;
     }
+}
+
+fn parseDecl(p: *Self) !?usize {
+    return try p.parseEntry() orelse try p.parseDirective();
 }
 
 /// Returns index of newly parsed entry in entries array.
@@ -116,19 +126,18 @@ fn parseEntry(p: *Self) !?usize {
     const date = try p.parseDate() orelse return null;
     switch (p.currentToken().tag) {
         .keyword_txn, .flag, .asterisk, .hash => {
-            // Transaction!
             const flag = p.advanceToken();
-            const msg = try p.expectTokenSlice(.string);
+            const payee = p.tryTokenSlice(.string);
+            const narration = p.tryTokenSlice(.string);
+            const tagslinks = try p.parseTagsLinks();
             _ = p.tryToken(.eol);
 
             const postings_top = p.postings.len;
             while (true) {
-                _ = p.parsePosting() catch |err| switch (err) {
-                    error.ParseError => break,
-                    else => return err,
-                };
+                const posting = try p.parsePostingOrKeyValue();
+                if (posting == null) break;
             }
-            const entry = Data.Entry{ .transaction = .{ .date = date, .flag = flag, .message = msg, .postings = .{
+            const entry = Data.Entry{ .transaction = .{ .date = date, .flag = flag, .payee = payee, .narration = narration, .tagslinks = tagslinks, .postings = .{
                 .start = postings_top,
                 .end = p.postings.len,
             } } };
@@ -137,12 +146,30 @@ fn parseEntry(p: *Self) !?usize {
 
             return try p.addEntry(entry);
         },
-        else => return p.fail(.expected_directive),
+        else => return p.fail(.expected_entry),
     }
 }
 
-fn parsePosting(p: *Self) Error!usize {
-    _ = try p.expectToken(.indent);
+fn parseDirective(p: *Self) !?usize {
+    switch (p.currentToken().tag) {
+        .keyword_pushtag => {
+            _ = p.advanceToken();
+            const tag = try p.expectTokenSlice(.tag);
+            _ = try p.expectEolPlus();
+            return try p.addEntry(Data.Entry{ .pushtag = tag });
+        },
+        .keyword_poptag => {
+            _ = p.advanceToken();
+            const tag = try p.expectTokenSlice(.tag);
+            _ = try p.expectEolPlus();
+            return try p.addEntry(Data.Entry{ .poptag = tag });
+        },
+        else => return null,
+    }
+}
+
+fn parsePostingOrKeyValue(p: *Self) !?usize {
+    _ = p.tryToken(.indent) orelse return null;
     const account = try p.expectTokenSlice(.account);
     const amount = try p.parseAmount() orelse return p.fail(.expected_amount);
     _ = p.tryToken(.eol);
@@ -152,7 +179,7 @@ fn parsePosting(p: *Self) Error!usize {
         .amount = amount,
     };
 
-    return p.addPosting(posting);
+    return try p.addPosting(posting);
 }
 
 fn parseAmount(p: *Self) !?Data.Amount {
@@ -162,6 +189,35 @@ fn parseAmount(p: *Self) !?Data.Amount {
         .number = number,
         .currency = currency,
     };
+}
+
+fn parseTagsLinks(p: *Self) !?Data.Range {
+    const tagslinks_top = p.tagslinks.len;
+    while (true) {
+        if (p.tryToken(.tag)) |tag| {
+            _ = try p.addTagLink(Data.TagLink{ .kind = .tag, .slice = tag.loc });
+        } else if (p.tryToken(.link)) |link| {
+            _ = try p.addTagLink(Data.TagLink{ .kind = .link, .slice = link.loc });
+        } else break;
+    }
+    const tagslinks_bot = p.tagslinks.len;
+    if (tagslinks_bot == tagslinks_top) return null;
+    return Data.Range{
+        .start = tagslinks_top,
+        .end = tagslinks_bot,
+    };
+}
+
+/// Expects at least one .eol, and consumes all it finds. Returns last consumed
+/// .eol.
+fn expectEolPlus(p: *Self) !Lexer.Token {
+    var result = try p.expectToken(.eol);
+    while (true) {
+        if (p.tryToken(.eol)) |i| {
+            result = i;
+        } else break;
+    }
+    return result;
 }
 
 fn parseDate(p: *Self) !?Date {
@@ -179,10 +235,12 @@ test "parser" {
         \\2015-11-01 * "Test"
         \\  Foo 100.0000 USD
         \\  Bar 2.0000 EUR
+        \\
     );
 
     try testParse(
         \\2024-12-01 * "Foo"
+        \\
     );
 
     try testParse(
@@ -193,6 +251,14 @@ test "parser" {
         \\2016-01-01 * ""
         \\  Ca 10.0000 USD
         \\  Da 20.0000 USD
+        \\
+    );
+
+    try testParse(
+        \\pushtag #nz
+        \\
+        \\poptag #foo
+        \\
     );
 }
 
