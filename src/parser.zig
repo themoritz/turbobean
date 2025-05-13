@@ -22,6 +22,7 @@ pub const ErrorDetails = struct {
 
     pub const Tag = enum {
         expected_token,
+        expected_amount,
     };
 };
 
@@ -35,6 +36,27 @@ fn addEntry(p: *Self, entry: Data.Entry) !usize {
     const result = p.entries.items.len;
     try p.entries.append(entry);
     return result;
+}
+
+fn failExpected(p: *Self, expected_token: Lexer.Token.Tag) error{ParseError} {
+    return p.failMsg(.{
+        .tag = .expected_token,
+        .token = p.currentToken(),
+        .expected = expected_token,
+    });
+}
+
+fn fail(p: *Self, msg: ErrorDetails.Tag) error{ParseError} {
+    return p.failMsg(.{
+        .tag = msg,
+        .token = p.currentToken(),
+        .expected = null,
+    });
+}
+
+fn failMsg(p: *Self, err: ErrorDetails) error{ParseError} {
+    p.err = err;
+    return error.ParseError;
 }
 
 /// Advances the lexer and stores the next token in `current_token`.
@@ -54,12 +76,7 @@ fn currentToken(p: *Self) Lexer.Token {
 fn expectToken(p: *Self, tag: Lexer.Token.Tag) Error!Lexer.Token {
     const current = p.currentToken();
     if (current.tag != tag) {
-        p.err = .{
-            .tag = .expected_token,
-            .token = current,
-            .expected = tag,
-        };
-        return error.ParseError;
+        return p.failExpected(tag);
     } else {
         return p.advanceToken();
     }
@@ -129,17 +146,31 @@ fn parseFlag(p: *Self) !Data.Flag {
 fn parsePosting(p: *Self) Error!usize {
     _ = try p.expectToken(.indent);
     const account = try p.expectTokenSlice(.account);
-    const number_slice = try p.expectTokenSlice(.number);
-    const number = try Number.fromSlice(number_slice);
-    const currency = try p.expectTokenSlice(.currency);
+    const amount = try p.parseAmount() orelse return p.fail(.expected_amount);
     _ = p.tryToken(.eol);
 
     const posting = Data.Posting{
         .account = account,
-        .amount = .{ .number = number, .currency = currency },
+        .amount = amount,
     };
 
     return p.addPosting(posting);
+}
+
+fn parseAmount(p: *Self) !?Data.Amount {
+    const number = try p.parseNumber() orelse return null;
+    const currency = try p.expectTokenSlice(.currency);
+    return .{
+        .number = number,
+        .currency = currency,
+    };
+}
+
+fn parseNumber(p: *Self) !?Number {
+    if (p.tryToken(.number)) |token| {
+        const slice = p.lexer.token_slice(&token);
+        return try Number.fromSlice(slice);
+    } else return null;
 }
 
 test "parser" {

@@ -70,7 +70,7 @@ fn render_entry(r: *Render, entry: Data.Entry) !void {
                 try r.newline();
             }
             for (tx.postings.start..tx.postings.end) |i| {
-                try r.render_posting(i);
+                try r.renderPosting(i);
                 if (i < tx.postings.end - 1) try r.newline();
             }
         },
@@ -87,13 +87,15 @@ fn renderFlag(r: *Render, flag: Data.Flag) !void {
     try r.buffer.append(char);
 }
 
-fn render_posting(r: *Render, posting: usize) !void {
+fn renderPosting(r: *Render, posting: usize) !void {
     try r.indent();
     try r.buffer.appendSlice(r.data.postings.items(.account)[posting]);
     try r.space();
-    const number = r.data.postings.items(.amount)[posting].number;
-    try r.format("{}", .{number});
+    try r.renderAmount(r.data.postings.items(.amount)[posting]);
+}
+
+fn renderAmount(r: *Render, amount: Data.Amount) !void {
+    try r.format("{}", .{amount.number});
     try r.space();
-    const currency = r.data.postings.items(.amount)[posting].currency;
-    try r.buffer.appendSlice(currency);
+    try r.buffer.appendSlice(amount.currency);
 }
