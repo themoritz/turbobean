@@ -10,8 +10,8 @@ pub const Error = error{ ParseError, InvalidCharacter } || Allocator.Error;
 
 gpa: Allocator,
 lexer: *Lexer,
-directives: Data.Directives,
-legs: Data.Legs,
+entries: Data.Entries,
+postings: Data.Postings,
 err: ?ErrorDetails,
 current_token: Lexer.Token,
 
@@ -25,15 +25,15 @@ pub const ErrorDetails = struct {
     };
 };
 
-fn addLeg(p: *Self, leg: Data.Leg) !usize {
-    const result = p.legs.len;
-    try p.legs.append(p.gpa, leg);
+fn addPosting(p: *Self, posting: Data.Posting) !usize {
+    const result = p.postings.len;
+    try p.postings.append(p.gpa, posting);
     return result;
 }
 
-fn addDirective(p: *Self, directive: Data.Directive) !usize {
-    const result = p.directives.items.len;
-    try p.directives.append(directive);
+fn addEntry(p: *Self, entry: Data.Entry) !usize {
+    const result = p.entries.items.len;
+    try p.entries.append(entry);
     return result;
 }
 
@@ -82,7 +82,7 @@ fn tryToken(p: *Self, tag: Lexer.Token.Tag) ?Lexer.Token {
 
 pub fn parse(p: *Self) !void {
     while (true) {
-        _ = p.parseDirective() catch |err| switch (err) {
+        _ = p.parseEntry() catch |err| switch (err) {
             error.ParseError => {
                 // std.debug.print("{any}\n", .{p.err});
                 break;
@@ -92,29 +92,29 @@ pub fn parse(p: *Self) !void {
     }
 }
 
-/// Returns index of newly parsed directive in directives array.
-fn parseDirective(p: *Self) !usize {
+/// Returns index of newly parsed entry in entries array.
+fn parseEntry(p: *Self) !usize {
     const date_slice = try p.expectTokenSlice(.date);
     const date = try Date.fromSlice(date_slice);
     const flag = try p.parseFlag();
     const msg = try p.expectTokenSlice(.string);
     _ = p.tryToken(.eol);
 
-    const legs_top = p.legs.len;
+    const postings_top = p.postings.len;
     while (true) {
-        _ = p.parseLeg() catch |err| switch (err) {
+        _ = p.parsePosting() catch |err| switch (err) {
             error.ParseError => break,
             else => return err,
         };
     }
-    const directive = Data.Directive{ .transaction = .{ .date = date, .flag = flag, .message = msg, .legs = .{
-        .start = legs_top,
-        .end = p.legs.len,
+    const entry = Data.Entry{ .transaction = .{ .date = date, .flag = flag, .message = msg, .postings = .{
+        .start = postings_top,
+        .end = p.postings.len,
     } } };
 
     _ = p.tryToken(.eol);
 
-    return p.addDirective(directive);
+    return p.addEntry(entry);
 }
 
 fn parseFlag(p: *Self) !Data.Flag {
@@ -126,21 +126,20 @@ fn parseFlag(p: *Self) !Data.Flag {
     }
 }
 
-fn parseLeg(p: *Self) Error!usize {
+fn parsePosting(p: *Self) Error!usize {
     _ = try p.expectToken(.indent);
     const account = try p.expectTokenSlice(.account);
-    const amount_slice = try p.expectTokenSlice(.number);
-    const amount = try Number.fromSlice(amount_slice);
+    const number_slice = try p.expectTokenSlice(.number);
+    const number = try Number.fromSlice(number_slice);
     const currency = try p.expectTokenSlice(.currency);
     _ = p.tryToken(.eol);
 
-    const leg = Data.Leg{
+    const posting = Data.Posting{
         .account = account,
-        .amount = amount,
-        .currency = currency,
+        .amount = .{ .number = number, .currency = currency },
     };
 
-    return p.addLeg(leg);
+    return p.addPosting(posting);
 }
 
 test "parser" {
@@ -172,8 +171,8 @@ fn testParse(source: [:0]const u8) !void {
     defer data.deinit(alloc);
 
     // const pretty = @import("pretty.zig");
-    // try pretty.print(alloc, data.directives, .{});
-    // try pretty.print(alloc, data.legs.items(.amount), .{});
+    // try pretty.print(alloc, data.entries, .{});
+    // try pretty.print(alloc, data.postings.items(.amount), .{});
 
     const Render = @import("render.zig");
     const rendered = try Render.dump(alloc, &data);

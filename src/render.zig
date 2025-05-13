@@ -48,30 +48,30 @@ inline fn indent(r: *Render) !void {
 }
 
 fn render(r: *Render) !void {
-    for (r.data.directives, 1..) |directive, i| {
-        try r.render_directive(directive);
-        if (i < r.data.directives.len) {
+    for (r.data.entries, 1..) |entry, i| {
+        try r.render_entry(entry);
+        if (i < r.data.entries.len) {
             try r.newline();
             try r.newline();
         }
     }
 }
 
-fn render_directive(r: *Render, directive: Data.Directive) !void {
-    switch (directive) {
+fn render_entry(r: *Render, entry: Data.Entry) !void {
+    switch (entry) {
         .transaction => |tx| {
             try r.format("{}", .{tx.date});
             try r.space();
             try r.renderFlag(tx.flag);
             try r.space();
             try r.buffer.appendSlice(tx.message);
-            const num_legs = tx.legs.end - tx.legs.start;
-            if (num_legs > 0) {
+            const num_postings = tx.postings.end - tx.postings.start;
+            if (num_postings > 0) {
                 try r.newline();
             }
-            for (tx.legs.start..tx.legs.end) |i| {
-                try r.render_leg(i);
-                if (i < tx.legs.end - 1) try r.newline();
+            for (tx.postings.start..tx.postings.end) |i| {
+                try r.render_posting(i);
+                if (i < tx.postings.end - 1) try r.newline();
             }
         },
         .open => {},
@@ -87,13 +87,13 @@ fn renderFlag(r: *Render, flag: Data.Flag) !void {
     try r.buffer.append(char);
 }
 
-fn render_leg(r: *Render, leg: usize) !void {
+fn render_posting(r: *Render, posting: usize) !void {
     try r.indent();
-    try r.buffer.appendSlice(r.data.legs.items(.account)[leg]);
+    try r.buffer.appendSlice(r.data.postings.items(.account)[posting]);
     try r.space();
-    const amount = r.data.legs.items(.amount)[leg];
-    try r.format("{}", .{amount});
+    const number = r.data.postings.items(.amount)[posting].number;
+    try r.format("{}", .{number});
     try r.space();
-    const currency = r.data.legs.items(.currency)[leg];
+    const currency = r.data.postings.items(.amount)[posting].currency;
     try r.buffer.appendSlice(currency);
 }
