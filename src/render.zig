@@ -51,7 +51,6 @@ inline fn indent(r: *Render) !void {
 fn render(r: *Render) !void {
     for (r.data.entries, 1..) |entry, i| {
         try r.renderEntry(entry);
-        try r.newline();
         if (i < r.data.entries.len) {
             try r.newline();
         }
@@ -71,24 +70,31 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
             if (tx.narration) |narration| {
                 try r.buffer.appendSlice(narration);
             }
-            if (tx.postings) |postings| {
-                const num_postings = postings.end - postings.start;
-                if (num_postings > 0) {
+            try r.newline();
+            if (tx.meta) |meta| {
+                for (meta.start..meta.end) |i| {
+                    try r.indent();
+                    try r.buffer.appendSlice(r.data.meta.items(.key)[i]);
+                    try r.format(": ", .{});
+                    try r.buffer.appendSlice(r.data.meta.items(.value)[i]);
                     try r.newline();
                 }
+            }
+            if (tx.postings) |postings| {
                 for (postings.start..postings.end) |i| {
                     try r.renderPosting(i);
-                    if (i < postings.end - 1) try r.newline();
                 }
             }
         },
         .pushtag => |tag| {
             try r.format("pushtag ", .{});
             try r.buffer.appendSlice(tag);
+            try r.newline();
         },
         .poptag => |tag| {
             try r.format("poptag ", .{});
             try r.buffer.appendSlice(tag);
+            try r.newline();
         },
         .open => {},
         .close => {},
@@ -100,6 +106,17 @@ fn renderPosting(r: *Render, posting: usize) !void {
     try r.buffer.appendSlice(r.data.postings.items(.account)[posting]);
     try r.space();
     try r.renderAmount(r.data.postings.items(.amount)[posting]);
+    try r.newline();
+    if (r.data.postings.items(.meta)[posting]) |meta| {
+        for (meta.start..meta.end) |i| {
+            try r.indent();
+            try r.indent();
+            try r.buffer.appendSlice(r.data.meta.items(.key)[i]);
+            try r.format(": ", .{});
+            try r.buffer.appendSlice(r.data.meta.items(.value)[i]);
+            try r.newline();
+        }
+    }
 }
 
 fn renderAmount(r: *Render, amount: Data.Amount) !void {

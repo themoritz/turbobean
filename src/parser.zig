@@ -1,3 +1,17 @@
+//! Recursive descent parser with some lookahead. No backtracking.
+//!
+//! Conventions:
+//!
+//! - If a function is called parseX, it typically returns one of three options:
+//!   - an error: The sub parser has committed to a grammar and then got stuck.
+//!     Not revocerable
+//!   - null: The sub parser didn't match. It hasn't consumed any tokens. Use this to
+//!     model alternatives.
+//!   - a value: The sub parser succeeded. It consumed all tokens it needed
+//!
+//! - If a function is called expectX, it will return a parse erorr when the expected
+//!   grammar isn't found or doesn't parse successfully. The parser should fail.
+//!
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Data = @import("data.zig");
@@ -9,12 +23,15 @@ const Number = @import("number.zig").Number;
 pub const Error = error{ ParseError, InvalidCharacter } || Allocator.Error;
 
 gpa: Allocator,
-lexer: *Lexer,
+tokens: Data.Tokens,
+tok_i: usize,
+
 entries: Data.Entries,
 postings: Data.Postings,
 tagslinks: Data.TagsLinks,
+meta: Data.Meta,
+
 err: ?ErrorDetails,
-current_token: Lexer.Token,
 
 pub const ErrorDetails = struct {
     tag: Tag,
@@ -25,6 +42,8 @@ pub const ErrorDetails = struct {
         expected_token,
         expected_amount,
         expected_entry,
+        expected_key_value,
+        expected_value,
     };
 };
 
@@ -43,6 +62,12 @@ fn addPosting(p: *Self, posting: Data.Posting) !usize {
 fn addTagLink(p: *Self, taglink: Data.TagLink) !usize {
     const result = p.tagslinks.len;
     try p.tagslinks.append(p.gpa, taglink);
+    return result;
+}
+
+fn addKeyValue(p: *Self, keyvalue: Data.KeyValue) !usize {
+    const result = p.meta.len;
+    try p.meta.append(p.gpa, keyvalue);
     return result;
 }
 
@@ -70,13 +95,19 @@ fn failMsg(p: *Self, err: ErrorDetails) error{ParseError} {
 /// Advances the lexer and stores the next token in `current_token`.
 /// Returns the previous token.
 fn advanceToken(p: *Self) Lexer.Token {
-    const result = p.current_token;
-    p.current_token = p.lexer.next();
+    const result = p.currentToken();
+    p.tok_i += 1;
     return result;
 }
 
 fn currentToken(p: *Self) Lexer.Token {
-    return p.current_token;
+    return p.tokens.items[p.tok_i];
+}
+
+fn nextToken(p: *Self) ?Lexer.Token {
+    if (p.tok_i + 1 < p.tokens.items.len) {
+        return p.tokens.items[p.tok_i + 1];
+    } else return null;
 }
 
 /// If successful, returns the token looked for and advances
@@ -112,8 +143,7 @@ fn tryTokenSlice(p: *Self, tag: Lexer.Token.Tag) ?[]const u8 {
 
 pub fn parse(p: *Self) !void {
     while (true) {
-        const entry = try p.parseDecl();
-        if (entry == null) break;
+        _ = try p.parseDecl() orelse break;
     }
 }
 
@@ -132,15 +162,20 @@ fn parseEntry(p: *Self) !?usize {
             const tagslinks = try p.parseTagsLinks();
             _ = p.tryToken(.eol);
 
+            const meta_top = p.meta.len;
+            while (true) {
+                _ = try p.parseKeyValueLine() orelse break;
+            }
+            const meta = Data.Range.create(meta_top, p.meta.len);
+
             const postings_top = p.postings.len;
             while (true) {
-                const posting = try p.parsePostingOrKeyValue();
-                if (posting == null) break;
+                _ = try p.parsePosting() orelse break;
             }
-            const entry = Data.Entry{ .transaction = .{ .date = date, .flag = flag, .payee = payee, .narration = narration, .tagslinks = tagslinks, .postings = .{
-                .start = postings_top,
-                .end = p.postings.len,
-            } } };
+            const postings = Data.Range.create(postings_top, p.postings.len);
+
+            const transaction = Data.Transaction{ .date = date, .flag = flag, .payee = payee, .narration = narration, .tagslinks = tagslinks, .postings = postings, .meta = meta };
+            const entry = Data.Entry{ .transaction = transaction };
 
             _ = p.tryToken(.eol);
 
@@ -168,18 +203,58 @@ fn parseDirective(p: *Self) !?usize {
     }
 }
 
-fn parsePostingOrKeyValue(p: *Self) !?usize {
-    _ = p.tryToken(.indent) orelse return null;
-    const account = try p.expectTokenSlice(.account);
+fn parsePosting(p: *Self) !?usize {
+    // Lookahead
+    if (p.currentToken().tag != .indent) return null;
+    const next_token = p.nextToken() orelse return null;
+    if (next_token.tag != .account) return null;
+
+    _ = try p.expectToken(.indent);
+    const account = p.tryTokenSlice(.account) orelse return null;
     const amount = try p.parseAmount() orelse return p.fail(.expected_amount);
     _ = p.tryToken(.eol);
+
+    const meta_top = p.meta.len;
+    while (true) {
+        _ = try p.parseKeyValueLine() orelse break;
+    }
+    const meta = Data.Range.create(meta_top, p.meta.len);
 
     const posting = Data.Posting{
         .account = account,
         .amount = amount,
+        .meta = meta,
     };
 
     return try p.addPosting(posting);
+}
+
+fn parseKeyValueLine(p: *Self) !?usize {
+    // Lookahead
+    if (p.currentToken().tag != .indent) return null;
+    const next_token = p.nextToken() orelse return null;
+    if (next_token.tag != .key) return null;
+
+    _ = try p.expectToken(.indent);
+    const kv = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
+    _ = try p.expectToken(.eol);
+    return kv;
+}
+
+fn parseKeyValue(p: *Self) !?usize {
+    const key = p.tryToken(.key) orelse return null;
+    _ = try p.expectToken(.colon);
+    switch (p.currentToken().tag) {
+        .string, .account, .date, .currency, .tag, .true, .false, .none, .number => {
+            const value = p.advanceToken();
+            return try p.addKeyValue(Data.KeyValue{
+                .key = key.loc,
+                .value = value.loc,
+            });
+        },
+        // TODO: amount
+        else => return p.fail(.expected_value),
+    }
 }
 
 fn parseAmount(p: *Self) !?Data.Amount {
@@ -200,12 +275,7 @@ fn parseTagsLinks(p: *Self) !?Data.Range {
             _ = try p.addTagLink(Data.TagLink{ .kind = .link, .slice = link.loc });
         } else break;
     }
-    const tagslinks_bot = p.tagslinks.len;
-    if (tagslinks_bot == tagslinks_top) return null;
-    return Data.Range{
-        .start = tagslinks_top,
-        .end = tagslinks_bot,
-    };
+    return Data.Range.create(tagslinks_top, p.tagslinks.len);
 }
 
 /// Expects at least one .eol, and consumes all it finds. Returns last consumed
@@ -230,7 +300,7 @@ fn parseNumber(p: *Self) !?Number {
     return try Number.fromSlice(token.loc);
 }
 
-test "parser" {
+test "tx" {
     try testParse(
         \\2015-11-01 * "Test"
         \\  Foo 100.0000 USD
@@ -253,11 +323,26 @@ test "parser" {
         \\  Da 20.0000 USD
         \\
     );
+}
 
+test "pushtag poptat" {
     try testParse(
         \\pushtag #nz
         \\
         \\poptag #foo
+        \\
+    );
+}
+
+test "meta" {
+    try testParse(
+        \\2020-01-01 txn "a"
+        \\  foo: TRUE
+        \\
+        \\2020-02-01 txn "b"
+        \\  foo: FALSE
+        \\  Assets:Foo 10.0000 USD
+        \\    bar: NULL
         \\
     );
 }

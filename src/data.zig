@@ -11,25 +11,23 @@ source: [:0]const u8,
 entries: Entries.Slice,
 postings: Postings.Slice,
 tagslinks: TagsLinks.Slice,
+meta: Meta.Slice,
 
 pub const Entries = std.ArrayList(Entry);
 pub const Postings = std.MultiArrayList(Posting);
 pub const TagsLinks = std.MultiArrayList(TagLink);
+pub const Meta = std.MultiArrayList(KeyValue);
+
+pub const Tokens = std.ArrayList(Lexer.Token);
 
 pub const Posting = struct {
     account: []const u8,
     amount: Amount,
+    meta: ?Range,
 };
 
 pub const Entry = union(enum) {
-    transaction: struct {
-        date: Date,
-        flag: Lexer.Token,
-        payee: ?[]const u8,
-        narration: ?[]const u8,
-        tagslinks: ?Range,
-        postings: ?Range,
-    },
+    transaction: Transaction,
     open: struct {
         date: Date,
         account: []const u8,
@@ -42,9 +40,27 @@ pub const Entry = union(enum) {
     poptag: []const u8,
 };
 
+pub const Transaction = struct {
+    date: Date,
+    flag: Lexer.Token,
+    payee: ?[]const u8,
+    narration: ?[]const u8,
+    tagslinks: ?Range,
+    meta: ?Range,
+    postings: ?Range,
+};
+
 pub const Range = struct {
     start: usize,
     end: usize, // exclusive
+
+    pub fn create(start: usize, end: usize) ?Range {
+        if (start == end) return null;
+        return .{
+            .start = start,
+            .end = end,
+        };
+    }
 };
 
 pub const TagLink = struct {
@@ -57,6 +73,11 @@ pub const TagLink = struct {
     };
 };
 
+pub const KeyValue = struct {
+    key: []const u8,
+    value: []const u8,
+};
+
 pub const Amount = struct {
     number: Number,
     currency: []const u8,
@@ -64,18 +85,28 @@ pub const Amount = struct {
 
 pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
     var lexer = Lexer.init(source);
-    const first_token = lexer.next();
+    var tokens = Tokens.init(alloc);
+    defer tokens.deinit();
+
+    while (true) {
+        const token = lexer.next();
+        try tokens.append(token);
+        if (token.tag == .eof) break;
+    }
+
     var parser: Parser = .{
         .gpa = alloc,
+        .tokens = tokens,
+        .tok_i = 0,
         .postings = .{},
         .tagslinks = .{},
+        .meta = .{},
         .entries = Entries.init(alloc),
-        .lexer = &lexer,
-        .current_token = first_token,
         .err = null,
     };
     defer parser.postings.deinit(alloc);
     defer parser.tagslinks.deinit(alloc);
+    defer parser.meta.deinit(alloc);
     defer parser.entries.deinit();
 
     parser.parse() catch |err| switch (err) {
@@ -90,6 +121,7 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
         .entries = try parser.entries.toOwnedSlice(),
         .postings = parser.postings.toOwnedSlice(),
         .tagslinks = parser.tagslinks.toOwnedSlice(),
+        .meta = parser.meta.toOwnedSlice(),
         .source = source,
     };
 }
@@ -97,4 +129,6 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
 pub fn deinit(self: *Self, alloc: Allocator) void {
     alloc.free(self.entries);
     self.postings.deinit(alloc);
+    self.tagslinks.deinit(alloc);
+    self.meta.deinit(alloc);
 }
