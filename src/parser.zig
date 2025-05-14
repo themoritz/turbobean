@@ -30,6 +30,7 @@ entries: Data.Entries,
 postings: Data.Postings,
 tagslinks: Data.TagsLinks,
 meta: Data.Meta,
+costcomps: Data.CostComps,
 
 err: ?ErrorDetails,
 
@@ -67,6 +68,12 @@ fn addTagLink(p: *Self, taglink: Data.TagLink) !usize {
 fn addKeyValue(p: *Self, keyvalue: Data.KeyValue) !usize {
     const result = p.meta.len;
     try p.meta.append(p.gpa, keyvalue);
+    return result;
+}
+
+fn addCostComp(p: *Self, costcomp: Data.CostComp) !usize {
+    const result = p.costcomps.items.len;
+    try p.costcomps.append(costcomp);
     return result;
 }
 
@@ -255,6 +262,7 @@ fn parsePosting(p: *Self) !?usize {
     const flag = p.parseFlag();
     const account = p.tryTokenSlice(.account) orelse return null;
     const amount = try p.parseAmount();
+    const cost = try p.parseCost();
     const price = try p.parsePriceAnnotation();
     _ = p.tryToken(.eol);
 
@@ -268,7 +276,7 @@ fn parsePosting(p: *Self) !?usize {
         .flag = flag,
         .account = account,
         .amount = amount,
-        .cost = null,
+        .cost = cost,
         .price = price,
         .meta = meta,
     };
@@ -291,6 +299,46 @@ fn parsePriceAnnotation(p: *Self) !?Data.Price {
             };
         },
         else => return null,
+    }
+}
+
+fn parseCost(p: *Self) !?Data.Cost {
+    const open = p.tryToken(.lcurl) orelse p.tryToken(.lcurllcurl) orelse return null;
+
+    const costcomp_top = p.costcomps.items.len;
+
+    while (true) {
+        switch (p.currentToken().tag) {
+            .date => {
+                const date = try p.parseDate() orelse return p.failExpected(.date);
+                _ = try p.addCostComp(.{ .date = date });
+            },
+            .string => {
+                const label = p.advanceToken().loc;
+                _ = try p.addCostComp(.{ .label = label });
+            },
+            else => {
+                const amount = try p.parseAmount();
+                if (amount.exists()) {
+                    _ = try p.addCostComp(.{ .amount = amount });
+                } else break;
+            },
+        }
+        if (p.tryToken(.comma) == null) break;
+    }
+
+    const range = Data.Range.create(costcomp_top, p.costcomps.items.len);
+
+    switch (open.tag) {
+        .lcurl => {
+            _ = try p.expectToken(.rcurl);
+            return .{ .comps = range, .total = false };
+        },
+        .lcurllcurl => {
+            _ = try p.expectToken(.rcurlrcurl);
+            return .{ .comps = range, .total = true };
+        },
+        else => unreachable,
     }
 }
 
@@ -441,6 +489,16 @@ test "price annotation" {
         \\2020-02-01 txn "a" "b"
         \\  Assets:Foo 10.0000 USD @ 2.0000 EUR
         \\  Assets:Foo @@ 4.0000 EUR
+        \\
+    );
+}
+
+test "cost spec" {
+    try testParse(
+        \\2020-02-01 txn "a" "b"
+        \\  Assets:Foo 10.0000 USD {}
+        \\  Assets:Foo {0.0000 USD, "label"}
+        \\  Assets:Foo {2014-01-01}
         \\
     );
 }

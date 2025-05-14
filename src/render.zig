@@ -151,6 +151,22 @@ fn renderPosting(r: *Render, posting: usize) !void {
     if (amount.exists()) try r.space();
     try r.renderAmount(amount);
 
+    if (r.data.postings.items(.cost)[posting]) |cost| {
+        if (cost.total) try r.slice(" {{") else try r.slice(" {");
+        if (cost.comps) |comps| {
+            for (comps.start..comps.end, 0..) |i, j| {
+                if (j > 0) try r.slice(", ");
+                const comp = r.data.costcomps[i];
+                switch (comp) {
+                    .amount => |am| try r.renderAmount(am),
+                    .date => |date| try r.format("{}", .{date}),
+                    .label => |label| try r.slice(label),
+                }
+            }
+        }
+        if (cost.total) try r.slice("}}") else try r.slice("}");
+    }
+
     if (r.data.postings.items(.price)[posting]) |price| {
         if (price.total) try r.slice(" @@ ") else try r.slice(" @ ");
         try r.renderAmount(price.amount);

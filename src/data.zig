@@ -12,11 +12,13 @@ entries: Entries.Slice,
 postings: Postings.Slice,
 tagslinks: TagsLinks.Slice,
 meta: Meta.Slice,
+costcomps: CostComps.Slice,
 
 pub const Entries = std.ArrayList(Entry);
 pub const Postings = std.MultiArrayList(Posting);
 pub const TagsLinks = std.MultiArrayList(TagLink);
 pub const Meta = std.MultiArrayList(KeyValue);
+pub const CostComps = std.ArrayList(CostComp);
 
 pub const Tokens = std.ArrayList(Lexer.Token);
 
@@ -43,10 +45,14 @@ pub const Amount = struct {
 };
 
 pub const Cost = struct {
-    number: ?Number,
-    currency: ?[]const u8,
-    date: ?[]const u8,
-    label: ?[]const u8,
+    comps: ?Range,
+    total: bool,
+};
+
+pub const CostComp = union(enum) {
+    amount: Amount,
+    date: Date,
+    label: []const u8,
 };
 
 pub const Price = struct {
@@ -135,12 +141,14 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
         .postings = .{},
         .tagslinks = .{},
         .meta = .{},
+        .costcomps = CostComps.init(alloc),
         .entries = Entries.init(alloc),
         .err = null,
     };
     defer parser.postings.deinit(alloc);
     defer parser.tagslinks.deinit(alloc);
     defer parser.meta.deinit(alloc);
+    defer parser.costcomps.deinit();
     defer parser.entries.deinit();
 
     parser.parse() catch |err| switch (err) {
@@ -156,12 +164,14 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
         .postings = parser.postings.toOwnedSlice(),
         .tagslinks = parser.tagslinks.toOwnedSlice(),
         .meta = parser.meta.toOwnedSlice(),
+        .costcomps = try parser.costcomps.toOwnedSlice(),
         .source = source,
     };
 }
 
 pub fn deinit(self: *Self, alloc: Allocator) void {
     alloc.free(self.entries);
+    alloc.free(self.costcomps);
     self.postings.deinit(alloc);
     self.tagslinks.deinit(alloc);
     self.meta.deinit(alloc);
