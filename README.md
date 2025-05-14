@@ -9,22 +9,15 @@
 - Validate accounts
 - Number expressions
 
-- Postings
-  - Incomplete amounts
-  - Price annotation
-  - Cost spec
-
 - KeyValue
   - Value = Amount
 
 
-- Open, Close
+- Close
 - Commodity
 - Pad
 - Balance
 - Amount tolerance
-
-- Cost spec
 
 - Price, event, query, note, document, custom
 

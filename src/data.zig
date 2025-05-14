@@ -13,12 +13,14 @@ postings: Postings.Slice,
 tagslinks: TagsLinks.Slice,
 meta: Meta.Slice,
 costcomps: CostComps.Slice,
+currencies: Currencies.Slice,
 
 pub const Entries = std.ArrayList(Entry);
 pub const Postings = std.MultiArrayList(Posting);
 pub const TagsLinks = std.MultiArrayList(TagLink);
 pub const Meta = std.MultiArrayList(KeyValue);
 pub const CostComps = std.ArrayList(CostComp);
+pub const Currencies = std.ArrayList([]const u8);
 
 pub const Tokens = std.ArrayList(Lexer.Token);
 
@@ -62,10 +64,7 @@ pub const Price = struct {
 
 pub const Entry = union(enum) {
     transaction: Transaction,
-    open: struct {
-        date: Date,
-        account: []const u8,
-    },
+    open: Open,
     close: struct {
         date: Date,
         account: []const u8,
@@ -83,6 +82,14 @@ pub const Entry = union(enum) {
 pub const Option = struct {
     key: []const u8,
     value: []const u8,
+};
+
+pub const Open = struct {
+    date: Date,
+    account: []const u8,
+    currencies: ?Range,
+    booking: ?[]const u8,
+    meta: ?Range,
 };
 
 pub const Transaction = struct {
@@ -142,6 +149,7 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
         .tagslinks = .{},
         .meta = .{},
         .costcomps = CostComps.init(alloc),
+        .currencies = Currencies.init(alloc),
         .entries = Entries.init(alloc),
         .err = null,
     };
@@ -149,6 +157,7 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
     defer parser.tagslinks.deinit(alloc);
     defer parser.meta.deinit(alloc);
     defer parser.costcomps.deinit();
+    defer parser.currencies.deinit();
     defer parser.entries.deinit();
 
     parser.parse() catch |err| switch (err) {
@@ -165,6 +174,7 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
         .tagslinks = parser.tagslinks.toOwnedSlice(),
         .meta = parser.meta.toOwnedSlice(),
         .costcomps = try parser.costcomps.toOwnedSlice(),
+        .currencies = try parser.currencies.toOwnedSlice(),
         .source = source,
     };
 }
@@ -172,6 +182,7 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
 pub fn deinit(self: *Self, alloc: Allocator) void {
     alloc.free(self.entries);
     alloc.free(self.costcomps);
+    alloc.free(self.currencies);
     self.postings.deinit(alloc);
     self.tagslinks.deinit(alloc);
     self.meta.deinit(alloc);

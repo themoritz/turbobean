@@ -31,6 +31,7 @@ postings: Data.Postings,
 tagslinks: Data.TagsLinks,
 meta: Data.Meta,
 costcomps: Data.CostComps,
+currencies: Data.Currencies,
 
 err: ?ErrorDetails,
 
@@ -74,6 +75,12 @@ fn addKeyValue(p: *Self, keyvalue: Data.KeyValue) !usize {
 fn addCostComp(p: *Self, costcomp: Data.CostComp) !usize {
     const result = p.costcomps.items.len;
     try p.costcomps.append(costcomp);
+    return result;
+}
+
+fn addCurrency(p: *Self, currency: []const u8) !usize {
+    const result = p.currencies.items.len;
+    try p.currencies.append(currency);
     return result;
 }
 
@@ -175,13 +182,9 @@ fn parseEntry(p: *Self) !?usize {
             }
 
             const tagslinks = try p.parseTagsLinks();
-            _ = p.tryToken(.eol);
+            _ = try p.expectToken(.eol);
 
-            const meta_top = p.meta.len;
-            while (true) {
-                _ = try p.parseKeyValueLine() orelse break;
-            }
-            const meta = Data.Range.create(meta_top, p.meta.len);
+            const meta = try p.parseMeta();
 
             const postings_top = p.postings.len;
             while (true) {
@@ -191,6 +194,31 @@ fn parseEntry(p: *Self) !?usize {
 
             const transaction = Data.Transaction{ .date = date, .flag = flag, .payee = payee, .narration = narration, .tagslinks = tagslinks, .postings = postings, .meta = meta };
             const entry = Data.Entry{ .transaction = transaction };
+
+            _ = p.tryToken(.eol);
+
+            return try p.addEntry(entry);
+        },
+        .keyword_open => {
+            _ = p.advanceToken();
+            const account = try p.expectTokenSlice(.account);
+
+            const currency_top = p.currencies.items.len;
+            if (p.tryToken(.currency)) |cur| {
+                _ = try p.addCurrency(cur.loc);
+                while (true) {
+                    _ = p.tryToken(.comma) orelse break;
+                    const c = try p.expectToken(.currency);
+                    _ = try p.addCurrency(c.loc);
+                }
+            }
+            const currencies = Data.Range.create(currency_top, p.currencies.items.len);
+            const booking = if (p.tryToken(.string)) |b| b.loc else null;
+            _ = try p.expectToken(.eol);
+            const meta = try p.parseMeta();
+
+            const open = Data.Open{ .date = date, .account = account, .currencies = currencies, .booking = booking, .meta = meta };
+            const entry = Data.Entry{ .open = open };
 
             _ = p.tryToken(.eol);
 
@@ -249,6 +277,14 @@ fn parseDirective(p: *Self) !?usize {
     return try p.addEntry(entry);
 }
 
+fn parseMeta(p: *Self) !?Data.Range {
+    const meta_top = p.meta.len;
+    while (true) {
+        _ = try p.parseKeyValueLine() orelse break;
+    }
+    return Data.Range.create(meta_top, p.meta.len);
+}
+
 fn parsePosting(p: *Self) !?usize {
     // Lookahead
     if (p.currentToken().tag != .indent) return null;
@@ -261,16 +297,12 @@ fn parsePosting(p: *Self) !?usize {
     _ = try p.expectToken(.indent);
     const flag = p.parseFlag();
     const account = p.tryTokenSlice(.account) orelse return null;
-    const amount = try p.parseAmount();
+    const amount = try p.parseIncomleteAmount();
     const cost = try p.parseCost();
     const price = try p.parsePriceAnnotation();
     _ = p.tryToken(.eol);
 
-    const meta_top = p.meta.len;
-    while (true) {
-        _ = try p.parseKeyValueLine() orelse break;
-    }
-    const meta = Data.Range.create(meta_top, p.meta.len);
+    const meta = try p.parseMeta();
 
     const posting = Data.Posting{
         .flag = flag,
@@ -292,7 +324,7 @@ fn parsePriceAnnotation(p: *Self) !?Data.Price {
                 .atat => true,
                 else => unreachable,
             };
-            const amount = try p.parseAmount();
+            const amount = try p.parseIncomleteAmount();
             return Data.Price{
                 .amount = amount,
                 .total = total,
@@ -318,7 +350,7 @@ fn parseCost(p: *Self) !?Data.Cost {
                 _ = try p.addCostComp(.{ .label = label });
             },
             else => {
-                const amount = try p.parseAmount();
+                const amount = try p.parseIncomleteAmount();
                 if (amount.exists()) {
                     _ = try p.addCostComp(.{ .amount = amount });
                 } else break;
@@ -365,14 +397,25 @@ fn parseKeyValue(p: *Self) !?usize {
                 .value = value.loc,
             });
         },
-        // TODO: amount
-        else => return p.fail(.expected_value),
+        else => {
+            // TODO: amount. need to change value to enum
+            return p.fail(.expected_value);
+        },
     }
 }
 
-fn parseAmount(p: *Self) !Data.Amount {
+fn parseIncomleteAmount(p: *Self) !Data.Amount {
     const number = try p.parseNumber();
     const currency = p.tryTokenSlice(.currency);
+    return .{
+        .number = number,
+        .currency = currency,
+    };
+}
+
+fn parseAmount(p: *Self) !?Data.Amount {
+    const number = try p.parseNumber() orelse return null;
+    const currency = p.expectTokenSlice(.currency);
     return .{
         .number = number,
         .currency = currency,
@@ -503,6 +546,18 @@ test "cost spec" {
     );
 }
 
+test "open" {
+    try testParse(
+        \\1985-08-17 open Assets:Foo USD,EUR "strict"
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 open Assets:Bar NZD
+        \\
+        \\1985-09-24 open Assets:Bar "lax"
+        \\
+    );
+}
+
 fn testParse(source: [:0]const u8) !void {
     const alloc = std.testing.allocator;
 
@@ -512,6 +567,7 @@ fn testParse(source: [:0]const u8) !void {
     // const pretty = @import("pretty.zig");
     // try pretty.print(alloc, data.entries, .{});
     // try pretty.print(alloc, data.postings.items(.amount), .{});
+    // try pretty.print(alloc, data.meta.items(.key), .{});
 
     const Render = @import("render.zig");
     const rendered = try Render.dump(alloc, &data);

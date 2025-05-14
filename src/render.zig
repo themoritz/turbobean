@@ -95,7 +95,30 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
                 }
             }
         },
-        .open => {},
+        .open => |open| {
+            try r.format("{}", .{open.date});
+            try r.slice(" open ");
+            try r.slice(open.account);
+            if (open.currencies) |currencies| {
+                try r.space();
+                for (currencies.start..currencies.end, 0..) |i, j| {
+                    if (j > 0) try r.slice(",");
+                    try r.slice(r.data.currencies[i]);
+                }
+            }
+            if (open.booking) |booking| {
+                try r.space();
+                try r.slice(booking);
+            }
+            try r.newline();
+            if (open.meta) |meta| {
+                for (meta.start..meta.end) |i| {
+                    try r.indent();
+                    try r.renderKeyValue(i);
+                    try r.newline();
+                }
+            }
+        },
         .close => {},
         .pushtag => |tag| {
             try r.slice("pushtag ");
