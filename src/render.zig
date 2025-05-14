@@ -95,6 +95,8 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
                 }
             }
         },
+        .open => {},
+        .close => {},
         .pushtag => |tag| {
             try r.slice("pushtag ");
             try r.slice(tag);
@@ -105,8 +107,33 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
             try r.slice(tag);
             try r.newline();
         },
-        .open => {},
-        .close => {},
+        .pushmeta => |meta| {
+            try r.slice("pushmeta ");
+            try r.renderKeyValue(meta);
+            try r.newline();
+        },
+        .popmeta => |meta| {
+            try r.slice("popmeta ");
+            try r.renderKeyValue(meta);
+            try r.newline();
+        },
+        .option => |option| {
+            try r.slice("option ");
+            try r.slice(option.key);
+            try r.space();
+            try r.slice(option.value);
+            try r.newline();
+        },
+        .include => |file| {
+            try r.slice("include ");
+            try r.slice(file);
+            try r.newline();
+        },
+        .plugin => |plugin| {
+            try r.slice("plugin ");
+            try r.slice(plugin);
+            try r.newline();
+        },
     }
 }
 

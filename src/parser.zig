@@ -195,21 +195,52 @@ fn parseEntry(p: *Self) !?usize {
 }
 
 fn parseDirective(p: *Self) !?usize {
+    var entry: Data.Entry = undefined;
     switch (p.currentToken().tag) {
         .keyword_pushtag => {
             _ = p.advanceToken();
             const tag = try p.expectTokenSlice(.tag);
-            _ = try p.expectEolPlus();
-            return try p.addEntry(Data.Entry{ .pushtag = tag });
+            entry = Data.Entry{ .pushtag = tag };
         },
         .keyword_poptag => {
             _ = p.advanceToken();
             const tag = try p.expectTokenSlice(.tag);
-            _ = try p.expectEolPlus();
-            return try p.addEntry(Data.Entry{ .poptag = tag });
+            entry = Data.Entry{ .poptag = tag };
+        },
+        .keyword_pushmeta => {
+            _ = p.advanceToken();
+            const meta = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
+            entry = Data.Entry{ .pushmeta = meta };
+        },
+        .keyword_popmeta => {
+            _ = p.advanceToken();
+            const meta = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
+            entry = Data.Entry{ .popmeta = meta };
+        },
+        .keyword_option => {
+            _ = p.advanceToken();
+            const key = try p.expectToken(.string);
+            const value = try p.expectToken(.string);
+            const option = Data.Option{
+                .key = key.loc,
+                .value = value.loc,
+            };
+            entry = Data.Entry{ .option = option };
+        },
+        .keyword_include => {
+            _ = p.advanceToken();
+            const file = try p.expectToken(.string);
+            entry = Data.Entry{ .include = file.loc };
+        },
+        .keyword_plugin => {
+            _ = p.advanceToken();
+            const plugin = try p.expectToken(.string);
+            entry = Data.Entry{ .plugin = plugin.loc };
         },
         else => return null,
     }
+    _ = try p.expectEolPlus();
+    return try p.addEntry(entry);
 }
 
 fn parsePosting(p: *Self) !?usize {
@@ -353,11 +384,21 @@ test "tagslinks" {
     );
 }
 
-test "pushtag poptag" {
+test "directives" {
     try testParse(
         \\pushtag #nz
         \\
         \\poptag #foo
+        \\
+        \\pushmeta k: "Val"
+        \\
+        \\popmeta k: Assets:Val
+        \\
+        \\option "some" "option"
+        \\
+        \\include "file.bean"
+        \\
+        \\plugin "some_plugin"
         \\
     );
 }

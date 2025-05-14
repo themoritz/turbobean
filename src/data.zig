@@ -37,8 +37,19 @@ pub const Entry = union(enum) {
         date: Date,
         account: []const u8,
     },
+    // Directives
     pushtag: []const u8,
     poptag: []const u8,
+    pushmeta: usize, // meta index
+    popmeta: usize, // meta index
+    option: Option,
+    include: []const u8,
+    plugin: []const u8,
+};
+
+pub const Option = struct {
+    key: []const u8,
+    value: []const u8,
 };
 
 pub const Transaction = struct {
