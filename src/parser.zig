@@ -334,6 +334,13 @@ test "tx" {
     );
 }
 
+test "tagslinks" {
+    try testParse(
+        \\2019-05-15 # #tag ^link
+        \\
+    );
+}
+
 test "pushtag poptat" {
     try testParse(
         \\pushtag #nz

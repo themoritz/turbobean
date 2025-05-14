@@ -36,6 +36,10 @@ fn format(r: *Render, comptime fmt: []const u8, args: anytype) !void {
     try std.fmt.format(r.buffer.writer(), fmt, args);
 }
 
+fn slice(r: *Render, str: []const u8) !void {
+    try r.buffer.appendSlice(str);
+}
+
 inline fn space(r: *Render) !void {
     try r.buffer.append(' ');
 }
@@ -45,7 +49,7 @@ inline fn newline(r: *Render) !void {
 }
 
 inline fn indent(r: *Render) !void {
-    try r.buffer.appendSlice("  ");
+    try r.slice("  ");
 }
 
 fn render(r: *Render) !void {
@@ -62,22 +66,26 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
         .transaction => |tx| {
             try r.format("{}", .{tx.date});
             try r.space();
-            try r.buffer.appendSlice(tx.flag.loc);
+            try r.slice(tx.flag.loc);
             if (tx.payee) |payee| {
                 try r.space();
-                try r.buffer.appendSlice(payee);
+                try r.slice(payee);
             }
             if (tx.narration) |narration| {
                 try r.space();
-                try r.buffer.appendSlice(narration);
+                try r.slice(narration);
+            }
+            if (tx.tagslinks) |tagslinks| {
+                for (tagslinks.start..tagslinks.end) |i| {
+                    try r.space();
+                    try r.slice(r.data.tagslinks.items(.slice)[i]);
+                }
             }
             try r.newline();
             if (tx.meta) |meta| {
                 for (meta.start..meta.end) |i| {
                     try r.indent();
-                    try r.buffer.appendSlice(r.data.meta.items(.key)[i]);
-                    try r.format(": ", .{});
-                    try r.buffer.appendSlice(r.data.meta.items(.value)[i]);
+                    try r.renderKeyValue(i);
                     try r.newline();
                 }
             }
@@ -88,13 +96,13 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
             }
         },
         .pushtag => |tag| {
-            try r.format("pushtag ", .{});
-            try r.buffer.appendSlice(tag);
+            try r.slice("pushtag ");
+            try r.slice(tag);
             try r.newline();
         },
         .poptag => |tag| {
-            try r.format("poptag ", .{});
-            try r.buffer.appendSlice(tag);
+            try r.slice("poptag ");
+            try r.slice(tag);
             try r.newline();
         },
         .open => {},
@@ -104,7 +112,7 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
 
 fn renderPosting(r: *Render, posting: usize) !void {
     try r.indent();
-    try r.buffer.appendSlice(r.data.postings.items(.account)[posting]);
+    try r.slice(r.data.postings.items(.account)[posting]);
     try r.space();
     try r.renderAmount(r.data.postings.items(.amount)[posting]);
     try r.newline();
@@ -112,16 +120,20 @@ fn renderPosting(r: *Render, posting: usize) !void {
         for (meta.start..meta.end) |i| {
             try r.indent();
             try r.indent();
-            try r.buffer.appendSlice(r.data.meta.items(.key)[i]);
-            try r.format(": ", .{});
-            try r.buffer.appendSlice(r.data.meta.items(.value)[i]);
+            try r.renderKeyValue(i);
             try r.newline();
         }
     }
 }
 
+fn renderKeyValue(r: *Render, i: usize) !void {
+    try r.slice(r.data.meta.items(.key)[i]);
+    try r.slice(": ");
+    try r.slice(r.data.meta.items(.value)[i]);
+}
+
 fn renderAmount(r: *Render, amount: Data.Amount) !void {
     try r.format("{}", .{amount.number});
     try r.space();
-    try r.buffer.appendSlice(amount.currency);
+    try r.slice(amount.currency);
 }
