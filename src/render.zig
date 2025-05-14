@@ -112,6 +112,10 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
 
 fn renderPosting(r: *Render, posting: usize) !void {
     try r.indent();
+    if (r.data.postings.items(.flag)[posting]) |flag| {
+        try r.slice(flag.loc);
+        try r.space();
+    }
     try r.slice(r.data.postings.items(.account)[posting]);
     try r.space();
     try r.renderAmount(r.data.postings.items(.amount)[posting]);

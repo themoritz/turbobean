@@ -8,6 +8,5 @@
 
 - Validate accounts
 - Number expressions
-- Posting flags
 
 ## Renderer

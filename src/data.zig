@@ -21,6 +21,7 @@ pub const Meta = std.MultiArrayList(KeyValue);
 pub const Tokens = std.ArrayList(Lexer.Token);
 
 pub const Posting = struct {
+    flag: ?Lexer.Token,
     account: []const u8,
     amount: Amount,
     meta: ?Range,

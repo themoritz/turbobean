@@ -216,9 +216,13 @@ fn parsePosting(p: *Self) !?usize {
     // Lookahead
     if (p.currentToken().tag != .indent) return null;
     const next_token = p.nextToken() orelse return null;
-    if (next_token.tag != .account) return null;
+    switch (next_token.tag) {
+        .account, .flag, .asterisk, .hash => {},
+        else => return null,
+    }
 
     _ = try p.expectToken(.indent);
+    const flag = p.parseFlag();
     const account = p.tryTokenSlice(.account) orelse return null;
     const amount = try p.parseAmount() orelse return p.fail(.expected_amount);
     _ = p.tryToken(.eol);
@@ -230,6 +234,7 @@ fn parsePosting(p: *Self) !?usize {
     const meta = Data.Range.create(meta_top, p.meta.len);
 
     const posting = Data.Posting{
+        .flag = flag,
         .account = account,
         .amount = amount,
         .meta = meta,
@@ -273,6 +278,13 @@ fn parseAmount(p: *Self) !?Data.Amount {
         .number = number,
         .currency = currency,
     };
+}
+
+fn parseFlag(p: *Self) ?Lexer.Token {
+    switch (p.currentToken().tag) {
+        .flag, .asterisk, .hash => return p.advanceToken(),
+        else => return null,
+    }
 }
 
 fn parseTagsLinks(p: *Self) !?Data.Range {
@@ -324,7 +336,7 @@ test "tx" {
 
     try testParse(
         \\2015-01-01 * ""
-        \\  Aa 10.0000 USD
+        \\  ! Aa 10.0000 USD
         \\  Ba 30.0000 USD
         \\
         \\2016-01-01 * ""
@@ -341,7 +353,7 @@ test "tagslinks" {
     );
 }
 
-test "pushtag poptat" {
+test "pushtag poptag" {
     try testParse(
         \\pushtag #nz
         \\
