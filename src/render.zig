@@ -139,14 +139,25 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
 
 fn renderPosting(r: *Render, posting: usize) !void {
     try r.indent();
+
     if (r.data.postings.items(.flag)[posting]) |flag| {
         try r.slice(flag.loc);
         try r.space();
     }
+
     try r.slice(r.data.postings.items(.account)[posting]);
-    try r.space();
-    try r.renderAmount(r.data.postings.items(.amount)[posting]);
+
+    const amount = r.data.postings.items(.amount)[posting];
+    if (amount.exists()) try r.space();
+    try r.renderAmount(amount);
+
+    if (r.data.postings.items(.price)[posting]) |price| {
+        if (price.total) try r.slice(" @@ ") else try r.slice(" @ ");
+        try r.renderAmount(price.amount);
+    }
+
     try r.newline();
+
     if (r.data.postings.items(.meta)[posting]) |meta| {
         for (meta.start..meta.end) |i| {
             try r.indent();
@@ -164,7 +175,13 @@ fn renderKeyValue(r: *Render, i: usize) !void {
 }
 
 fn renderAmount(r: *Render, amount: Data.Amount) !void {
-    try r.format("{}", .{amount.number});
-    try r.space();
-    try r.slice(amount.currency);
+    if (amount.number) |number| {
+        try r.format("{}", .{number});
+    }
+    if (amount.is_complete()) {
+        try r.space();
+    }
+    if (amount.currency) |c| {
+        try r.slice(c);
+    }
 }

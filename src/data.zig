@@ -24,7 +24,34 @@ pub const Posting = struct {
     flag: ?Lexer.Token,
     account: []const u8,
     amount: Amount,
+    cost: ?Cost,
+    price: ?Price,
     meta: ?Range,
+};
+
+pub const Amount = struct {
+    number: ?Number,
+    currency: ?[]const u8,
+
+    pub fn exists(amount: *const Amount) bool {
+        return amount.number != null or amount.currency != null;
+    }
+
+    pub fn is_complete(a: *const Amount) bool {
+        return a.number != null and a.currency != null;
+    }
+};
+
+pub const Cost = struct {
+    number: ?Number,
+    currency: ?[]const u8,
+    date: ?[]const u8,
+    label: ?[]const u8,
+};
+
+pub const Price = struct {
+    amount: Amount,
+    total: bool,
 };
 
 pub const Entry = union(enum) {
@@ -88,11 +115,6 @@ pub const TagLink = struct {
 pub const KeyValue = struct {
     key: []const u8,
     value: []const u8,
-};
-
-pub const Amount = struct {
-    number: Number,
-    currency: []const u8,
 };
 
 pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {

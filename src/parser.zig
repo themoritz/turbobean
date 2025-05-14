@@ -40,7 +40,6 @@ pub const ErrorDetails = struct {
 
     pub const Tag = enum {
         expected_token,
-        expected_amount,
         expected_entry,
         expected_key_value,
         expected_value,
@@ -143,11 +142,11 @@ fn tryTokenSlice(p: *Self, tag: Lexer.Token.Tag) ?[]const u8 {
 
 pub fn parse(p: *Self) !void {
     while (true) {
-        _ = try p.parseDecl() orelse break;
+        _ = try p.parseDeclaration() orelse break;
     }
 }
 
-fn parseDecl(p: *Self) !?usize {
+fn parseDeclaration(p: *Self) !?usize {
     return try p.parseEntry() orelse try p.parseDirective();
 }
 
@@ -255,7 +254,8 @@ fn parsePosting(p: *Self) !?usize {
     _ = try p.expectToken(.indent);
     const flag = p.parseFlag();
     const account = p.tryTokenSlice(.account) orelse return null;
-    const amount = try p.parseAmount() orelse return p.fail(.expected_amount);
+    const amount = try p.parseAmount();
+    const price = try p.parsePriceAnnotation();
     _ = p.tryToken(.eol);
 
     const meta_top = p.meta.len;
@@ -268,10 +268,30 @@ fn parsePosting(p: *Self) !?usize {
         .flag = flag,
         .account = account,
         .amount = amount,
+        .cost = null,
+        .price = price,
         .meta = meta,
     };
 
     return try p.addPosting(posting);
+}
+
+fn parsePriceAnnotation(p: *Self) !?Data.Price {
+    switch (p.currentToken().tag) {
+        .at, .atat => {
+            const total = switch (p.advanceToken().tag) {
+                .at => false,
+                .atat => true,
+                else => unreachable,
+            };
+            const amount = try p.parseAmount();
+            return Data.Price{
+                .amount = amount,
+                .total = total,
+            };
+        },
+        else => return null,
+    }
 }
 
 fn parseKeyValueLine(p: *Self) !?usize {
@@ -302,9 +322,9 @@ fn parseKeyValue(p: *Self) !?usize {
     }
 }
 
-fn parseAmount(p: *Self) !?Data.Amount {
-    const number = try p.parseNumber() orelse return null;
-    const currency = try p.expectTokenSlice(.currency);
+fn parseAmount(p: *Self) !Data.Amount {
+    const number = try p.parseNumber();
+    const currency = p.tryTokenSlice(.currency);
     return .{
         .number = number,
         .currency = currency,
@@ -412,6 +432,15 @@ test "meta" {
         \\  foo: FALSE
         \\  Assets:Foo 10.0000 USD
         \\    bar: NULL
+        \\
+    );
+}
+
+test "price annotation" {
+    try testParse(
+        \\2020-02-01 txn "a" "b"
+        \\  Assets:Foo 10.0000 USD @ 2.0000 EUR
+        \\  Assets:Foo @@ 4.0000 EUR
         \\
     );
 }
