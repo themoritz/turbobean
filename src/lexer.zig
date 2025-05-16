@@ -657,7 +657,6 @@ pub const Lexer = struct {
             .comment => switch (self.current()) {
                 0 => continue :state .start,
                 '\n' => {
-                    self.consume();
                     start = self.index;
                     continue :state .start;
                 },
@@ -748,7 +747,7 @@ test "comments" {
     try testLex(
         \\; Blah
         \\2015-01-01
-    , &.{.date});
+    , &.{ .eol, .date });
     try testLex("Assets:Foo; comment", &.{.account});
 }
 
@@ -782,7 +781,7 @@ test "org mode" {
         \\** June
         \\
         \\2024-06-01
-    , &.{ .eol, .eol, .date });
+    , &.{ .eol, .eol, .eol, .eol, .date });
 }
 
 test "beancount iter" {
@@ -983,7 +982,7 @@ test "beancount ignored org mode drawer" {
         \\:PROPERTIES:
         \\:this: is an org-mode property drawer
         \\:END:
-    , &.{});
+    , &.{ .eol, .eol });
 }
 
 test "beancount invalid token" {
