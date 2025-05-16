@@ -224,6 +224,16 @@ fn parseEntry(p: *Self) !?usize {
 
             return try p.addEntry(entry);
         },
+        .keyword_close => {
+            _ = p.advanceToken();
+            const account = try p.expectTokenSlice(.account);
+            _ = try p.expectToken(.eol);
+            const meta = try p.parseMeta();
+            const close = Data.Close{ .date = date, .account = account, .meta = meta };
+            const entry = Data.Entry{ .close = close };
+            _ = p.tryToken(.eol);
+            return try p.addEntry(entry);
+        },
         else => return p.fail(.expected_entry),
     }
 }
@@ -554,6 +564,16 @@ test "open" {
         \\1985-09-24 open Assets:Bar NZD
         \\
         \\1985-09-24 open Assets:Bar "lax"
+        \\
+    );
+}
+
+test "close" {
+    try testParse(
+        \\1985-08-17 close Assets:Foo
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 close Assets:Bar
         \\
     );
 }

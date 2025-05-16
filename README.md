@@ -12,8 +12,6 @@
 - KeyValue
   - Value = Amount
 
-
-- Close
 - Commodity
 - Pad
 - Balance

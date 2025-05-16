@@ -119,7 +119,19 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
                 }
             }
         },
-        .close => {},
+        .close => |close| {
+            try r.format("{}", .{close.date});
+            try r.slice(" close ");
+            try r.slice(close.account);
+            try r.newline();
+            if (close.meta) |meta| {
+                for (meta.start..meta.end) |i| {
+                    try r.indent();
+                    try r.renderKeyValue(i);
+                    try r.newline();
+                }
+            }
+        },
         .pushtag => |tag| {
             try r.slice("pushtag ");
             try r.slice(tag);

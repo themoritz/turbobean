@@ -65,10 +65,7 @@ pub const Price = struct {
 pub const Entry = union(enum) {
     transaction: Transaction,
     open: Open,
-    close: struct {
-        date: Date,
-        account: []const u8,
-    },
+    close: Close,
     // Directives
     pushtag: []const u8,
     poptag: []const u8,
@@ -89,6 +86,12 @@ pub const Open = struct {
     account: []const u8,
     currencies: ?Range,
     booking: ?[]const u8,
+    meta: ?Range,
+};
+
+pub const Close = struct {
+    date: Date,
+    account: []const u8,
     meta: ?Range,
 };
 
