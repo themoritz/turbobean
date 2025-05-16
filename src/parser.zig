@@ -41,12 +41,35 @@ pub const ErrorDetails = struct {
     expected: ?Lexer.Token.Tag,
 
     pub const Tag = enum {
+        expected_declaration,
         expected_token,
         expected_entry,
         expected_key_value,
         expected_value,
         expected_amount,
     };
+
+    pub fn render(e: ErrorDetails, source: [:0]const u8) void {
+        // Calculate line and col from token.loc
+        const loc = e.token.loc;
+        var line: u32 = 1;
+        var col: u32 = 1;
+        var i: u32 = 0;
+        const len = @intFromPtr(loc.ptr) - @intFromPtr(source.ptr) + loc.len;
+        while (i < len) : (i += 1) {
+            if (source[i] == '\n') {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
+        }
+
+        std.debug.print(
+            "line {d} col {d}",
+            .{ line, col },
+        );
+    }
 };
 
 fn addEntry(p: *Self, entry: Data.Entry) !usize {
@@ -158,16 +181,27 @@ fn tryTokenSlice(p: *Self, tag: Lexer.Token.Tag) ?[]const u8 {
 pub fn parse(p: *Self) !void {
     while (true) {
         _ = try p.parseDeclaration() orelse break;
+        p.eatWhitespace();
     }
 }
 
+/// Only returns null at EOF.
 fn parseDeclaration(p: *Self) !?usize {
-    return try p.parseEntry() orelse try p.parseDirective();
+    if (try p.parseEntry() orelse try p.parseDirective()) |directive| {
+        return directive;
+    } else {
+        if (p.currentToken().tag == .eof) {
+            return null;
+        } else {
+            return p.fail(.expected_declaration);
+        }
+    }
 }
 
 /// Returns index of newly parsed entry in entries array.
 fn parseEntry(p: *Self) !?usize {
     const date = try p.parseDate() orelse return null;
+    var entry: Data.Entry = undefined;
     switch (p.currentToken().tag) {
         .keyword_txn, .flag, .asterisk, .hash => {
             const flag = p.advanceToken();
@@ -183,7 +217,7 @@ fn parseEntry(p: *Self) !?usize {
             }
 
             const tagslinks = try p.parseTagsLinks();
-            _ = try p.expectToken(.eol);
+            try p.expectEolOrEof();
 
             const meta = try p.parseMeta();
 
@@ -194,11 +228,7 @@ fn parseEntry(p: *Self) !?usize {
             const postings = Data.Range.create(postings_top, p.postings.len);
 
             const transaction = Data.Transaction{ .date = date, .flag = flag, .payee = payee, .narration = narration, .tagslinks = tagslinks, .postings = postings, .meta = meta };
-            const entry = Data.Entry{ .transaction = transaction };
-
-            _ = p.tryToken(.eol);
-
-            return try p.addEntry(entry);
+            entry = Data.Entry{ .transaction = transaction };
         },
         .keyword_open => {
             _ = p.advanceToken();
@@ -215,126 +245,105 @@ fn parseEntry(p: *Self) !?usize {
             }
             const currencies = Data.Range.create(currency_top, p.currencies.items.len);
             const booking = if (p.tryToken(.string)) |b| b.loc else null;
-            _ = try p.expectToken(.eol);
+            try p.expectEolOrEof();
             const meta = try p.parseMeta();
 
             const open = Data.Open{ .date = date, .account = account, .currencies = currencies, .booking = booking, .meta = meta };
-            const entry = Data.Entry{ .open = open };
-
-            _ = p.tryToken(.eol);
-
-            return try p.addEntry(entry);
+            entry = Data.Entry{ .open = open };
         },
         .keyword_close => {
             _ = p.advanceToken();
             const account = try p.expectTokenSlice(.account);
-            _ = try p.expectToken(.eol);
+            try p.expectEolOrEof();
             const meta = try p.parseMeta();
             const close = Data.Close{ .date = date, .account = account, .meta = meta };
-            const entry = Data.Entry{ .close = close };
-            _ = p.tryToken(.eol);
-            return try p.addEntry(entry);
+            entry = Data.Entry{ .close = close };
         },
         .keyword_commodity => {
             _ = p.advanceToken();
             const currency = try p.expectTokenSlice(.currency);
-            _ = try p.expectToken(.eol);
+            try p.expectEolOrEof();
             const meta = try p.parseMeta();
             const commodity = Data.Commodity{ .date = date, .currency = currency, .meta = meta };
-            const entry = Data.Entry{ .commodity = commodity };
-            _ = p.tryToken(.eol);
-            return try p.addEntry(entry);
+            entry = Data.Entry{ .commodity = commodity };
         },
         .keyword_pad => {
             _ = p.advanceToken();
             const account = try p.expectTokenSlice(.account);
             const pad_to = try p.expectTokenSlice(.account);
-            _ = try p.expectToken(.eol);
+            try p.expectEolOrEof();
             const meta = try p.parseMeta();
             const pad = Data.Pad{ .date = date, .account = account, .pad_to = pad_to, .meta = meta };
-            const entry = Data.Entry{ .pad = pad };
-            _ = p.tryToken(.eol);
-            return try p.addEntry(entry);
+            entry = Data.Entry{ .pad = pad };
         },
         .keyword_balance => {
             _ = p.advanceToken();
             const account = try p.expectTokenSlice(.account);
-            const number = try p.expectNumber();
+            const number = try p.expectNumberExpr();
             var tolerance: ?Number = null;
             switch (p.currentToken().tag) {
                 .tilde => {
                     _ = p.advanceToken();
-                    tolerance = try p.expectNumber();
+                    tolerance = try p.expectNumberExpr();
                 },
                 else => {},
             }
             const currency = try p.expectTokenSlice(.currency);
-            _ = try p.expectToken(.eol);
+            try p.expectEolOrEof();
             const meta = try p.parseMeta();
             const amount = Data.Amount{ .number = number, .currency = currency };
             const balance = Data.Balance{ .date = date, .account = account, .amount = amount, .tolerance = tolerance, .meta = meta };
-            const entry = Data.Entry{ .balance = balance };
-            _ = p.tryToken(.eol);
-            return try p.addEntry(entry);
+            entry = Data.Entry{ .balance = balance };
         },
         .keyword_price => {
             _ = p.advanceToken();
             const currency = try p.expectTokenSlice(.currency);
             const amount = try p.parseAmount() orelse return p.fail(.expected_amount);
-            _ = try p.expectToken(.eol);
+            try p.expectEolOrEof();
             const meta = try p.parseMeta();
             const price = Data.PriceDecl{ .date = date, .currency = currency, .amount = amount, .meta = meta };
-            const entry = Data.Entry{ .price = price };
-            _ = p.tryToken(.eol);
-            return try p.addEntry(entry);
+            entry = Data.Entry{ .price = price };
         },
         .keyword_event => {
             _ = p.advanceToken();
             const variable = try p.expectTokenSlice(.string);
             const value = try p.expectTokenSlice(.string);
-            _ = try p.expectToken(.eol);
+            try p.expectEolOrEof();
             const meta = try p.parseMeta();
             const event = Data.Event{ .date = date, .variable = variable, .value = value, .meta = meta };
-            const entry = Data.Entry{ .event = event };
-            _ = p.tryToken(.eol);
-            return try p.addEntry(entry);
+            entry = Data.Entry{ .event = event };
         },
         .keyword_query => {
             _ = p.advanceToken();
             const name = try p.expectTokenSlice(.string);
             const sql = try p.expectTokenSlice(.string);
-            _ = try p.expectToken(.eol);
+            try p.expectEolOrEof();
             const meta = try p.parseMeta();
             const query = Data.Query{ .date = date, .name = name, .sql = sql, .meta = meta };
-            const entry = Data.Entry{ .query = query };
-            _ = p.tryToken(.eol);
-            return try p.addEntry(entry);
+            entry = Data.Entry{ .query = query };
         },
         .keyword_note => {
             _ = p.advanceToken();
             const account = try p.expectTokenSlice(.account);
             const note = try p.expectTokenSlice(.string);
-            _ = try p.expectToken(.eol);
+            try p.expectEolOrEof();
             const meta = try p.parseMeta();
             const note_entry = Data.Note{ .date = date, .account = account, .note = note, .meta = meta };
-            const entry = Data.Entry{ .note = note_entry };
-            _ = p.tryToken(.eol);
-            return try p.addEntry(entry);
+            entry = Data.Entry{ .note = note_entry };
         },
         .keyword_document => {
             _ = p.advanceToken();
             const account = try p.expectTokenSlice(.account);
             const filename = try p.expectTokenSlice(.string);
             const tagslinks = try p.parseTagsLinks();
-            _ = try p.expectToken(.eol);
+            try p.expectEolOrEof();
             const meta = try p.parseMeta();
             const document = Data.Document{ .date = date, .account = account, .filename = filename, .tagslinks = tagslinks, .meta = meta };
-            const entry = Data.Entry{ .document = document };
-            _ = p.tryToken(.eol);
-            return try p.addEntry(entry);
+            entry = Data.Entry{ .document = document };
         },
         else => return p.fail(.expected_entry),
     }
+    return try p.addEntry(entry);
 }
 
 fn parseDirective(p: *Self) !?usize {
@@ -382,7 +391,7 @@ fn parseDirective(p: *Self) !?usize {
         },
         else => return null,
     }
-    _ = try p.expectEolPlus();
+    _ = try p.expectEolOrEof();
     return try p.addEntry(entry);
 }
 
@@ -514,7 +523,7 @@ fn parseKeyValue(p: *Self) !?usize {
 }
 
 fn parseIncomleteAmount(p: *Self) !Data.Amount {
-    const number = try p.parseNumber();
+    const number = try p.parseNumberExpr();
     const currency = p.tryTokenSlice(.currency);
     return .{
         .number = number,
@@ -523,7 +532,7 @@ fn parseIncomleteAmount(p: *Self) !Data.Amount {
 }
 
 fn parseAmount(p: *Self) !?Data.Amount {
-    const number = try p.parseNumber() orelse return null;
+    const number = try p.parseNumberExpr() orelse return null;
     const currency = try p.expectTokenSlice(.currency);
     return .{
         .number = number,
@@ -550,16 +559,25 @@ fn parseTagsLinks(p: *Self) !?Data.Range {
     return Data.Range.create(tagslinks_top, p.tagslinks.len);
 }
 
-/// Expects at least one .eol, and consumes all it finds. Returns last consumed
-/// .eol.
-fn expectEolPlus(p: *Self) !Lexer.Token {
-    var result = try p.expectToken(.eol);
-    while (true) {
-        if (p.tryToken(.eol)) |i| {
-            result = i;
-        } else break;
+fn expectEolOrEof(p: *Self) !void {
+    switch (p.currentToken().tag) {
+        .eol => _ = p.advanceToken(),
+        .eof => {},
+        else => return p.failExpected(.eol),
     }
-    return result;
+}
+
+fn eatWhitespace(p: *Self) void {
+    while (true) {
+        if (p.currentToken().tag == .indent and p.nextToken() != null and p.nextToken().?.tag == .eol) {
+            _ = p.advanceToken();
+            _ = p.advanceToken();
+        } else if (p.currentToken().tag == .eol) {
+            _ = p.advanceToken();
+        } else {
+            break;
+        }
+    }
 }
 
 fn parseDate(p: *Self) !?Date {
@@ -567,29 +585,48 @@ fn parseDate(p: *Self) !?Date {
     return try Date.fromSlice(token.loc);
 }
 
-fn parseNumber(p: *Self) !?Number {
-    const token = p.tryToken(.number) orelse return null;
-    return try Number.fromSlice(token.loc);
+fn parseNumberExpr(p: *Self) !?Number {
+    switch (p.currentToken().tag) {
+        .number => {
+            const token = p.advanceToken();
+            return try Number.fromSlice(token.loc);
+        },
+        .minus => {
+            _ = p.advanceToken();
+            const token = try p.expectToken(.number);
+            const number = try Number.fromSlice(token.loc);
+            return number.negate();
+        },
+        else => return null,
+    }
 }
 
-fn expectNumber(p: *Self) !Number {
-    return try p.parseNumber() orelse return p.failExpected(.number);
+fn expectNumberExpr(p: *Self) !Number {
+    return try p.parseNumberExpr() orelse return p.failExpected(.number);
+}
+
+test "negative" {
+    try testRoundtrip(
+        \\2015-11-01 * "Test"
+        \\  Assets:Foo -1.0000 USD
+        \\
+    );
 }
 
 test "tx" {
-    try testParse(
+    try testRoundtrip(
         \\2015-11-01 * "Test"
         \\  Foo 100.0000 USD
         \\  Bar 2.0000 EUR
         \\
     );
 
-    try testParse(
+    try testRoundtrip(
         \\2024-12-01 * "Foo"
         \\
     );
 
-    try testParse(
+    try testRoundtrip(
         \\2015-01-01 * ""
         \\  ! Aa 10.0000 USD
         \\  Ba 30.0000 USD
@@ -602,14 +639,14 @@ test "tx" {
 }
 
 test "tagslinks" {
-    try testParse(
+    try testRoundtrip(
         \\2019-05-15 # #tag ^link
         \\
     );
 }
 
 test "directives" {
-    try testParse(
+    try testRoundtrip(
         \\pushtag #nz
         \\
         \\poptag #foo
@@ -628,7 +665,7 @@ test "directives" {
 }
 
 test "meta" {
-    try testParse(
+    try testRoundtrip(
         \\2020-01-01 txn
         \\  foo: TRUE
         \\
@@ -641,7 +678,7 @@ test "meta" {
 }
 
 test "price annotation" {
-    try testParse(
+    try testRoundtrip(
         \\2020-02-01 txn "a" "b"
         \\  Assets:Foo 10.0000 USD @ 2.0000 EUR
         \\  Assets:Foo @@ 4.0000 EUR
@@ -650,7 +687,7 @@ test "price annotation" {
 }
 
 test "cost spec" {
-    try testParse(
+    try testRoundtrip(
         \\2020-02-01 txn "a" "b"
         \\  Assets:Foo 10.0000 USD {}
         \\  Assets:Foo {0.0000 USD, "label"}
@@ -660,7 +697,7 @@ test "cost spec" {
 }
 
 test "open" {
-    try testParse(
+    try testRoundtrip(
         \\1985-08-17 open Assets:Foo USD,EUR "strict"
         \\  a: "Yes"
         \\
@@ -672,7 +709,7 @@ test "open" {
 }
 
 test "close" {
-    try testParse(
+    try testRoundtrip(
         \\1985-08-17 close Assets:Foo
         \\  a: "Yes"
         \\
@@ -682,7 +719,7 @@ test "close" {
 }
 
 test "commodity" {
-    try testParse(
+    try testRoundtrip(
         \\1985-08-17 commodity USD
         \\  a: "Yes"
         \\
@@ -692,7 +729,7 @@ test "commodity" {
 }
 
 test "pad" {
-    try testParse(
+    try testRoundtrip(
         \\1985-08-17 pad Assets:Foo Equity:Opening-Balances
         \\  a: "Yes"
         \\
@@ -702,7 +739,7 @@ test "pad" {
 }
 
 test "balance" {
-    try testParse(
+    try testRoundtrip(
         \\1985-08-17 balance Assets:Foo 0.0000 USD
         \\  a: "Yes"
         \\
@@ -712,7 +749,7 @@ test "balance" {
 }
 
 test "price" {
-    try testParse(
+    try testRoundtrip(
         \\1985-08-17 price TGT 0.0000 USD
         \\  a: "Yes"
         \\
@@ -722,7 +759,7 @@ test "price" {
 }
 
 test "event" {
-    try testParse(
+    try testRoundtrip(
         \\1985-08-17 event "location" "Paris"
         \\  a: "Yes"
         \\
@@ -732,7 +769,7 @@ test "event" {
 }
 
 test "query" {
-    try testParse(
+    try testRoundtrip(
         \\1985-08-17 query "france-balances" "SELECT ..."
         \\  a: "Yes"
         \\
@@ -742,7 +779,7 @@ test "query" {
 }
 
 test "note" {
-    try testParse(
+    try testRoundtrip(
         \\1985-08-17 note Assets:Foo "Called them"
         \\  a: "Yes"
         \\
@@ -752,7 +789,7 @@ test "note" {
 }
 
 test "document" {
-    try testParse(
+    try testRoundtrip(
         \\1985-08-17 document Assets:Foo "/usr/bin/foo"
         \\  a: "Yes"
         \\
@@ -761,7 +798,51 @@ test "document" {
     );
 }
 
-fn testParse(source: [:0]const u8) !void {
+test "org mode" {
+    try testEntries(
+        \\2024-09-01 open Assets:Foo
+        \\
+        \\
+        \\* This sentence is an org-mode title.
+        \\
+        \\2013-03-01 open Assets:Foo
+    , &.{ .open, .open });
+}
+
+test "comments" {
+    try testEntries(
+        \\option "title" "Title"
+        \\
+        \\; TODO:
+        \\; - More historical prices
+        \\
+        \\option "operating_currency" "EUR"
+        \\option "operating_currency" "USD"
+        \\option "render_commas" "True"
+        \\  ; indented comment
+        \\
+        \\include "prices.bean"
+        \\
+        \\2021-01-01 open Assets:Cash
+        \\
+        \\2021-01-01 open Expenses:Books
+        \\2021-01-01 open Expenses:Food
+    , &.{ .option, .option, .option, .option, .include, .open, .open, .open });
+}
+
+const EntryTag = @typeInfo(Data.Entry).@"union".tag_type.?;
+
+fn testEntries(source: [:0]const u8, expected: []const EntryTag) !void {
+    var data = try Data.parse(std.testing.allocator, source);
+    defer data.deinit(std.testing.allocator);
+
+    for (expected, 0..) |tag, i| {
+        const entry = data.entries[i];
+        try std.testing.expectEqual(@tagName(tag), @tagName(entry));
+    }
+}
+
+fn testRoundtrip(source: [:0]const u8) !void {
     const alloc = std.testing.allocator;
 
     var data = try Data.parse(alloc, source);

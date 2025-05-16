@@ -38,6 +38,10 @@ pub const Number = struct {
         return Number{ .value = result };
     }
 
+    pub fn negate(self: Number) Number {
+        return Number{ .value = -self.value };
+    }
+
     pub fn div(self: Number, other: Number) !Number {
         if (other.value == 0) return error.DivisionByZero;
         const result = @divFloor(self.value * SCALE_FACTOR, other.value);
