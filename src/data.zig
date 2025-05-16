@@ -69,6 +69,7 @@ pub const Entry = union(enum) {
     commodity: Commodity,
     pad: Pad,
     balance: Balance,
+    price: PriceDecl,
     // Directives
     pushtag: []const u8,
     poptag: []const u8,
@@ -116,6 +117,13 @@ pub const Balance = struct {
     account: []const u8,
     amount: Amount,
     tolerance: ?Number,
+    meta: ?Range,
+};
+
+pub const PriceDecl = struct {
+    date: Date,
+    currency: []const u8,
+    amount: Amount,
     meta: ?Range,
 };
 

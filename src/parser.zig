@@ -45,6 +45,7 @@ pub const ErrorDetails = struct {
         expected_entry,
         expected_key_value,
         expected_value,
+        expected_amount,
     };
 };
 
@@ -276,6 +277,17 @@ fn parseEntry(p: *Self) !?usize {
             _ = p.tryToken(.eol);
             return try p.addEntry(entry);
         },
+        .keyword_price => {
+            _ = p.advanceToken();
+            const currency = try p.expectTokenSlice(.currency);
+            const amount = try p.parseAmount() orelse return p.fail(.expected_amount);
+            _ = try p.expectToken(.eol);
+            const meta = try p.parseMeta();
+            const price = Data.PriceDecl{ .date = date, .currency = currency, .amount = amount, .meta = meta };
+            const entry = Data.Entry{ .price = price };
+            _ = p.tryToken(.eol);
+            return try p.addEntry(entry);
+        },
         else => return p.fail(.expected_entry),
     }
 }
@@ -467,7 +479,7 @@ fn parseIncomleteAmount(p: *Self) !Data.Amount {
 
 fn parseAmount(p: *Self) !?Data.Amount {
     const number = try p.parseNumber() orelse return null;
-    const currency = p.expectTokenSlice(.currency);
+    const currency = try p.expectTokenSlice(.currency);
     return .{
         .number = number,
         .currency = currency,
@@ -650,6 +662,16 @@ test "balance" {
         \\  a: "Yes"
         \\
         \\1985-09-24 balance Assets:Bar 0.1000 ~ 0.0001 EUR
+        \\
+    );
+}
+
+test "price" {
+    try testParse(
+        \\1985-08-17 price TGT 0.0000 USD
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 price TGT 200.0000 USD
         \\
     );
 }

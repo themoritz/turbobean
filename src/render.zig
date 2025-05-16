@@ -147,6 +147,15 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
             try r.newline();
             if (balance.meta) |meta| try r.renderMeta(meta, 1);
         },
+        .price => |price| {
+            try r.format("{}", .{price.date});
+            try r.slice(" price ");
+            try r.slice(price.currency);
+            try r.space();
+            try r.renderAmount(price.amount);
+            try r.newline();
+            if (price.meta) |meta| try r.renderMeta(meta, 1);
+        },
         .pushtag => |tag| {
             try r.slice("pushtag ");
             try r.slice(tag);

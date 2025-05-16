@@ -12,6 +12,6 @@
 - KeyValue
   - Value = Amount
 
-- Price, event, query, note, document, custom
+- Event, query, note, document, custom
 
 ## Renderer
