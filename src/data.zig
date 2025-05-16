@@ -70,6 +70,10 @@ pub const Entry = union(enum) {
     pad: Pad,
     balance: Balance,
     price: PriceDecl,
+    event: Event,
+    query: Query,
+    note: Note,
+    document: Document,
     // Directives
     pushtag: []const u8,
     poptag: []const u8,
@@ -124,6 +128,35 @@ pub const PriceDecl = struct {
     date: Date,
     currency: []const u8,
     amount: Amount,
+    meta: ?Range,
+};
+
+pub const Event = struct {
+    date: Date,
+    variable: []const u8,
+    value: []const u8,
+    meta: ?Range,
+};
+
+pub const Query = struct {
+    date: Date,
+    name: []const u8,
+    sql: []const u8,
+    meta: ?Range,
+};
+
+pub const Note = struct {
+    date: Date,
+    account: []const u8,
+    note: []const u8,
+    meta: ?Range,
+};
+
+pub const Document = struct {
+    date: Date,
+    account: []const u8,
+    filename: []const u8,
+    tagslinks: ?Range,
     meta: ?Range,
 };
 

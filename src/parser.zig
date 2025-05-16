@@ -288,6 +288,51 @@ fn parseEntry(p: *Self) !?usize {
             _ = p.tryToken(.eol);
             return try p.addEntry(entry);
         },
+        .keyword_event => {
+            _ = p.advanceToken();
+            const variable = try p.expectTokenSlice(.string);
+            const value = try p.expectTokenSlice(.string);
+            _ = try p.expectToken(.eol);
+            const meta = try p.parseMeta();
+            const event = Data.Event{ .date = date, .variable = variable, .value = value, .meta = meta };
+            const entry = Data.Entry{ .event = event };
+            _ = p.tryToken(.eol);
+            return try p.addEntry(entry);
+        },
+        .keyword_query => {
+            _ = p.advanceToken();
+            const name = try p.expectTokenSlice(.string);
+            const sql = try p.expectTokenSlice(.string);
+            _ = try p.expectToken(.eol);
+            const meta = try p.parseMeta();
+            const query = Data.Query{ .date = date, .name = name, .sql = sql, .meta = meta };
+            const entry = Data.Entry{ .query = query };
+            _ = p.tryToken(.eol);
+            return try p.addEntry(entry);
+        },
+        .keyword_note => {
+            _ = p.advanceToken();
+            const account = try p.expectTokenSlice(.account);
+            const note = try p.expectTokenSlice(.string);
+            _ = try p.expectToken(.eol);
+            const meta = try p.parseMeta();
+            const note_entry = Data.Note{ .date = date, .account = account, .note = note, .meta = meta };
+            const entry = Data.Entry{ .note = note_entry };
+            _ = p.tryToken(.eol);
+            return try p.addEntry(entry);
+        },
+        .keyword_document => {
+            _ = p.advanceToken();
+            const account = try p.expectTokenSlice(.account);
+            const filename = try p.expectTokenSlice(.string);
+            const tagslinks = try p.parseTagsLinks();
+            _ = try p.expectToken(.eol);
+            const meta = try p.parseMeta();
+            const document = Data.Document{ .date = date, .account = account, .filename = filename, .tagslinks = tagslinks, .meta = meta };
+            const entry = Data.Entry{ .document = document };
+            _ = p.tryToken(.eol);
+            return try p.addEntry(entry);
+        },
         else => return p.fail(.expected_entry),
     }
 }
@@ -672,6 +717,46 @@ test "price" {
         \\  a: "Yes"
         \\
         \\1985-09-24 price TGT 200.0000 USD
+        \\
+    );
+}
+
+test "event" {
+    try testParse(
+        \\1985-08-17 event "location" "Paris"
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 event "location" "London"
+        \\
+    );
+}
+
+test "query" {
+    try testParse(
+        \\1985-08-17 query "france-balances" "SELECT ..."
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 query "london-balances" "SELECT ..."
+        \\
+    );
+}
+
+test "note" {
+    try testParse(
+        \\1985-08-17 note Assets:Foo "Called them"
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 note Assets:Bar "Called them"
+        \\
+    );
+}
+
+test "document" {
+    try testParse(
+        \\1985-08-17 document Assets:Foo "/usr/bin/foo"
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 document Assets:Bar "/usr/bin/bar" #tag ^link
         \\
     );
 }

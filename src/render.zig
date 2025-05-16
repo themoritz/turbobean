@@ -156,6 +156,48 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
             try r.newline();
             if (price.meta) |meta| try r.renderMeta(meta, 1);
         },
+        .event => |event| {
+            try r.format("{}", .{event.date});
+            try r.slice(" event ");
+            try r.slice(event.variable);
+            try r.space();
+            try r.slice(event.value);
+            try r.newline();
+            if (event.meta) |meta| try r.renderMeta(meta, 1);
+        },
+        .query => |query| {
+            try r.format("{}", .{query.date});
+            try r.slice(" query ");
+            try r.slice(query.name);
+            try r.space();
+            try r.slice(query.sql);
+            try r.newline();
+            if (query.meta) |meta| try r.renderMeta(meta, 1);
+        },
+        .note => |note| {
+            try r.format("{}", .{note.date});
+            try r.slice(" note ");
+            try r.slice(note.account);
+            try r.space();
+            try r.slice(note.note);
+            try r.newline();
+            if (note.meta) |meta| try r.renderMeta(meta, 1);
+        },
+        .document => |document| {
+            try r.format("{}", .{document.date});
+            try r.slice(" document ");
+            try r.slice(document.account);
+            try r.space();
+            try r.slice(document.filename);
+            if (document.tagslinks) |tagslinks| {
+                for (tagslinks.start..tagslinks.end) |i| {
+                    try r.space();
+                    try r.slice(r.data.tagslinks.items(.slice)[i]);
+                }
+            }
+            try r.newline();
+            if (document.meta) |meta| try r.renderMeta(meta, 1);
+        },
         .pushtag => |tag| {
             try r.slice("pushtag ");
             try r.slice(tag);
