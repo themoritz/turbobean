@@ -29,7 +29,7 @@ pub fn main() !void {
     defer data.deinit(allocator);
 
     std.debug.print("{d}\n", .{data.entries.len});
-    try render.print(allocator, &data);
+    // try render.print(allocator, &data);
 }
 
 test {

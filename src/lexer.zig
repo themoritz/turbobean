@@ -775,6 +775,16 @@ test "tag" {
     try testLex(" # #abcA7 #", &.{ .indent, .flag, .tag, .flag });
 }
 
+test "org mode" {
+    try testLex(
+        \\* 2024
+        \\
+        \\** June
+        \\
+        \\2024-06-01
+    , &.{ .eol, .eol, .date });
+}
+
 test "beancount iter" {
     try testLex(
         \\2013-05-18 2014-01-02 2014/01/02

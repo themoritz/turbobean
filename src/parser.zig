@@ -52,23 +52,53 @@ pub const ErrorDetails = struct {
     pub fn render(e: ErrorDetails, source: [:0]const u8) void {
         // Calculate line and col from token.loc
         const loc = e.token.loc;
-        var line: u32 = 1;
-        var col: u32 = 1;
-        var i: u32 = 0;
-        const len = @intFromPtr(loc.ptr) - @intFromPtr(source.ptr) + loc.len;
-        while (i < len) : (i += 1) {
+        var line_start: u32 = 0;
+        var col_start: u32 = 0;
+        const start = @intFromPtr(loc.ptr) - @intFromPtr(source.ptr);
+        const end = start + loc.len;
+        var line_pos: usize = 0;
+        for (0..start) |i| {
             if (source[i] == '\n') {
-                line += 1;
-                col = 1;
+                line_start += 1;
+                col_start = 0;
+                line_pos = i;
             } else {
-                col += 1;
+                col_start += 1;
+            }
+        }
+        var line_end = line_start;
+        var col_end = col_start;
+        for (start..end) |i| {
+            if (source[i] == '\n') {
+                line_end += 1;
+                col_end = 0;
+            } else {
+                col_end += 1;
             }
         }
 
-        std.debug.print(
-            "line {d} col {d}",
-            .{ line, col },
-        );
+        var line_pos_end = source.len;
+        for (end..source.len) |i| {
+            if (source[i] == '\n') {
+                line_pos_end = i;
+                break;
+            }
+        }
+
+        std.debug.print("{d:>5} | {s}\n", .{ line_start + 1, source[line_pos + 1 .. line_pos_end] });
+        for (0..col_start + 8) |_| std.debug.print(" ", .{});
+        for (col_start..col_end) |_| std.debug.print("^", .{});
+        std.debug.print("\n", .{});
+
+        for (0..col_start + 8) |_| std.debug.print(" ", .{});
+        switch (e.tag) {
+            .expected_token => {
+                std.debug.print("Expected {s}, found {s}\n", .{ @tagName(e.expected.?), @tagName(e.token.tag) });
+            },
+            else => {
+                std.debug.print("Expected {s}\n", .{@tagName(e.tag)});
+            },
+        }
     }
 };
 
@@ -179,6 +209,7 @@ fn tryTokenSlice(p: *Self, tag: Lexer.Token.Tag) ?[]const u8 {
 }
 
 pub fn parse(p: *Self) !void {
+    p.eatWhitespace();
     while (true) {
         _ = try p.parseDeclaration() orelse break;
         p.eatWhitespace();
@@ -807,6 +838,14 @@ test "org mode" {
         \\
         \\2013-03-01 open Assets:Foo
     , &.{ .open, .open });
+
+    try testEntries(
+        \\* 2024
+        \\
+        \\** June
+        \\
+        \\2024-06-01 balance Assets:Currency:ING:Giro 0.00 EUR
+    , &.{.balance});
 }
 
 test "comments" {
