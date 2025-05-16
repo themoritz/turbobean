@@ -12,11 +12,6 @@
 - KeyValue
   - Value = Amount
 
-- Commodity
-- Pad
-- Balance
-- Amount tolerance
-
 - Price, event, query, note, document, custom
 
 ## Renderer

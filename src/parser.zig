@@ -234,6 +234,48 @@ fn parseEntry(p: *Self) !?usize {
             _ = p.tryToken(.eol);
             return try p.addEntry(entry);
         },
+        .keyword_commodity => {
+            _ = p.advanceToken();
+            const currency = try p.expectTokenSlice(.currency);
+            _ = try p.expectToken(.eol);
+            const meta = try p.parseMeta();
+            const commodity = Data.Commodity{ .date = date, .currency = currency, .meta = meta };
+            const entry = Data.Entry{ .commodity = commodity };
+            _ = p.tryToken(.eol);
+            return try p.addEntry(entry);
+        },
+        .keyword_pad => {
+            _ = p.advanceToken();
+            const account = try p.expectTokenSlice(.account);
+            const pad_to = try p.expectTokenSlice(.account);
+            _ = try p.expectToken(.eol);
+            const meta = try p.parseMeta();
+            const pad = Data.Pad{ .date = date, .account = account, .pad_to = pad_to, .meta = meta };
+            const entry = Data.Entry{ .pad = pad };
+            _ = p.tryToken(.eol);
+            return try p.addEntry(entry);
+        },
+        .keyword_balance => {
+            _ = p.advanceToken();
+            const account = try p.expectTokenSlice(.account);
+            const number = try p.expectNumber();
+            var tolerance: ?Number = null;
+            switch (p.currentToken().tag) {
+                .tilde => {
+                    _ = p.advanceToken();
+                    tolerance = try p.expectNumber();
+                },
+                else => {},
+            }
+            const currency = try p.expectTokenSlice(.currency);
+            _ = try p.expectToken(.eol);
+            const meta = try p.parseMeta();
+            const amount = Data.Amount{ .number = number, .currency = currency };
+            const balance = Data.Balance{ .date = date, .account = account, .amount = amount, .tolerance = tolerance, .meta = meta };
+            const entry = Data.Entry{ .balance = balance };
+            _ = p.tryToken(.eol);
+            return try p.addEntry(entry);
+        },
         else => return p.fail(.expected_entry),
     }
 }
@@ -473,6 +515,10 @@ fn parseNumber(p: *Self) !?Number {
     return try Number.fromSlice(token.loc);
 }
 
+fn expectNumber(p: *Self) !Number {
+    return try p.parseNumber() orelse return p.failExpected(.number);
+}
+
 test "tx" {
     try testParse(
         \\2015-11-01 * "Test"
@@ -574,6 +620,36 @@ test "close" {
         \\  a: "Yes"
         \\
         \\1985-09-24 close Assets:Bar
+        \\
+    );
+}
+
+test "commodity" {
+    try testParse(
+        \\1985-08-17 commodity USD
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 commodity EUR
+        \\
+    );
+}
+
+test "pad" {
+    try testParse(
+        \\1985-08-17 pad Assets:Foo Equity:Opening-Balances
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 pad Assets:Bar Equity:Opening-Balances
+        \\
+    );
+}
+
+test "balance" {
+    try testParse(
+        \\1985-08-17 balance Assets:Foo 0.0000 USD
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 balance Assets:Bar 0.1000 ~ 0.0001 EUR
         \\
     );
 }

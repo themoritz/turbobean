@@ -66,6 +66,9 @@ pub const Entry = union(enum) {
     transaction: Transaction,
     open: Open,
     close: Close,
+    commodity: Commodity,
+    pad: Pad,
+    balance: Balance,
     // Directives
     pushtag: []const u8,
     poptag: []const u8,
@@ -92,6 +95,27 @@ pub const Open = struct {
 pub const Close = struct {
     date: Date,
     account: []const u8,
+    meta: ?Range,
+};
+
+pub const Commodity = struct {
+    date: Date,
+    currency: []const u8,
+    meta: ?Range,
+};
+
+pub const Pad = struct {
+    date: Date,
+    account: []const u8,
+    pad_to: []const u8,
+    meta: ?Range,
+};
+
+pub const Balance = struct {
+    date: Date,
+    account: []const u8,
+    amount: Amount,
+    tolerance: ?Number,
     meta: ?Range,
 };
 

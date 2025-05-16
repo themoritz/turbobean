@@ -82,13 +82,7 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
                 }
             }
             try r.newline();
-            if (tx.meta) |meta| {
-                for (meta.start..meta.end) |i| {
-                    try r.indent();
-                    try r.renderKeyValue(i);
-                    try r.newline();
-                }
-            }
+            if (tx.meta) |meta| try r.renderMeta(meta, 1);
             if (tx.postings) |postings| {
                 for (postings.start..postings.end) |i| {
                     try r.renderPosting(i);
@@ -111,26 +105,47 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
                 try r.slice(booking);
             }
             try r.newline();
-            if (open.meta) |meta| {
-                for (meta.start..meta.end) |i| {
-                    try r.indent();
-                    try r.renderKeyValue(i);
-                    try r.newline();
-                }
-            }
+            if (open.meta) |meta| try r.renderMeta(meta, 1);
         },
         .close => |close| {
             try r.format("{}", .{close.date});
             try r.slice(" close ");
             try r.slice(close.account);
             try r.newline();
-            if (close.meta) |meta| {
-                for (meta.start..meta.end) |i| {
-                    try r.indent();
-                    try r.renderKeyValue(i);
-                    try r.newline();
-                }
+            if (close.meta) |meta| try r.renderMeta(meta, 1);
+        },
+        .commodity => |commodity| {
+            try r.format("{}", .{commodity.date});
+            try r.slice(" commodity ");
+            try r.slice(commodity.currency);
+            try r.newline();
+            if (commodity.meta) |meta| try r.renderMeta(meta, 1);
+        },
+        .pad => |pad| {
+            try r.format("{}", .{pad.date});
+            try r.slice(" pad ");
+            try r.slice(pad.account);
+            try r.space();
+            try r.slice(pad.pad_to);
+            try r.newline();
+            if (pad.meta) |meta| try r.renderMeta(meta, 1);
+        },
+        .balance => |balance| {
+            try r.format("{}", .{balance.date});
+            try r.slice(" balance ");
+            try r.slice(balance.account);
+            try r.space();
+            if (balance.tolerance) |tolerance| {
+                try r.format("{}", .{balance.amount.number.?});
+                try r.slice(" ~ ");
+                try r.format("{}", .{tolerance});
+                try r.space();
+                try r.slice(balance.amount.currency.?);
+            } else {
+                try r.renderAmount(balance.amount);
             }
+            try r.newline();
+            if (balance.meta) |meta| try r.renderMeta(meta, 1);
         },
         .pushtag => |tag| {
             try r.slice("pushtag ");
@@ -209,20 +224,23 @@ fn renderPosting(r: *Render, posting: usize) !void {
 
     try r.newline();
 
-    if (r.data.postings.items(.meta)[posting]) |meta| {
-        for (meta.start..meta.end) |i| {
-            try r.indent();
-            try r.indent();
-            try r.renderKeyValue(i);
-            try r.newline();
-        }
-    }
+    if (r.data.postings.items(.meta)[posting]) |meta| try r.renderMeta(meta, 2);
 }
 
 fn renderKeyValue(r: *Render, i: usize) !void {
     try r.slice(r.data.meta.items(.key)[i]);
     try r.slice(": ");
     try r.slice(r.data.meta.items(.value)[i]);
+}
+
+fn renderMeta(r: *Render, range: Data.Range, num_indent: usize) !void {
+    for (range.start..range.end) |i| {
+        for (0..num_indent) |_| {
+            try r.indent();
+        }
+        try r.renderKeyValue(i);
+        try r.newline();
+    }
 }
 
 fn renderAmount(r: *Render, amount: Data.Amount) !void {
