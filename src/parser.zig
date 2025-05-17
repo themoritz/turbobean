@@ -191,7 +191,15 @@ fn parseEntry(p: *Self) !?usize {
             }
             const postings = Data.Range.create(postings_top, p.postings.len);
 
-            const transaction = Data.Transaction{ .date = date, .flag = flag, .payee = payee, .narration = narration, .tagslinks = tagslinks, .postings = postings, .meta = meta };
+            const transaction = Data.Transaction{
+                .date = date,
+                .flag = flag,
+                .payee = payee,
+                .narration = narration,
+                .tagslinks = tagslinks,
+                .postings = postings,
+                .meta = meta,
+            };
             entry = Data.Entry{ .transaction = transaction };
         },
         .keyword_open => {
@@ -212,7 +220,13 @@ fn parseEntry(p: *Self) !?usize {
             try p.expectEolOrEof();
             const meta = try p.parseMeta();
 
-            const open = Data.Open{ .date = date, .account = account, .currencies = currencies, .booking = booking, .meta = meta };
+            const open = Data.Open{
+                .date = date,
+                .account = account,
+                .currencies = currencies,
+                .booking = booking,
+                .meta = meta,
+            };
             entry = Data.Entry{ .open = open };
         },
         .keyword_close => {
@@ -220,7 +234,11 @@ fn parseEntry(p: *Self) !?usize {
             const account = try p.expectTokenSlice(.account);
             try p.expectEolOrEof();
             const meta = try p.parseMeta();
-            const close = Data.Close{ .date = date, .account = account, .meta = meta };
+            const close = Data.Close{
+                .date = date,
+                .account = account,
+                .meta = meta,
+            };
             entry = Data.Entry{ .close = close };
         },
         .keyword_commodity => {
@@ -228,7 +246,11 @@ fn parseEntry(p: *Self) !?usize {
             const currency = try p.expectTokenSlice(.currency);
             try p.expectEolOrEof();
             const meta = try p.parseMeta();
-            const commodity = Data.Commodity{ .date = date, .currency = currency, .meta = meta };
+            const commodity = Data.Commodity{
+                .date = date,
+                .currency = currency,
+                .meta = meta,
+            };
             entry = Data.Entry{ .commodity = commodity };
         },
         .keyword_pad => {
@@ -237,7 +259,12 @@ fn parseEntry(p: *Self) !?usize {
             const pad_to = try p.expectTokenSlice(.account);
             try p.expectEolOrEof();
             const meta = try p.parseMeta();
-            const pad = Data.Pad{ .date = date, .account = account, .pad_to = pad_to, .meta = meta };
+            const pad = Data.Pad{
+                .date = date,
+                .account = account,
+                .pad_to = pad_to,
+                .meta = meta,
+            };
             entry = Data.Entry{ .pad = pad };
         },
         .keyword_balance => {
@@ -256,7 +283,13 @@ fn parseEntry(p: *Self) !?usize {
             try p.expectEolOrEof();
             const meta = try p.parseMeta();
             const amount = Data.Amount{ .number = number, .currency = currency };
-            const balance = Data.Balance{ .date = date, .account = account, .amount = amount, .tolerance = tolerance, .meta = meta };
+            const balance = Data.Balance{
+                .date = date,
+                .account = account,
+                .amount = amount,
+                .tolerance = tolerance,
+                .meta = meta,
+            };
             entry = Data.Entry{ .balance = balance };
         },
         .keyword_price => {
@@ -265,7 +298,12 @@ fn parseEntry(p: *Self) !?usize {
             const amount = try p.parseAmount() orelse return p.fail(.expected_amount);
             try p.expectEolOrEof();
             const meta = try p.parseMeta();
-            const price = Data.PriceDecl{ .date = date, .currency = currency, .amount = amount, .meta = meta };
+            const price = Data.PriceDecl{
+                .date = date,
+                .currency = currency,
+                .amount = amount,
+                .meta = meta,
+            };
             entry = Data.Entry{ .price = price };
         },
         .keyword_event => {
@@ -274,7 +312,12 @@ fn parseEntry(p: *Self) !?usize {
             const value = try p.expectTokenSlice(.string);
             try p.expectEolOrEof();
             const meta = try p.parseMeta();
-            const event = Data.Event{ .date = date, .variable = variable, .value = value, .meta = meta };
+            const event = Data.Event{
+                .date = date,
+                .variable = variable,
+                .value = value,
+                .meta = meta,
+            };
             entry = Data.Entry{ .event = event };
         },
         .keyword_query => {
@@ -283,7 +326,12 @@ fn parseEntry(p: *Self) !?usize {
             const sql = try p.expectTokenSlice(.string);
             try p.expectEolOrEof();
             const meta = try p.parseMeta();
-            const query = Data.Query{ .date = date, .name = name, .sql = sql, .meta = meta };
+            const query = Data.Query{
+                .date = date,
+                .name = name,
+                .sql = sql,
+                .meta = meta,
+            };
             entry = Data.Entry{ .query = query };
         },
         .keyword_note => {
@@ -292,7 +340,12 @@ fn parseEntry(p: *Self) !?usize {
             const note = try p.expectTokenSlice(.string);
             try p.expectEolOrEof();
             const meta = try p.parseMeta();
-            const note_entry = Data.Note{ .date = date, .account = account, .note = note, .meta = meta };
+            const note_entry = Data.Note{
+                .date = date,
+                .account = account,
+                .note = note,
+                .meta = meta,
+            };
             entry = Data.Entry{ .note = note_entry };
         },
         .keyword_document => {
@@ -302,7 +355,13 @@ fn parseEntry(p: *Self) !?usize {
             const tagslinks = try p.parseTagsLinks();
             try p.expectEolOrEof();
             const meta = try p.parseMeta();
-            const document = Data.Document{ .date = date, .account = account, .filename = filename, .tagslinks = tagslinks, .meta = meta };
+            const document = Data.Document{
+                .date = date,
+                .account = account,
+                .filename = filename,
+                .tagslinks = tagslinks,
+                .meta = meta,
+            };
             entry = Data.Entry{ .document = document };
         },
         else => return p.fail(.expected_entry),
