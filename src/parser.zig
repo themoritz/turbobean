@@ -19,6 +19,7 @@ const Date = @import("date.zig").Date;
 const Self = @This();
 const Lexer = @import("lexer.zig").Lexer;
 const Number = @import("number.zig").Number;
+const ErrorDetails = @import("ErrorDetails.zig");
 
 pub const Error = error{ ParseError, InvalidCharacter } || Allocator.Error;
 
@@ -34,74 +35,6 @@ costcomps: Data.CostComps,
 currencies: Data.Currencies,
 
 err: ?ErrorDetails,
-
-pub const ErrorDetails = struct {
-    tag: Tag,
-    token: Lexer.Token,
-    expected: ?Lexer.Token.Tag,
-
-    pub const Tag = enum {
-        expected_declaration,
-        expected_token,
-        expected_entry,
-        expected_key_value,
-        expected_value,
-        expected_amount,
-    };
-
-    pub fn render(e: ErrorDetails, source: [:0]const u8) void {
-        // Calculate line and col from token.loc
-        const loc = e.token.loc;
-        var line_start: u32 = 0;
-        var col_start: u32 = 0;
-        const start = @intFromPtr(loc.ptr) - @intFromPtr(source.ptr);
-        const end = start + loc.len;
-        var line_pos: usize = 0;
-        for (0..start) |i| {
-            if (source[i] == '\n') {
-                line_start += 1;
-                col_start = 0;
-                line_pos = i;
-            } else {
-                col_start += 1;
-            }
-        }
-        var line_end = line_start;
-        var col_end = col_start;
-        for (start..end) |i| {
-            if (source[i] == '\n') {
-                line_end += 1;
-                col_end = 0;
-            } else {
-                col_end += 1;
-            }
-        }
-
-        var line_pos_end = source.len;
-        for (end..source.len) |i| {
-            if (source[i] == '\n') {
-                line_pos_end = i;
-                break;
-            }
-        }
-
-        std.debug.print("{d:>5} | {s}\n", .{ line_start + 1, source[line_pos + 1 .. line_pos_end] });
-        for (0..col_start + 8) |_| std.debug.print(" ", .{});
-        for (col_start..col_end) |_| std.debug.print("^", .{});
-        std.debug.print("\n", .{});
-
-        for (0..col_start + 8) |_| std.debug.print(" ", .{});
-        switch (e.tag) {
-            .expected_token => {
-                std.debug.print("Expected {s}, found {s}\n", .{ @tagName(e.expected.?), @tagName(e.token.tag) });
-            },
-            else => {
-                std.debug.print("Expected {s}\n", .{@tagName(e.tag)});
-            },
-        }
-    }
-};
-
 fn addEntry(p: *Self, entry: Data.Entry) !usize {
     const result = p.entries.items.len;
     try p.entries.append(entry);

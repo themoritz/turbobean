@@ -230,7 +230,7 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
 
     parser.parse() catch |err| switch (err) {
         error.ParseError => {
-            parser.err.?.render(source);
+            try parser.err.?.print(alloc, source);
             return err;
         },
         else => return err,
