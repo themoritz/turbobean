@@ -21,7 +21,7 @@ const Lexer = @import("lexer.zig").Lexer;
 const Number = @import("number.zig").Number;
 const ErrorDetails = @import("ErrorDetails.zig");
 
-pub const Error = error{ ParseError, InvalidCharacter } || Allocator.Error;
+pub const Error = error{ParseError} || Allocator.Error;
 
 gpa: Allocator,
 tokens: Data.Tokens,
@@ -551,14 +551,10 @@ fn parseDate(p: *Self) !?Date {
 
 fn parseNumberExpr(p: *Self) !?Number {
     switch (p.currentToken().tag) {
-        .number => {
-            const token = p.advanceToken();
-            return try Number.fromSlice(token.loc);
-        },
+        .number => return try p.parseNumber(),
         .minus => {
             _ = p.advanceToken();
-            const token = try p.expectToken(.number);
-            const number = try Number.fromSlice(token.loc);
+            const number = try p.expectNumber();
             return number.negate();
         },
         else => return null,
@@ -567,6 +563,22 @@ fn parseNumberExpr(p: *Self) !?Number {
 
 fn expectNumberExpr(p: *Self) !Number {
     return try p.parseNumberExpr() orelse return p.failExpected(.number);
+}
+
+fn parseNumber(p: *Self) !?Number {
+    const token = p.currentToken();
+    if (token.tag == .number) {
+        const number = Number.fromSlice(token.loc) catch |err| switch (err) {
+            error.InvalidCharacter => return p.fail(.invalid_number),
+            else => return err,
+        };
+        _ = p.advanceToken();
+        return number;
+    } else return null;
+}
+
+fn expectNumber(p: *Self) !Number {
+    return try p.parseNumber() orelse return p.failExpected(.number);
 }
 
 test "negative" {

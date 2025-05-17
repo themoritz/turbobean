@@ -9,6 +9,7 @@ expected: ?Lexer.Token.Tag,
 
 pub const Tag = enum {
     expected_declaration,
+    invalid_number,
     expected_token,
     expected_entry,
     expected_key_value,
@@ -53,6 +54,9 @@ pub fn dump(e: Self, alloc: Allocator, source: [:0]const u8) ![]const u8 {
         }
     }
 
+    std.debug.assert(line_start == line_end);
+    std.debug.assert(col_start <= col_end);
+
     var line_pos_end = source.len;
     for (end..source.len) |i| {
         if (source[i] == '\n') {
@@ -63,7 +67,12 @@ pub fn dump(e: Self, alloc: Allocator, source: [:0]const u8) ![]const u8 {
 
     try std.fmt.format(buffer.writer(), "{d:>5} | {s}\n", .{ line_start + 1, source[line_pos..line_pos_end] });
     for (0..col_start + 8) |_| try buffer.append(' ');
-    for (col_start..col_end) |_| try buffer.append('^');
+    if (col_start == col_end) {
+        try buffer.append('\\');
+    } else {
+        for (col_start..col_end) |_| try buffer.append('^');
+    }
+
     try buffer.append('\n');
 
     for (0..col_start + 8) |_| try buffer.append(' ');
@@ -72,7 +81,7 @@ pub fn dump(e: Self, alloc: Allocator, source: [:0]const u8) ![]const u8 {
             try std.fmt.format(buffer.writer(), "Expected {s}, found {s}\n", .{ @tagName(e.expected.?), @tagName(e.token.tag) });
         },
         else => {
-            try std.fmt.format(buffer.writer(), "Expected {s}\n", .{@tagName(e.tag)});
+            try std.fmt.format(buffer.writer(), "{s}\n", .{@tagName(e.tag)});
         },
     }
 
@@ -80,6 +89,15 @@ pub fn dump(e: Self, alloc: Allocator, source: [:0]const u8) ![]const u8 {
 }
 
 test "render" {
+    try testLoc(2, 0,
+        \\Hello Foo
+    ,
+        \\    1 | Hello Foo
+        \\          \
+        \\          Expected string, found number
+        \\
+    );
+
     try testLoc(0, 1,
         \\Hello Foo
     ,

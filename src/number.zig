@@ -17,7 +17,17 @@ pub const Number = struct {
     }
 
     pub fn fromSlice(bytes: []const u8) ParseFloatError!Number {
-        return fromFloat(try std.fmt.parseFloat(f64, bytes));
+        std.debug.assert(bytes.len <= 64);
+        var buf: [64]u8 = undefined;
+        var j: usize = 0;
+        for (bytes) |b| {
+            if (b != ',') {
+                buf[j] = b;
+                j += 1;
+            }
+        }
+        const cleaned_bytes = buf[0..j];
+        return fromFloat(try std.fmt.parseFloat(f64, cleaned_bytes));
     }
 
     pub fn toFloat(self: Number) f64 {
@@ -71,4 +81,6 @@ test Number {
 
     try std.testing.expectEqual(Number.fromFloat(2.25), Number.fromFloat(1.5).mul(Number.fromFloat(1.5)));
     try std.testing.expectEqual(Number.fromFloat(0.1428), Number.fromInt(1).div(Number.fromInt(7)));
+
+    try std.testing.expectEqual(Number.fromFloat(123456.4), try Number.fromSlice("123,456.4"));
 }
