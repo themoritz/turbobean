@@ -784,6 +784,14 @@ test "org mode" {
     , &.{ .eol, .eol, .eol, .eol, .date });
 }
 
+test "indented line" {
+    try testLex(
+        \\2021-06-23 * "SATURN ONLINE INGOLSTADT 000"
+        \\  ; Waschmachine?
+        \\  Assets:Currency
+    , &.{ .date, .asterisk, .string, .eol, .indent, .eol, .indent, .account });
+}
+
 test "beancount iter" {
     try testLex(
         \\2013-05-18 2014-01-02 2014/01/02

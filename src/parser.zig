@@ -187,7 +187,7 @@ fn parseEntry(p: *Self) !?usize {
 
             const postings_top = p.postings.len;
             while (true) {
-                _ = try p.parsePosting() orelse break;
+                if (try p.parsePosting()) |_| {} else if (p.parseIndentedLine()) |_| {} else break;
             }
             const postings = Data.Range.create(postings_top, p.postings.len);
 
@@ -310,6 +310,13 @@ fn parseEntry(p: *Self) !?usize {
     return try p.addEntry(entry);
 }
 
+fn parseIndentedLine(p: *Self) ?void {
+    if (p.currentToken().tag == .indent and p.nextToken() != null and p.nextToken().?.tag == .eol) {
+        _ = p.advanceToken();
+        _ = p.advanceToken();
+    } else return null;
+}
+
 fn parseDirective(p: *Self) !?usize {
     var entry: Data.Entry = undefined;
     switch (p.currentToken().tag) {
@@ -362,7 +369,7 @@ fn parseDirective(p: *Self) !?usize {
 fn parseMeta(p: *Self) !?Data.Range {
     const meta_top = p.meta.len;
     while (true) {
-        _ = try p.parseKeyValueLine() orelse break;
+        if (try p.parseKeyValueLine()) |_| {} else if (p.parseIndentedLine()) |_| {} else break;
     }
     return Data.Range.create(meta_top, p.meta.len);
 }
@@ -772,6 +779,26 @@ test "document" {
         \\1985-09-24 document Assets:Bar "/usr/bin/bar" #tag ^link
         \\
     );
+}
+
+test "indent continue" {
+    try testEntries(
+        \\2021-06-23 * "SATURN" ^HO22036653030652/175962
+        \\  ; Washing machine?
+        \\  Assets:Currency -442.89 EUR
+        \\  Expenses:Home
+        \\
+    , &.{.transaction});
+
+    try testEntries(
+        \\2021-06-23 * "SATURN ONLINE INGOLSTADT 000" ^HO22036653030652/175962
+        \\  Assets:Currency -442.89 EUR
+        \\    key: "value"
+        \\    ; Todo
+        \\    key2: "value2"
+        \\  Expenses:Home
+        \\
+    , &.{.transaction});
 }
 
 test "org mode" {

@@ -1,8 +1,9 @@
 # Todos
 
-## Lexer
+- Per number scale factor
+- Resolve imports
 
-- Ignore Lines beginning with special chars or flags
+## Lexer
 
 ## Parser
 
