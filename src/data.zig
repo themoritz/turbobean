@@ -22,6 +22,7 @@ pub const TagsLinks = std.MultiArrayList(TagLink);
 pub const Meta = std.MultiArrayList(KeyValue);
 pub const CostComps = std.ArrayList(CostComp);
 pub const Currencies = std.ArrayList([]const u8);
+pub const Imports = std.ArrayList([]const u8);
 
 pub const Tokens = std.ArrayList(Lexer.Token);
 
@@ -217,12 +218,31 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
     var self = Self.init(alloc);
     const name = try alloc.dupe(u8, "static");
     const owned_source = try alloc.dupeZ(u8, source);
-    try self.add_file(name, owned_source);
+    const imports = try self.add_file(name, owned_source);
+    defer self.alloc.free(imports);
     return self;
 }
 
-pub fn load_file(self: *Self, name: []const u8) !void {
-    const owned_name = try self.alloc.dupe(u8, "static");
+pub fn load_file(alloc: Allocator, name: []const u8) !Self {
+    var self = Self.init(alloc);
+    try self.load_file_rec(name);
+    return self;
+}
+
+fn load_file_rec(self: *Self, name: []const u8) !void {
+    if (self.sources.get(name)) |_| return error.ImportCycle;
+    const imports = try self.load_single_file(name);
+    defer self.alloc.free(imports);
+    const dir = std.fs.path.dirname(name) orelse ".";
+    for (imports) |import| {
+        const joined = try std.fs.path.join(self.alloc, &.{ dir, import });
+        defer self.alloc.free(joined);
+        try self.load_file_rec(joined);
+    }
+}
+
+fn load_single_file(self: *Self, name: []const u8) !Imports.Slice {
+    const owned_name = try self.alloc.dupe(u8, name);
 
     const file = try std.fs.cwd().openFile(name, .{});
     defer file.close();
@@ -234,11 +254,11 @@ pub fn load_file(self: *Self, name: []const u8) !void {
     source[filesize] = 0;
 
     const null_terminated: [:0]u8 = source[0..filesize :0];
-    try self.add_file(owned_name, null_terminated);
+    return try self.add_file(owned_name, null_terminated);
 }
 
 /// Takes ownership of name and source.
-fn add_file(self: *Self, name: []const u8, source: [:0]const u8) !void {
+fn add_file(self: *Self, name: []const u8, source: [:0]const u8) !Imports.Slice {
     try self.sources.put(name, source);
 
     var lexer = Lexer.init(source);
@@ -261,6 +281,7 @@ fn add_file(self: *Self, name: []const u8, source: [:0]const u8) !void {
         .meta = &self.meta,
         .costcomps = &self.costcomps,
         .currencies = &self.currencies,
+        .imports = Imports.init(self.alloc),
         .err = null,
     };
 
@@ -271,6 +292,8 @@ fn add_file(self: *Self, name: []const u8, source: [:0]const u8) !void {
         },
         else => return err,
     };
+
+    return parser.imports.toOwnedSlice();
 }
 
 pub fn deinit(self: *Self, alloc: Allocator) void {

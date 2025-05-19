@@ -14,10 +14,8 @@ pub fn main() !void {
     if (args.len < 2) return error.MissingArgument;
     const filename = args[1];
 
-    var data = Data.init(allocator);
+    var data = try Data.load_file(allocator, filename);
     defer data.deinit(allocator);
-
-    try data.load_file(filename);
 
     std.debug.print("{d}\n", .{data.entries.items.len});
     // try render.print(allocator, &data);

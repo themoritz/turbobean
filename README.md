@@ -1,7 +1,6 @@
 # Todos
 
 - Per number scale factor
-- Resolve imports
 
 ## Lexer
 

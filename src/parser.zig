@@ -34,7 +34,10 @@ meta: *Data.Meta,
 costcomps: *Data.CostComps,
 currencies: *Data.Currencies,
 
+imports: Data.Imports,
+
 err: ?ErrorDetails,
+
 fn addEntry(p: *Self, entry: Data.Entry) !usize {
     const result = p.entries.items.len;
     try p.entries.append(entry);
@@ -412,6 +415,7 @@ fn parseDirective(p: *Self) !?usize {
         .keyword_include => {
             _ = p.advanceToken();
             const file = try p.expectToken(.string);
+            try p.imports.append(file.loc[1 .. file.loc.len - 1]);
             entry = Data.Entry{ .include = file.loc };
         },
         .keyword_plugin => {
