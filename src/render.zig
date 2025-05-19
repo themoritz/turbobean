@@ -53,9 +53,9 @@ inline fn indent(r: *Render) !void {
 }
 
 fn render(r: *Render) !void {
-    for (r.data.entries, 1..) |entry, i| {
+    for (r.data.entries.items, 1..) |entry, i| {
         try r.renderEntry(entry);
-        if (i < r.data.entries.len) {
+        if (i < r.data.entries.items.len) {
             try r.newline();
         }
     }
@@ -97,7 +97,7 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
                 try r.space();
                 for (currencies.start..currencies.end, 0..) |i, j| {
                     if (j > 0) try r.slice(",");
-                    try r.slice(r.data.currencies[i]);
+                    try r.slice(r.data.currencies.items[i]);
                 }
             }
             if (open.booking) |booking| {
@@ -257,7 +257,7 @@ fn renderPosting(r: *Render, posting: usize) !void {
         if (cost.comps) |comps| {
             for (comps.start..comps.end, 0..) |i, j| {
                 if (j > 0) try r.slice(", ");
-                const comp = r.data.costcomps[i];
+                const comp = r.data.costcomps.items[i];
                 switch (comp) {
                     .amount => |am| try r.renderAmount(am),
                     .date => |date| try r.format("{}", .{date}),

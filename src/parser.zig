@@ -23,16 +23,16 @@ const ErrorDetails = @import("ErrorDetails.zig");
 
 pub const Error = error{ParseError} || Allocator.Error;
 
-gpa: Allocator,
+alloc: Allocator,
 tokens: Data.Tokens,
 tok_i: usize,
 
-entries: Data.Entries,
-postings: Data.Postings,
-tagslinks: Data.TagsLinks,
-meta: Data.Meta,
-costcomps: Data.CostComps,
-currencies: Data.Currencies,
+entries: *Data.Entries,
+postings: *Data.Postings,
+tagslinks: *Data.TagsLinks,
+meta: *Data.Meta,
+costcomps: *Data.CostComps,
+currencies: *Data.Currencies,
 
 err: ?ErrorDetails,
 fn addEntry(p: *Self, entry: Data.Entry) !usize {
@@ -43,19 +43,19 @@ fn addEntry(p: *Self, entry: Data.Entry) !usize {
 
 fn addPosting(p: *Self, posting: Data.Posting) !usize {
     const result = p.postings.len;
-    try p.postings.append(p.gpa, posting);
+    try p.postings.append(p.alloc, posting);
     return result;
 }
 
 fn addTagLink(p: *Self, taglink: Data.TagLink) !usize {
     const result = p.tagslinks.len;
-    try p.tagslinks.append(p.gpa, taglink);
+    try p.tagslinks.append(p.alloc, taglink);
     return result;
 }
 
 fn addKeyValue(p: *Self, keyvalue: Data.KeyValue) !usize {
     const result = p.meta.len;
-    try p.meta.append(p.gpa, keyvalue);
+    try p.meta.append(p.alloc, keyvalue);
     return result;
 }
 
@@ -907,7 +907,7 @@ fn testEntries(source: [:0]const u8, expected: []const EntryTag) !void {
     defer data.deinit(std.testing.allocator);
 
     for (expected, 0..) |tag, i| {
-        const entry = data.entries[i];
+        const entry = data.entries.items[i];
         try std.testing.expectEqual(@tagName(tag), @tagName(entry));
     }
 }

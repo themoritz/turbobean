@@ -13,22 +13,13 @@ pub fn main() !void {
     defer allocator.free(args);
     if (args.len < 2) return error.MissingArgument;
     const filename = args[1];
-    const file = try std.fs.cwd().openFile(filename, .{});
-    defer file.close();
 
-    const filesize = try file.getEndPos();
-    const source = try allocator.alloc(u8, filesize + 1);
-    defer allocator.free(source);
-
-    _ = try file.readAll(source[0..filesize]);
-
-    source[filesize] = 0;
-    const null_terminated: [:0]u8 = source[0..filesize :0];
-
-    var data = try Data.parse(allocator, null_terminated);
+    var data = Data.init(allocator);
     defer data.deinit(allocator);
 
-    std.debug.print("{d}\n", .{data.entries.len});
+    try data.load_file(filename);
+
+    std.debug.print("{d}\n", .{data.entries.items.len});
     // try render.print(allocator, &data);
 }
 

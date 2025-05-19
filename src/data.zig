@@ -7,13 +7,14 @@ const Lexer = @import("lexer.zig").Lexer;
 
 const Self = @This();
 
-source: [:0]const u8,
-entries: Entries.Slice,
-postings: Postings.Slice,
-tagslinks: TagsLinks.Slice,
-meta: Meta.Slice,
-costcomps: CostComps.Slice,
-currencies: Currencies.Slice,
+alloc: Allocator,
+sources: std.StringHashMap([:0]const u8),
+entries: Entries,
+postings: Postings,
+tagslinks: TagsLinks,
+meta: Meta,
+costcomps: CostComps,
+currencies: Currencies,
 
 pub const Entries = std.ArrayList(Entry);
 pub const Postings = std.MultiArrayList(Posting);
@@ -198,9 +199,50 @@ pub const KeyValue = struct {
     value: []const u8,
 };
 
+pub fn init(alloc: Allocator) Self {
+    const sources = std.StringHashMap([:0]const u8).init(alloc);
+    return Self{
+        .alloc = alloc,
+        .postings = .{},
+        .tagslinks = .{},
+        .meta = .{},
+        .costcomps = CostComps.init(alloc),
+        .currencies = Currencies.init(alloc),
+        .entries = Entries.init(alloc),
+        .sources = sources,
+    };
+}
+
 pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
+    var self = Self.init(alloc);
+    const name = try alloc.dupe(u8, "static");
+    const owned_source = try alloc.dupeZ(u8, source);
+    try self.add_file(name, owned_source);
+    return self;
+}
+
+pub fn load_file(self: *Self, name: []const u8) !void {
+    const owned_name = try self.alloc.dupe(u8, "static");
+
+    const file = try std.fs.cwd().openFile(name, .{});
+    defer file.close();
+
+    const filesize = try file.getEndPos();
+    const source = try self.alloc.alloc(u8, filesize + 1);
+
+    _ = try file.readAll(source[0..filesize]);
+    source[filesize] = 0;
+
+    const null_terminated: [:0]u8 = source[0..filesize :0];
+    try self.add_file(owned_name, null_terminated);
+}
+
+/// Takes ownership of name and source.
+fn add_file(self: *Self, name: []const u8, source: [:0]const u8) !void {
+    try self.sources.put(name, source);
+
     var lexer = Lexer.init(source);
-    var tokens = Tokens.init(alloc);
+    var tokens = Tokens.init(self.alloc);
     defer tokens.deinit();
 
     while (true) {
@@ -210,47 +252,38 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
     }
 
     var parser: Parser = .{
-        .gpa = alloc,
+        .alloc = self.alloc,
         .tokens = tokens,
         .tok_i = 0,
-        .postings = .{},
-        .tagslinks = .{},
-        .meta = .{},
-        .costcomps = CostComps.init(alloc),
-        .currencies = Currencies.init(alloc),
-        .entries = Entries.init(alloc),
+        .entries = &self.entries,
+        .postings = &self.postings,
+        .tagslinks = &self.tagslinks,
+        .meta = &self.meta,
+        .costcomps = &self.costcomps,
+        .currencies = &self.currencies,
         .err = null,
     };
-    defer parser.postings.deinit(alloc);
-    defer parser.tagslinks.deinit(alloc);
-    defer parser.meta.deinit(alloc);
-    defer parser.costcomps.deinit();
-    defer parser.currencies.deinit();
-    defer parser.entries.deinit();
 
     parser.parse() catch |err| switch (err) {
         error.ParseError => {
-            try parser.err.?.print(alloc, source);
+            try parser.err.?.print(self.alloc, source);
             return err;
         },
         else => return err,
     };
-
-    return Self{
-        .entries = try parser.entries.toOwnedSlice(),
-        .postings = parser.postings.toOwnedSlice(),
-        .tagslinks = parser.tagslinks.toOwnedSlice(),
-        .meta = parser.meta.toOwnedSlice(),
-        .costcomps = try parser.costcomps.toOwnedSlice(),
-        .currencies = try parser.currencies.toOwnedSlice(),
-        .source = source,
-    };
 }
 
 pub fn deinit(self: *Self, alloc: Allocator) void {
-    alloc.free(self.entries);
-    alloc.free(self.costcomps);
-    alloc.free(self.currencies);
+    var iter = self.sources.iterator();
+    while (iter.next()) |kv| {
+        alloc.free(kv.key_ptr.*);
+        alloc.free(kv.value_ptr.*);
+    }
+    self.sources.deinit();
+
+    self.entries.deinit();
+    self.costcomps.deinit();
+    self.currencies.deinit();
     self.postings.deinit(alloc);
     self.tagslinks.deinit(alloc);
     self.meta.deinit(alloc);
