@@ -62,10 +62,9 @@ fn render(r: *Render) !void {
 }
 
 fn renderEntry(r: *Render, entry: Data.Entry) !void {
-    switch (entry) {
+    try r.format("{} ", .{entry.date});
+    switch (entry.payload) {
         .transaction => |tx| {
-            try r.format("{}", .{tx.date});
-            try r.space();
             try r.slice(tx.flag.loc);
             if (tx.payee) |payee| {
                 try r.space();
@@ -75,23 +74,9 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
                 try r.space();
                 try r.slice(narration);
             }
-            if (tx.tagslinks) |tagslinks| {
-                for (tagslinks.start..tagslinks.end) |i| {
-                    try r.space();
-                    try r.slice(r.data.tagslinks.items(.slice)[i]);
-                }
-            }
-            try r.newline();
-            if (tx.meta) |meta| try r.renderMeta(meta, 1);
-            if (tx.postings) |postings| {
-                for (postings.start..postings.end) |i| {
-                    try r.renderPosting(i);
-                }
-            }
         },
         .open => |open| {
-            try r.format("{}", .{open.date});
-            try r.slice(" open ");
+            try r.slice("open ");
             try r.slice(open.account);
             if (open.currencies) |currencies| {
                 try r.space();
@@ -104,35 +89,23 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
                 try r.space();
                 try r.slice(booking);
             }
-            try r.newline();
-            if (open.meta) |meta| try r.renderMeta(meta, 1);
         },
         .close => |close| {
-            try r.format("{}", .{close.date});
-            try r.slice(" close ");
+            try r.slice("close ");
             try r.slice(close.account);
-            try r.newline();
-            if (close.meta) |meta| try r.renderMeta(meta, 1);
         },
         .commodity => |commodity| {
-            try r.format("{}", .{commodity.date});
-            try r.slice(" commodity ");
+            try r.slice("commodity ");
             try r.slice(commodity.currency);
-            try r.newline();
-            if (commodity.meta) |meta| try r.renderMeta(meta, 1);
         },
         .pad => |pad| {
-            try r.format("{}", .{pad.date});
-            try r.slice(" pad ");
+            try r.slice("pad ");
             try r.slice(pad.account);
             try r.space();
             try r.slice(pad.pad_to);
-            try r.newline();
-            if (pad.meta) |meta| try r.renderMeta(meta, 1);
         },
         .balance => |balance| {
-            try r.format("{}", .{balance.date});
-            try r.slice(" balance ");
+            try r.slice("balance ");
             try r.slice(balance.account);
             try r.space();
             if (balance.tolerance) |tolerance| {
@@ -144,97 +117,56 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
             } else {
                 try r.renderAmount(balance.amount);
             }
-            try r.newline();
-            if (balance.meta) |meta| try r.renderMeta(meta, 1);
         },
         .price => |price| {
-            try r.format("{}", .{price.date});
-            try r.slice(" price ");
+            try r.slice("price ");
             try r.slice(price.currency);
             try r.space();
             try r.renderAmount(price.amount);
-            try r.newline();
-            if (price.meta) |meta| try r.renderMeta(meta, 1);
         },
         .event => |event| {
-            try r.format("{}", .{event.date});
-            try r.slice(" event ");
+            try r.slice("event ");
             try r.slice(event.variable);
             try r.space();
             try r.slice(event.value);
-            try r.newline();
-            if (event.meta) |meta| try r.renderMeta(meta, 1);
         },
         .query => |query| {
-            try r.format("{}", .{query.date});
-            try r.slice(" query ");
+            try r.slice("query ");
             try r.slice(query.name);
             try r.space();
             try r.slice(query.sql);
-            try r.newline();
-            if (query.meta) |meta| try r.renderMeta(meta, 1);
         },
         .note => |note| {
-            try r.format("{}", .{note.date});
-            try r.slice(" note ");
+            try r.slice("note ");
             try r.slice(note.account);
             try r.space();
             try r.slice(note.note);
-            try r.newline();
-            if (note.meta) |meta| try r.renderMeta(meta, 1);
         },
         .document => |document| {
-            try r.format("{}", .{document.date});
-            try r.slice(" document ");
+            try r.slice("document ");
             try r.slice(document.account);
             try r.space();
             try r.slice(document.filename);
-            if (document.tagslinks) |tagslinks| {
-                for (tagslinks.start..tagslinks.end) |i| {
-                    try r.space();
-                    try r.slice(r.data.tagslinks.items(.slice)[i]);
+        },
+    }
+    if (entry.tagslinks) |tagslinks| {
+        for (tagslinks.start..tagslinks.end) |i| {
+            try r.space();
+            try r.slice(r.data.tagslinks.items(.slice)[i]);
+        }
+    }
+    try r.newline();
+    if (entry.meta) |meta| try r.renderMeta(meta, 1);
+
+    switch (entry.payload) {
+        .transaction => |tx| {
+            if (tx.postings) |postings| {
+                for (postings.start..postings.end) |i| {
+                    try r.renderPosting(i);
                 }
             }
-            try r.newline();
-            if (document.meta) |meta| try r.renderMeta(meta, 1);
         },
-        .pushtag => |tag| {
-            try r.slice("pushtag ");
-            try r.slice(tag);
-            try r.newline();
-        },
-        .poptag => |tag| {
-            try r.slice("poptag ");
-            try r.slice(tag);
-            try r.newline();
-        },
-        .pushmeta => |meta| {
-            try r.slice("pushmeta ");
-            try r.renderKeyValue(meta);
-            try r.newline();
-        },
-        .popmeta => |meta| {
-            try r.slice("popmeta ");
-            try r.renderKeyValue(meta);
-            try r.newline();
-        },
-        .option => |option| {
-            try r.slice("option ");
-            try r.slice(option.key);
-            try r.space();
-            try r.slice(option.value);
-            try r.newline();
-        },
-        .include => |file| {
-            try r.slice("include ");
-            try r.slice(file);
-            try r.newline();
-        },
-        .plugin => |plugin| {
-            try r.slice("plugin ");
-            try r.slice(plugin);
-            try r.newline();
-        },
+        else => {},
     }
 }
 

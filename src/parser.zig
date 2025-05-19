@@ -26,15 +26,19 @@ pub const Error = error{ParseError} || Allocator.Error;
 alloc: Allocator,
 tokens: Data.Tokens,
 tok_i: usize,
+is_root: bool,
 
 entries: *Data.Entries,
+config: *Data.Config,
+imports: Data.Imports,
 postings: *Data.Postings,
 tagslinks: *Data.TagsLinks,
 meta: *Data.Meta,
 costcomps: *Data.CostComps,
 currencies: *Data.Currencies,
 
-imports: Data.Imports,
+active_tags: std.StringHashMap(void),
+active_meta: std.StringHashMap([]const u8),
 
 err: ?ErrorDetails,
 
@@ -153,9 +157,9 @@ pub fn parse(p: *Self) !void {
 }
 
 /// Only returns null at EOF.
-fn parseDeclaration(p: *Self) !?usize {
-    if (try p.parseEntry() orelse try p.parseDirective()) |directive| {
-        return directive;
+fn parseDeclaration(p: *Self) !?void {
+    if (try p.parseEntry() orelse try p.parseDirective()) |_| {
+        return;
     } else {
         if (p.currentToken().tag == .eof) {
             return null;
@@ -166,44 +170,12 @@ fn parseDeclaration(p: *Self) !?usize {
 }
 
 /// Returns index of newly parsed entry in entries array.
-fn parseEntry(p: *Self) !?usize {
+fn parseEntry(p: *Self) !?void {
     const date = try p.parseDate() orelse return null;
-    var entry: Data.Entry = undefined;
+    var payload: Data.Entry.Payload = undefined;
     switch (p.currentToken().tag) {
         .keyword_txn, .flag, .asterisk, .hash => {
-            const flag = p.advanceToken();
-
-            const s1 = p.tryTokenSlice(.string);
-            const s2 = p.tryTokenSlice(.string);
-            var payee = s1;
-            var narration = s2;
-
-            if (s2 == null) {
-                payee = null;
-                narration = s1;
-            }
-
-            const tagslinks = try p.parseTagsLinks();
-            try p.expectEolOrEof();
-
-            const meta = try p.parseMeta();
-
-            const postings_top = p.postings.len;
-            while (true) {
-                if (try p.parsePosting()) |_| {} else if (p.parseIndentedLine()) |_| {} else break;
-            }
-            const postings = Data.Range.create(postings_top, p.postings.len);
-
-            const transaction = Data.Transaction{
-                .date = date,
-                .flag = flag,
-                .payee = payee,
-                .narration = narration,
-                .tagslinks = tagslinks,
-                .postings = postings,
-                .meta = meta,
-            };
-            entry = Data.Entry{ .transaction = transaction };
+            return try p.expectTransactionBody(date);
         },
         .keyword_open => {
             _ = p.advanceToken();
@@ -220,55 +192,35 @@ fn parseEntry(p: *Self) !?usize {
             }
             const currencies = Data.Range.create(currency_top, p.currencies.items.len);
             const booking = if (p.tryToken(.string)) |b| b.loc else null;
-            try p.expectEolOrEof();
-            const meta = try p.parseMeta();
 
-            const open = Data.Open{
-                .date = date,
+            payload = .{ .open = .{
                 .account = account,
                 .currencies = currencies,
                 .booking = booking,
-                .meta = meta,
-            };
-            entry = Data.Entry{ .open = open };
+            } };
         },
         .keyword_close => {
             _ = p.advanceToken();
             const account = try p.expectTokenSlice(.account);
-            try p.expectEolOrEof();
-            const meta = try p.parseMeta();
-            const close = Data.Close{
-                .date = date,
+            payload = .{ .close = .{
                 .account = account,
-                .meta = meta,
-            };
-            entry = Data.Entry{ .close = close };
+            } };
         },
         .keyword_commodity => {
             _ = p.advanceToken();
             const currency = try p.expectTokenSlice(.currency);
-            try p.expectEolOrEof();
-            const meta = try p.parseMeta();
-            const commodity = Data.Commodity{
-                .date = date,
+            payload = .{ .commodity = .{
                 .currency = currency,
-                .meta = meta,
-            };
-            entry = Data.Entry{ .commodity = commodity };
+            } };
         },
         .keyword_pad => {
             _ = p.advanceToken();
             const account = try p.expectTokenSlice(.account);
             const pad_to = try p.expectTokenSlice(.account);
-            try p.expectEolOrEof();
-            const meta = try p.parseMeta();
-            const pad = Data.Pad{
-                .date = date,
+            payload = .{ .pad = .{
                 .account = account,
                 .pad_to = pad_to,
-                .meta = meta,
-            };
-            entry = Data.Entry{ .pad = pad };
+            } };
         },
         .keyword_balance => {
             _ = p.advanceToken();
@@ -283,93 +235,110 @@ fn parseEntry(p: *Self) !?usize {
                 else => {},
             }
             const currency = try p.expectTokenSlice(.currency);
-            try p.expectEolOrEof();
-            const meta = try p.parseMeta();
             const amount = Data.Amount{ .number = number, .currency = currency };
-            const balance = Data.Balance{
-                .date = date,
+            payload = .{ .balance = .{
                 .account = account,
                 .amount = amount,
                 .tolerance = tolerance,
-                .meta = meta,
-            };
-            entry = Data.Entry{ .balance = balance };
+            } };
         },
         .keyword_price => {
             _ = p.advanceToken();
             const currency = try p.expectTokenSlice(.currency);
             const amount = try p.parseAmount() orelse return p.fail(.expected_amount);
-            try p.expectEolOrEof();
-            const meta = try p.parseMeta();
-            const price = Data.PriceDecl{
-                .date = date,
+            payload = .{ .price = .{
                 .currency = currency,
                 .amount = amount,
-                .meta = meta,
-            };
-            entry = Data.Entry{ .price = price };
+            } };
         },
         .keyword_event => {
             _ = p.advanceToken();
             const variable = try p.expectTokenSlice(.string);
             const value = try p.expectTokenSlice(.string);
-            try p.expectEolOrEof();
-            const meta = try p.parseMeta();
-            const event = Data.Event{
-                .date = date,
+            payload = .{ .event = .{
                 .variable = variable,
                 .value = value,
-                .meta = meta,
-            };
-            entry = Data.Entry{ .event = event };
+            } };
         },
         .keyword_query => {
             _ = p.advanceToken();
             const name = try p.expectTokenSlice(.string);
             const sql = try p.expectTokenSlice(.string);
-            try p.expectEolOrEof();
-            const meta = try p.parseMeta();
-            const query = Data.Query{
-                .date = date,
+            payload = .{ .query = .{
                 .name = name,
                 .sql = sql,
-                .meta = meta,
-            };
-            entry = Data.Entry{ .query = query };
+            } };
         },
         .keyword_note => {
             _ = p.advanceToken();
             const account = try p.expectTokenSlice(.account);
             const note = try p.expectTokenSlice(.string);
-            try p.expectEolOrEof();
-            const meta = try p.parseMeta();
-            const note_entry = Data.Note{
-                .date = date,
+            payload = .{ .note = .{
                 .account = account,
                 .note = note,
-                .meta = meta,
-            };
-            entry = Data.Entry{ .note = note_entry };
+            } };
         },
         .keyword_document => {
             _ = p.advanceToken();
             const account = try p.expectTokenSlice(.account);
             const filename = try p.expectTokenSlice(.string);
-            const tagslinks = try p.parseTagsLinks();
-            try p.expectEolOrEof();
-            const meta = try p.parseMeta();
-            const document = Data.Document{
-                .date = date,
+            payload = .{ .document = .{
                 .account = account,
                 .filename = filename,
-                .tagslinks = tagslinks,
-                .meta = meta,
-            };
-            entry = Data.Entry{ .document = document };
+            } };
         },
         else => return p.fail(.expected_entry),
     }
-    return try p.addEntry(entry);
+
+    const tagslinks = try p.parseTagsLinks();
+    try p.expectEolOrEof();
+    const meta = try p.parseMeta();
+
+    _ = try p.addEntry(Data.Entry{
+        .date = date,
+        .payload = payload,
+        .tagslinks = tagslinks,
+        .meta = meta,
+    });
+}
+
+fn expectTransactionBody(p: *Self, date: Date) !void {
+    const flag = p.advanceToken();
+
+    const s1 = p.tryTokenSlice(.string);
+    const s2 = p.tryTokenSlice(.string);
+    var payee = s1;
+    var narration = s2;
+
+    if (s2 == null) {
+        payee = null;
+        narration = s1;
+    }
+
+    const tagslinks = try p.parseTagsLinks();
+    try p.expectEolOrEof();
+
+    const meta = try p.parseMeta();
+
+    const postings_top = p.postings.len;
+    while (true) {
+        if (try p.parsePosting()) |_| {} else if (p.parseIndentedLine()) |_| {} else break;
+    }
+    const postings = Data.Range.create(postings_top, p.postings.len);
+
+    const payload = Data.Entry.Payload{ .transaction = .{
+        .flag = flag,
+        .payee = payee,
+        .narration = narration,
+        .postings = postings,
+    } };
+
+    _ = try p.addEntry(Data.Entry{
+        .date = date,
+        .payload = payload,
+        .tagslinks = tagslinks,
+        .meta = meta,
+    });
 }
 
 fn parseIndentedLine(p: *Self) ?void {
@@ -379,54 +348,65 @@ fn parseIndentedLine(p: *Self) ?void {
     } else return null;
 }
 
-fn parseDirective(p: *Self) !?usize {
-    var entry: Data.Entry = undefined;
+fn parseDirective(p: *Self) !?void {
     switch (p.currentToken().tag) {
         .keyword_pushtag => {
             _ = p.advanceToken();
             const tag = try p.expectTokenSlice(.tag);
-            entry = Data.Entry{ .pushtag = tag };
+            if (p.active_tags.contains(tag)) {
+                return p.fail(.tag_already_pushed);
+            } else {
+                try p.active_tags.put(tag, {});
+            }
         },
         .keyword_poptag => {
             _ = p.advanceToken();
             const tag = try p.expectTokenSlice(.tag);
-            entry = Data.Entry{ .poptag = tag };
+            if (!p.active_tags.remove(tag)) {
+                return p.fail(.tag_not_pushed);
+            }
         },
         .keyword_pushmeta => {
             _ = p.advanceToken();
-            const meta = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
-            entry = Data.Entry{ .pushmeta = meta };
+            const kv = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
+            if (p.active_meta.contains(kv.key)) {
+                return p.fail(.meta_already_pushed);
+            } else {
+                try p.active_meta.put(kv.key, kv.value);
+            }
         },
         .keyword_popmeta => {
             _ = p.advanceToken();
-            const meta = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
-            entry = Data.Entry{ .popmeta = meta };
+            const kv = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
+            if (!p.active_meta.remove(kv.key)) {
+                return p.fail(.meta_not_pushed);
+            }
         },
         .keyword_option => {
             _ = p.advanceToken();
             const key = try p.expectToken(.string);
             const value = try p.expectToken(.string);
-            const option = Data.Option{
-                .key = key.loc,
-                .value = value.loc,
-            };
-            entry = Data.Entry{ .option = option };
+            if (p.is_root) {
+                try p.config.add_option(key.loc, value.loc);
+            }
+            // TODO: Else warn
         },
         .keyword_include => {
             _ = p.advanceToken();
             const file = try p.expectToken(.string);
             try p.imports.append(file.loc[1 .. file.loc.len - 1]);
-            entry = Data.Entry{ .include = file.loc };
         },
         .keyword_plugin => {
             _ = p.advanceToken();
             const plugin = try p.expectToken(.string);
-            entry = Data.Entry{ .plugin = plugin.loc };
+            if (p.is_root) {
+                try p.config.add_plugin(plugin.loc);
+            }
+            // TODO: Else warn
         },
         else => return null,
     }
     _ = try p.expectEolOrEof();
-    return try p.addEntry(entry);
 }
 
 fn parseMeta(p: *Self) !?Data.Range {
@@ -535,19 +515,19 @@ fn parseKeyValueLine(p: *Self) !?usize {
     _ = try p.expectToken(.indent);
     const kv = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
     _ = try p.expectToken(.eol);
-    return kv;
+    return try p.addKeyValue(kv);
 }
 
-fn parseKeyValue(p: *Self) !?usize {
+fn parseKeyValue(p: *Self) !?Data.KeyValue {
     const key = p.tryToken(.key) orelse return null;
     _ = try p.expectToken(.colon);
     switch (p.currentToken().tag) {
         .string, .account, .date, .currency, .tag, .true, .false, .none, .number => {
             const value = p.advanceToken();
-            return try p.addKeyValue(Data.KeyValue{
+            return Data.KeyValue{
                 .key = key.loc,
                 .value = value.loc,
-            });
+            };
         },
         else => {
             // TODO: amount. need to change value to enum
@@ -885,26 +865,19 @@ test "org mode" {
 
 test "comments" {
     try testEntries(
-        \\option "title" "Title"
+        \\2021-01-01 open Assets:Cash
         \\
         \\; TODO:
         \\; - More historical prices
         \\
-        \\option "operating_currency" "EUR"
-        \\option "operating_currency" "USD"
-        \\option "render_commas" "True"
+        \\2021-01-01 open Assets:Cash
         \\  ; indented comment
         \\
-        \\include "prices.bean"
-        \\
         \\2021-01-01 open Assets:Cash
-        \\
-        \\2021-01-01 open Expenses:Books
-        \\2021-01-01 open Expenses:Food
-    , &.{ .option, .option, .option, .option, .include, .open, .open, .open });
+    , &.{ .open, .open, .open });
 }
 
-const EntryTag = @typeInfo(Data.Entry).@"union".tag_type.?;
+const EntryTag = @typeInfo(Data.Entry.Payload).@"union".tag_type.?;
 
 fn testEntries(source: [:0]const u8, expected: []const EntryTag) !void {
     var data = try Data.parse(std.testing.allocator, source);
@@ -912,7 +885,7 @@ fn testEntries(source: [:0]const u8, expected: []const EntryTag) !void {
 
     for (expected, 0..) |tag, i| {
         const entry = data.entries.items[i];
-        try std.testing.expectEqual(@tagName(tag), @tagName(entry));
+        try std.testing.expectEqual(@tagName(tag), @tagName(entry.payload));
     }
 }
 

@@ -10,6 +10,7 @@ const Self = @This();
 alloc: Allocator,
 sources: std.StringHashMap([:0]const u8),
 entries: Entries,
+config: Config,
 postings: Postings,
 tagslinks: TagsLinks,
 meta: Meta,
@@ -64,111 +65,108 @@ pub const Price = struct {
     total: bool,
 };
 
-pub const Entry = union(enum) {
-    transaction: Transaction,
-    open: Open,
-    close: Close,
-    commodity: Commodity,
-    pad: Pad,
-    balance: Balance,
-    price: PriceDecl,
-    event: Event,
-    query: Query,
-    note: Note,
-    document: Document,
-    // Directives
-    pushtag: []const u8,
-    poptag: []const u8,
-    pushmeta: usize, // meta index
-    popmeta: usize, // meta index
-    option: Option,
-    include: []const u8,
-    plugin: []const u8,
+pub const Entry = struct {
+    date: Date,
+    tagslinks: ?Range,
+    meta: ?Range,
+    payload: Payload,
+
+    pub const Payload = union(enum) {
+        transaction: Transaction,
+        open: Open,
+        close: Close,
+        commodity: Commodity,
+        pad: Pad,
+        balance: Balance,
+        price: PriceDecl,
+        event: Event,
+        query: Query,
+        note: Note,
+        document: Document,
+    };
 };
 
-pub const Option = struct {
-    key: []const u8,
-    value: []const u8,
+pub const Config = struct {
+    options: std.StringHashMap([]const u8),
+    plugins: std.ArrayList([]const u8),
+
+    pub fn init(alloc: Allocator) Config {
+        return .{
+            .options = std.StringHashMap([]const u8).init(alloc),
+            .plugins = std.ArrayList([]const u8).init(alloc),
+        };
+    }
+
+    pub fn deinit(self: *Config) void {
+        self.options.deinit();
+        self.plugins.deinit();
+    }
+
+    pub fn add_option(self: *Config, key: []const u8, value: []const u8) !void {
+        if (!self.options.contains(key)) {
+            try self.options.put(key, value);
+        }
+    }
+
+    pub fn add_plugin(self: *Config, plugin: []const u8) !void {
+        try self.plugins.append(plugin);
+    }
 };
 
 pub const Open = struct {
-    date: Date,
     account: []const u8,
     currencies: ?Range,
     booking: ?[]const u8,
-    meta: ?Range,
 };
 
 pub const Close = struct {
-    date: Date,
     account: []const u8,
-    meta: ?Range,
 };
 
 pub const Commodity = struct {
-    date: Date,
     currency: []const u8,
-    meta: ?Range,
 };
 
 pub const Pad = struct {
-    date: Date,
     account: []const u8,
     pad_to: []const u8,
-    meta: ?Range,
 };
 
 pub const Balance = struct {
-    date: Date,
     account: []const u8,
     amount: Amount,
     tolerance: ?Number,
-    meta: ?Range,
 };
 
 pub const PriceDecl = struct {
-    date: Date,
     currency: []const u8,
     amount: Amount,
-    meta: ?Range,
 };
 
 pub const Event = struct {
-    date: Date,
     variable: []const u8,
     value: []const u8,
-    meta: ?Range,
 };
 
 pub const Query = struct {
-    date: Date,
     name: []const u8,
     sql: []const u8,
-    meta: ?Range,
 };
 
 pub const Note = struct {
-    date: Date,
     account: []const u8,
     note: []const u8,
-    meta: ?Range,
 };
 
 pub const Document = struct {
-    date: Date,
     account: []const u8,
     filename: []const u8,
-    tagslinks: ?Range,
-    meta: ?Range,
 };
 
 pub const Transaction = struct {
-    date: Date,
     flag: Lexer.Token,
     payee: ?[]const u8,
     narration: ?[]const u8,
-    tagslinks: ?Range,
-    meta: ?Range,
     postings: ?Range,
 };
 
@@ -211,6 +209,7 @@ pub fn init(alloc: Allocator) Self {
         .currencies = Currencies.init(alloc),
         .entries = Entries.init(alloc),
         .sources = sources,
+        .config = Config.init(alloc),
     };
 }
 
@@ -218,30 +217,30 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
     var self = Self.init(alloc);
     const name = try alloc.dupe(u8, "static");
     const owned_source = try alloc.dupeZ(u8, source);
-    const imports = try self.add_file(name, owned_source);
+    const imports = try self.add_file(name, owned_source, true);
     defer self.alloc.free(imports);
     return self;
 }
 
 pub fn load_file(alloc: Allocator, name: []const u8) !Self {
     var self = Self.init(alloc);
-    try self.load_file_rec(name);
+    try self.load_file_rec(name, true);
     return self;
 }
 
-fn load_file_rec(self: *Self, name: []const u8) !void {
+fn load_file_rec(self: *Self, name: []const u8, is_root: bool) !void {
     if (self.sources.get(name)) |_| return error.ImportCycle;
-    const imports = try self.load_single_file(name);
+    const imports = try self.load_single_file(name, is_root);
     defer self.alloc.free(imports);
     const dir = std.fs.path.dirname(name) orelse ".";
     for (imports) |import| {
         const joined = try std.fs.path.join(self.alloc, &.{ dir, import });
         defer self.alloc.free(joined);
-        try self.load_file_rec(joined);
+        try self.load_file_rec(joined, false);
     }
 }
 
-fn load_single_file(self: *Self, name: []const u8) !Imports.Slice {
+fn load_single_file(self: *Self, name: []const u8, is_root: bool) !Imports.Slice {
     const owned_name = try self.alloc.dupe(u8, name);
 
     const file = try std.fs.cwd().openFile(name, .{});
@@ -254,11 +253,11 @@ fn load_single_file(self: *Self, name: []const u8) !Imports.Slice {
     source[filesize] = 0;
 
     const null_terminated: [:0]u8 = source[0..filesize :0];
-    return try self.add_file(owned_name, null_terminated);
+    return try self.add_file(owned_name, null_terminated, is_root);
 }
 
 /// Takes ownership of name and source.
-fn add_file(self: *Self, name: []const u8, source: [:0]const u8) !Imports.Slice {
+fn add_file(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) !Imports.Slice {
     try self.sources.put(name, source);
 
     var lexer = Lexer.init(source);
@@ -275,15 +274,21 @@ fn add_file(self: *Self, name: []const u8, source: [:0]const u8) !Imports.Slice 
         .alloc = self.alloc,
         .tokens = tokens,
         .tok_i = 0,
+        .is_root = is_root,
         .entries = &self.entries,
         .postings = &self.postings,
         .tagslinks = &self.tagslinks,
         .meta = &self.meta,
         .costcomps = &self.costcomps,
         .currencies = &self.currencies,
+        .config = &self.config,
         .imports = Imports.init(self.alloc),
+        .active_tags = std.StringHashMap(void).init(self.alloc),
+        .active_meta = std.StringHashMap([]const u8).init(self.alloc),
         .err = null,
     };
+    defer parser.active_tags.deinit();
+    defer parser.active_meta.deinit();
 
     parser.parse() catch |err| switch (err) {
         error.ParseError => {
@@ -294,6 +299,11 @@ fn add_file(self: *Self, name: []const u8, source: [:0]const u8) !Imports.Slice 
     };
 
     return parser.imports.toOwnedSlice();
+}
+
+pub fn sort_entries(self: *Self) void {
+    std.sort.block(Entry, self.entries.items, {}, Entry.compare);
+    self.entries.sort();
 }
 
 pub fn deinit(self: *Self, alloc: Allocator) void {
@@ -310,4 +320,5 @@ pub fn deinit(self: *Self, alloc: Allocator) void {
     self.postings.deinit(alloc);
     self.tagslinks.deinit(alloc);
     self.meta.deinit(alloc);
+    self.config.deinit();
 }

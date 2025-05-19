@@ -2,7 +2,6 @@ const std = @import("std");
 const ParseFloatError = std.fmt.ParseFloatError;
 
 const SCALE_FACTOR = 10000; // 4 decimal places (e.g., 1.2345 stored as 12345)
-const MAX_DIGITS = 18; // Maximum digits before decimal point to prevent overflow
 
 pub const Number = struct {
     value: i64,

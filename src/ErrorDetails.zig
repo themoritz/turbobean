@@ -15,6 +15,10 @@ pub const Tag = enum {
     expected_key_value,
     expected_value,
     expected_amount,
+    tag_already_pushed,
+    meta_already_pushed,
+    tag_not_pushed,
+    meta_not_pushed,
 };
 
 pub fn print(e: Self, alloc: Allocator, source: [:0]const u8) !void {
@@ -54,6 +58,7 @@ pub fn dump(e: Self, alloc: Allocator, source: [:0]const u8) ![]const u8 {
         }
     }
 
+    std.debug.print("line_start: {d}, line_end: {d}, col_start: {d}, col_end: {d}\n", .{ line_start, line_end, col_start, col_end });
     std.debug.assert(line_start == line_end);
     std.debug.assert(col_start <= col_end);
 
