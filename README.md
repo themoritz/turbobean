@@ -1,7 +1,5 @@
 # Todos
 
-- Per number scale factor
-
 ## Lexer
 
 ## Parser

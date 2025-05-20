@@ -656,7 +656,7 @@ fn expectNumber(p: *Self) !Number {
 test "negative" {
     try testRoundtrip(
         \\2015-11-01 * "Test"
-        \\  Assets:Foo -1.0000 USD
+        \\  Assets:Foo -1 USD
         \\
     );
 }
@@ -664,8 +664,8 @@ test "negative" {
 test "tx" {
     try testRoundtrip(
         \\2015-11-01 * "Test"
-        \\  Foo 100.0000 USD
-        \\  Bar 2.0000 EUR
+        \\  Foo 100 USD
+        \\  Bar 2 EUR
         \\
     );
 
@@ -676,12 +676,12 @@ test "tx" {
 
     try testRoundtrip(
         \\2015-01-01 * ""
-        \\  ! Aa 10.0000 USD
-        \\  Ba 30.0000 USD
+        \\  ! Aa 10 USD
+        \\  Ba 30 USD
         \\
         \\2016-01-01 * ""
-        \\  Ca 10.0000 USD
-        \\  Da 20.0000 USD
+        \\  Ca 10 USD
+        \\  Da 20 USD
         \\
     );
 }
@@ -720,7 +720,7 @@ test "pushpop" {
         \\pushmeta k: "Val"
         \\
         \\2015-11-01 * "Test" #tag2
-        \\  Assets:Foo 100.0000 USD
+        \\  Assets:Foo 100.00 USD
         \\
         \\2022-11-01 close Assets:Foo
         \\  k2: "Val2"
@@ -730,7 +730,7 @@ test "pushpop" {
         \\
         \\2015-11-01 * "Test"
         \\  k2: "Val2"
-        \\  Assets:Foo 100.0000 USD
+        \\  Assets:Foo 100.00 USD
         \\
         \\2022-11-01 close Assets:Foo ^link
     ;
@@ -761,7 +761,7 @@ test "meta" {
         \\
         \\2020-02-01 txn "a" "b"
         \\  foo: FALSE
-        \\  Assets:Foo 10.0000 USD
+        \\  Assets:Foo 10.00 USD
         \\    bar: NULL
         \\
     );
@@ -770,8 +770,8 @@ test "meta" {
 test "price annotation" {
     try testRoundtrip(
         \\2020-02-01 txn "a" "b"
-        \\  Assets:Foo 10.0000 USD @ 2.0000 EUR
-        \\  Assets:Foo @@ 4.0000 EUR
+        \\  Assets:Foo 10 USD @ 2 EUR
+        \\  Assets:Foo @@ 4 EUR
         \\
     );
 }
@@ -779,8 +779,8 @@ test "price annotation" {
 test "cost spec" {
     try testRoundtrip(
         \\2020-02-01 txn "a" "b"
-        \\  Assets:Foo 10.0000 USD {}
-        \\  Assets:Foo {0.0000 USD, "label"}
+        \\  Assets:Foo 10 USD {}
+        \\  Assets:Foo {0 USD, "label"}
         \\  Assets:Foo {2014-01-01}
         \\
     );
@@ -830,20 +830,20 @@ test "pad" {
 
 test "balance" {
     try testRoundtrip(
-        \\1985-08-17 balance Assets:Foo 0.0000 USD
+        \\1985-08-17 balance Assets:Foo 0.0 USD
         \\  a: "Yes"
         \\
-        \\1985-09-24 balance Assets:Bar 0.1000 ~ 0.0001 EUR
+        \\1985-09-24 balance Assets:Bar 0.10 ~ 0.0001 EUR
         \\
     );
 }
 
 test "price" {
     try testRoundtrip(
-        \\1985-08-17 price TGT 0.0000 USD
+        \\1985-08-17 price TGT 0 USD
         \\  a: "Yes"
         \\
-        \\1985-09-24 price TGT 200.0000 USD
+        \\1985-09-24 price TGT 200 USD
         \\
     );
 }
