@@ -84,6 +84,14 @@ pub const Entry = struct {
         note: Note,
         document: Document,
     };
+
+    pub fn compare(ctx: void, self: Entry, other: Entry) bool {
+        _ = ctx;
+        switch (self.date.compare(other.date)) {
+            .after => return true,
+            else => return false,
+        }
+    }
 };
 
 pub const Config = struct {
@@ -309,7 +317,6 @@ fn add_file(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) 
 
 pub fn sort_entries(self: *Self) void {
     std.sort.block(Entry, self.entries.items, {}, Entry.compare);
-    self.entries.sort();
 }
 
 pub fn deinit(self: *Self, alloc: Allocator) void {
