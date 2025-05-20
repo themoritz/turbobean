@@ -87,9 +87,13 @@ fn failExpected(p: *Self, expected_token: Lexer.Token.Tag) error{ParseError} {
 }
 
 fn fail(p: *Self, msg: ErrorDetails.Tag) error{ParseError} {
+    return p.failAt(p.currentToken(), msg);
+}
+
+fn failAt(p: *Self, token: Lexer.Token, msg: ErrorDetails.Tag) error{ParseError} {
     return p.failMsg(.{
         .tag = msg,
-        .token = p.currentToken(),
+        .token = token,
         .expected = null,
     });
 }
@@ -292,7 +296,7 @@ fn parseEntry(p: *Self) !?void {
 
     const tagslinks = try p.parseTagsLinks();
     try p.expectEolOrEof();
-    const meta = try p.parseMeta();
+    const meta = try p.parseMeta(true);
 
     _ = try p.addEntry(Data.Entry{
         .date = date,
@@ -318,7 +322,7 @@ fn expectTransactionBody(p: *Self, date: Date) !void {
     const tagslinks = try p.parseTagsLinks();
     try p.expectEolOrEof();
 
-    const meta = try p.parseMeta();
+    const meta = try p.parseMeta(true);
 
     const postings_top = p.postings.len;
     while (true) {
@@ -352,34 +356,34 @@ fn parseDirective(p: *Self) !?void {
     switch (p.currentToken().tag) {
         .keyword_pushtag => {
             _ = p.advanceToken();
-            const tag = try p.expectTokenSlice(.tag);
-            if (p.active_tags.contains(tag)) {
-                return p.fail(.tag_already_pushed);
+            const tag = try p.expectToken(.tag);
+            if (p.active_tags.contains(tag.loc)) {
+                return p.failAt(tag, .tag_already_pushed);
             } else {
-                try p.active_tags.put(tag, {});
+                try p.active_tags.put(tag.loc, {});
             }
         },
         .keyword_poptag => {
             _ = p.advanceToken();
-            const tag = try p.expectTokenSlice(.tag);
-            if (!p.active_tags.remove(tag)) {
-                return p.fail(.tag_not_pushed);
+            const tag = try p.expectToken(.tag);
+            if (!p.active_tags.remove(tag.loc)) {
+                return p.failAt(tag, .tag_not_pushed);
             }
         },
         .keyword_pushmeta => {
             _ = p.advanceToken();
             const kv = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
-            if (p.active_meta.contains(kv.key)) {
-                return p.fail(.meta_already_pushed);
+            if (p.active_meta.contains(kv.key.loc)) {
+                return p.failAt(kv.key, .meta_already_pushed);
             } else {
-                try p.active_meta.put(kv.key, kv.value);
+                try p.active_meta.put(kv.key.loc, kv.value.loc);
             }
         },
         .keyword_popmeta => {
             _ = p.advanceToken();
             const kv = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
-            if (!p.active_meta.remove(kv.key)) {
-                return p.fail(.meta_not_pushed);
+            if (!p.active_meta.remove(kv.key.loc)) {
+                return p.failAt(kv.key, .meta_not_pushed);
             }
         },
         .keyword_option => {
@@ -409,10 +413,21 @@ fn parseDirective(p: *Self) !?void {
     _ = try p.expectEolOrEof();
 }
 
-fn parseMeta(p: *Self) !?Data.Range {
+fn parseMeta(p: *Self, add_from_stack: bool) !?Data.Range {
     const meta_top = p.meta.len;
     while (true) {
         if (try p.parseKeyValueLine()) |_| {} else if (p.parseIndentedLine()) |_| {} else break;
+    }
+
+    // Add meta that's on the pushmeta stack
+    if (add_from_stack) {
+        var meta_iter = p.active_meta.iterator();
+        while (meta_iter.next()) |kv| {
+            _ = try p.addKeyValue(Data.KeyValue{
+                .key = Lexer.Token{ .loc = kv.key_ptr.*, .tag = .key },
+                .value = Lexer.Token{ .loc = kv.value_ptr.*, .tag = .string },
+            });
+        }
     }
     return Data.Range.create(meta_top, p.meta.len);
 }
@@ -434,7 +449,7 @@ fn parsePosting(p: *Self) !?usize {
     const price = try p.parsePriceAnnotation();
     _ = p.tryToken(.eol);
 
-    const meta = try p.parseMeta();
+    const meta = try p.parseMeta(false);
 
     const posting = Data.Posting{
         .flag = flag,
@@ -525,8 +540,8 @@ fn parseKeyValue(p: *Self) !?Data.KeyValue {
         .string, .account, .date, .currency, .tag, .true, .false, .none, .number => {
             const value = p.advanceToken();
             return Data.KeyValue{
-                .key = key.loc,
-                .value = value.loc,
+                .key = key,
+                .value = value,
             };
         },
         else => {
@@ -570,6 +585,13 @@ fn parseTagsLinks(p: *Self) !?Data.Range {
             _ = try p.addTagLink(Data.TagLink{ .kind = .link, .slice = link.loc });
         } else break;
     }
+
+    // Add tags that are on the pushtags stack
+    var tags_iter = p.active_tags.keyIterator();
+    while (tags_iter.next()) |tag| {
+        _ = try p.addTagLink(Data.TagLink{ .kind = .tag, .slice = tag.* });
+    }
+
     return Data.Range.create(tagslinks_top, p.tagslinks.len);
 }
 
@@ -672,10 +694,10 @@ test "tagslinks" {
 }
 
 test "directives" {
-    try testRoundtrip(
+    try testParse(
         \\pushtag #nz
         \\
-        \\poptag #foo
+        \\poptag #nz
         \\
         \\pushmeta k: "Val"
         \\
@@ -688,6 +710,48 @@ test "directives" {
         \\plugin "some_plugin"
         \\
     );
+}
+
+test "pushpop" {
+    const expectEqual = std.testing.expectEqual;
+
+    const source =
+        \\pushtag #tag
+        \\pushmeta k: "Val"
+        \\
+        \\2015-11-01 * "Test" #tag2
+        \\  Assets:Foo 100.0000 USD
+        \\
+        \\2022-11-01 close Assets:Foo
+        \\  k2: "Val2"
+        \\
+        \\poptag #tag
+        \\popmeta k: "Val"
+        \\
+        \\2015-11-01 * "Test"
+        \\  k2: "Val2"
+        \\  Assets:Foo 100.0000 USD
+        \\
+        \\2022-11-01 close Assets:Foo ^link
+    ;
+
+    var data = try Data.parse(std.testing.allocator, source);
+    defer data.deinit(std.testing.allocator);
+
+    // Tags
+    try expectEqual(@as(usize, 2), data.entries.items[0].tagslinks.?.len());
+    try expectEqual(@as(usize, 1), data.entries.items[1].tagslinks.?.len());
+    try expectEqual(null, data.entries.items[2].tagslinks);
+    try expectEqual(@as(usize, 1), data.entries.items[3].tagslinks.?.len());
+
+    // Meta
+    try expectEqual(@as(usize, 1), data.entries.items[0].meta.?.len());
+    try expectEqual(@as(usize, 2), data.entries.items[1].meta.?.len());
+    try expectEqual(@as(usize, 1), data.entries.items[2].meta.?.len());
+    try expectEqual(null, data.entries.items[3].meta);
+
+    // Meta is not pushed to postings
+    try expectEqual(null, data.postings.items(.meta)[0]);
 }
 
 test "meta" {
@@ -889,6 +953,11 @@ fn testEntries(source: [:0]const u8, expected: []const EntryTag) !void {
     }
 }
 
+fn testParse(source: [:0]const u8) !void {
+    var data = try Data.parse(std.testing.allocator, source);
+    defer data.deinit(std.testing.allocator);
+}
+
 fn testRoundtrip(source: [:0]const u8) !void {
     const alloc = std.testing.allocator;
 
@@ -904,5 +973,5 @@ fn testRoundtrip(source: [:0]const u8) !void {
     const rendered = try Render.dump(alloc, &data);
     defer alloc.free(rendered);
 
-    try std.testing.expectEqualSlices(u8, source, rendered);
+    try std.testing.expectEqualStrings(source, rendered);
 }

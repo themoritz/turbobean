@@ -181,6 +181,10 @@ pub const Range = struct {
             .end = end,
         };
     }
+
+    pub fn len(self: Range) usize {
+        return self.end - self.start;
+    }
 };
 
 pub const TagLink = struct {
@@ -194,8 +198,8 @@ pub const TagLink = struct {
 };
 
 pub const KeyValue = struct {
-    key: []const u8,
-    value: []const u8,
+    key: Lexer.Token,
+    value: Lexer.Token,
 };
 
 pub fn init(alloc: Allocator) Self {
@@ -215,6 +219,7 @@ pub fn init(alloc: Allocator) Self {
 
 pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
     var self = Self.init(alloc);
+    errdefer self.deinit(alloc);
     const name = try alloc.dupe(u8, "static");
     const owned_source = try alloc.dupeZ(u8, source);
     const imports = try self.add_file(name, owned_source, true);
@@ -287,6 +292,7 @@ fn add_file(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) 
         .active_meta = std.StringHashMap([]const u8).init(self.alloc),
         .err = null,
     };
+    defer parser.imports.deinit();
     defer parser.active_tags.deinit();
     defer parser.active_meta.deinit();
 

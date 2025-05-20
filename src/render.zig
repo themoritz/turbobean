@@ -211,9 +211,9 @@ fn renderPosting(r: *Render, posting: usize) !void {
 }
 
 fn renderKeyValue(r: *Render, i: usize) !void {
-    try r.slice(r.data.meta.items(.key)[i]);
+    try r.slice(r.data.meta.items(.key)[i].loc);
     try r.slice(": ");
-    try r.slice(r.data.meta.items(.value)[i]);
+    try r.slice(r.data.meta.items(.value)[i].loc);
 }
 
 fn renderMeta(r: *Render, range: Data.Range, num_indent: usize) !void {

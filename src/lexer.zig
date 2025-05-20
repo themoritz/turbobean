@@ -367,7 +367,6 @@ pub const Lexer = struct {
                     },
                     // Recovers to parse a new token after whitespace.
                     ' ', '\t', '\n' => {
-                        self.consume();
                         result.tag = .invalid;
                     },
                     else => {
