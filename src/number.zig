@@ -124,6 +124,17 @@ pub const Number = struct {
         }) catch "[too many digits]";
         try std.fmt.format(writer, "{s}", .{used});
     }
+
+    pub fn zero() Number {
+        return Number{
+            .value = 0,
+            .precision = 0,
+        };
+    }
+
+    pub fn is_zero(self: Number) bool {
+        return self.value == 0;
+    }
 };
 
 fn pow10(n: u32) i64 {
