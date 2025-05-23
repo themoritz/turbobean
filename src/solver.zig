@@ -4,6 +4,9 @@ const Number = @import("number.zig").Number;
 
 const Variable = usize;
 
+/// Upper bound on number of currencies and currency variables.
+const MAX_UNKNOWNS = 8;
+
 pub const MaybeCurrency = union(enum) {
     currency: []const u8,
     variable: Variable,
@@ -20,17 +23,32 @@ pub const Pair = struct {
     currency: MaybeCurrency,
 };
 
+const Solution = struct {
+    currencies: [MAX_UNKNOWNS][]const u8,
+    numbers: [MAX_UNKNOWNS]Number,
+    num_number_vars: usize,
+    num_currency_vars: usize,
+
+    pub fn format(self: Solution, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        for (0..self.num_number_vars) |i| {
+            try std.fmt.format(writer, "{d} -> {any}, ", .{ i, self.numbers[i] });
+        }
+        for (0..self.num_currency_vars) |i| {
+            try std.fmt.format(writer, "{d} -> {s}, ", .{ i, self.currencies[i] });
+        }
+    }
+};
+
 pub const Problem = struct {
     alloc: Allocator,
     pairs: std.ArrayList(Pair),
     num_number_vars: Variable = 0,
 
-    currencies: [8][]const u8 = undefined,
+    currencies: [MAX_UNKNOWNS][]const u8 = undefined,
     num_currencies: usize = 0,
     num_currency_vars: usize = 0,
-
-    /// An assignment: for currency var i, currencies_assignment[i] tells which currency was chosen
-    currencies_assignment: [8]usize = .{0} ** 8,
 
     pub fn init(alloc: Allocator) Problem {
         return Problem{
@@ -39,14 +57,15 @@ pub const Problem = struct {
         };
     }
 
-    fn nextNumberVar(p: *Problem) Variable {
+    fn nextNumberVar(p: *Problem) !Variable {
+        if (p.num_number_vars >= MAX_UNKNOWNS) return error.TooManyNumberVars;
         p.num_number_vars += 1;
         return p.num_number_vars - 1;
     }
 
-    pub fn addPair(p: *Problem, coeff: ?Number, number: ?Number, currency: ?[]const u8) !void {
-        const m_coeff = if (coeff) |c| MaybeNumber{ .value = c } else MaybeNumber{ .variable = p.nextNumberVar() };
-        const m_number = if (number) |c| MaybeNumber{ .value = c } else MaybeNumber{ .variable = p.nextNumberVar() };
+    pub fn addPair(p: *Problem, coeff: ?Number, number: ?Number, currency: ?[]const u8) !Pair {
+        const m_coeff = if (coeff) |c| MaybeNumber{ .value = c } else MaybeNumber{ .variable = try p.nextNumberVar() };
+        const m_number = if (number) |c| MaybeNumber{ .value = c } else MaybeNumber{ .variable = try p.nextNumberVar() };
 
         var m_currency: MaybeCurrency = undefined;
         if (currency) |c| {
@@ -59,35 +78,56 @@ pub const Problem = struct {
                 }
             }
             if (!currency_exists) {
-                if (p.num_currencies >= 8) return error.TooManyCurrencies;
+                if (p.num_currencies >= MAX_UNKNOWNS) return error.TooManyCurrencies;
                 p.currencies[p.num_currencies] = c;
                 p.num_currencies += 1;
             }
         } else {
             m_currency = MaybeCurrency{ .variable = p.num_currency_vars };
-            if (p.num_currency_vars >= 8) return error.TooManyCurrencyVars;
+            if (p.num_currency_vars >= MAX_UNKNOWNS) return error.TooManyCurrencyVars;
             p.num_currency_vars += 1;
         }
 
-        try p.pairs.append(Pair{ .coeff = m_coeff, .number = m_number, .currency = m_currency });
+        const pair = Pair{ .coeff = m_coeff, .number = m_number, .currency = m_currency };
+        try p.pairs.append(pair);
+        return pair;
     }
 
     pub fn deinit(p: *Problem) void {
         p.pairs.deinit();
     }
 
-    /// Upper bound on number of currencies and currency variables: 8
-    pub fn solve(p: *Problem) !void {
+    const SolverError = error{
+        NoSolution,
+        MultipleSolutions,
+    } || TryAssignmentError;
+
+    pub fn solve(p: *Problem) SolverError!Solution {
+        // An assignment: for currency var i, currencies_assignment[i] tells which currency was chosen
+        var currencies_assignment: [MAX_UNKNOWNS]usize = .{0} ** MAX_UNKNOWNS;
+
+        var err: ?TryAssignmentError = null;
+        var solution: ?Solution = null;
         while (true) {
-            try p.try_assignment();
+            const next_solution = p.try_assignment(currencies_assignment) catch |e| blk: {
+                err = e;
+                break :blk null;
+            };
+            if (next_solution) |s| {
+                if (solution) |_| {
+                    return error.MultipleSolutions;
+                } else {
+                    solution = s;
+                }
+            }
 
             // Increment indices as if it were a number in fixed_len-base
             var carry: usize = 1;
             for (0..p.num_currency_vars) |var_i| {
                 if (carry == 0) break;
-                p.currencies_assignment[var_i] += carry;
-                if (p.currencies_assignment[var_i] >= p.num_currencies) {
-                    p.currencies_assignment[var_i] = 0;
+                currencies_assignment[var_i] += carry;
+                if (currencies_assignment[var_i] >= p.num_currencies) {
+                    currencies_assignment[var_i] = 0;
                     carry = 1;
                 } else {
                     carry = 0;
@@ -95,15 +135,24 @@ pub const Problem = struct {
             }
             if (carry == 1) break;
         }
+
+        return solution orelse return err orelse error.NoSolution;
     }
 
-    fn try_assignment(p: *Problem) !void {
-        std.debug.print("\ntry_assignment:\n", .{});
-        for (0..p.num_currency_vars) |var_i| {
-            const idx = p.currencies_assignment[var_i];
-            const currency = p.currencies[idx];
-            std.debug.print("{d} -> {s}\n", .{ var_i, currency });
-        }
+    const TryAssignmentError = error{
+        TooManyVariables,
+        DivisionByZero,
+        DoesNotBalance,
+        OutOfMemory,
+    };
+
+    fn try_assignment(p: *Problem, currencies_assignment: [MAX_UNKNOWNS]usize) TryAssignmentError!Solution {
+        // std.debug.print("\ntry_assignment:\n", .{});
+        // for (0..p.num_currency_vars) |var_i| {
+        //     const idx = currencies_assignment[var_i];
+        //     const currency = p.currencies[idx];
+        //     std.debug.print("{d} -> {s}\n", .{ var_i, currency });
+        // }
 
         const Accum = struct {
             constant: Number,
@@ -123,7 +172,7 @@ pub const Problem = struct {
             var currency: []const u8 = undefined;
             switch (pair.currency) {
                 .currency => |c| currency = c,
-                .variable => |v| currency = p.currencies[p.currencies_assignment[v]],
+                .variable => |v| currency = p.currencies[currencies_assignment[v]],
             }
             var variable: ?Variable = undefined;
             var number: Number = undefined;
@@ -192,33 +241,114 @@ pub const Problem = struct {
             }
         }
 
+        var currencies: [MAX_UNKNOWNS][]const u8 = undefined;
+        for (0..p.num_currency_vars) |var_i| {
+            const idx = currencies_assignment[var_i];
+            currencies[var_i] = p.currencies[idx];
+        }
+        var solution = Solution{
+            .currencies = currencies,
+            .numbers = undefined,
+            .num_currency_vars = p.num_currency_vars,
+            .num_number_vars = p.num_number_vars,
+        };
+
         var it = accum_by_currency.iterator();
         while (it.next()) |kv| {
             if (kv.value_ptr.mixed) |mixed| {
                 if (mixed.coeff.is_zero()) {
-                    std.debug.print("{s}: Division by zero\n", .{kv.key_ptr.*});
+                    return error.DivisionByZero;
                 } else {
                     const divided = try kv.value_ptr.constant.div(mixed.coeff);
                     const result = divided.negate();
-                    std.debug.print("{s}: {}\n", .{ kv.key_ptr.*, result });
+                    solution.numbers[mixed.variable] = result;
                 }
             } else {
                 // TODO: Take tolerance into account
-                std.debug.print("{s}: {}\n", .{ kv.key_ptr.*, kv.value_ptr.constant });
+                if (!kv.value_ptr.constant.is_zero()) {
+                    return error.DoesNotBalance;
+                }
             }
         }
+
+        return solution;
     }
 };
 
-test "solver" {
+test "plain balance" {
+    var p = Problem.init(std.testing.allocator);
+    defer p.deinit();
+
+    const one = Number.fromFloat(1);
+    const five = Number.fromFloat(5);
+
+    _ = try p.addPair(one, five, "EUR");
+    _ = try p.addPair(one, five.negate(), "EUR");
+
+    _ = try p.solve();
+}
+
+test "currency solution" {
+    var p = Problem.init(std.testing.allocator);
+    defer p.deinit();
+
+    const one = Number.fromFloat(1);
+    const five = Number.fromFloat(5);
+    const three = Number.fromFloat(3);
+
+    _ = try p.addPair(one, five, "EUR");
+    const eur_pair = try p.addPair(one, five.negate(), null);
+    _ = try p.addPair(one, three, "USD");
+    const usd_pair = try p.addPair(one, three.negate(), null);
+
+    const solution = try p.solve();
+    try std.testing.expectEqualStrings("EUR", solution.currencies[eur_pair.currency.variable]);
+    try std.testing.expectEqualStrings("USD", solution.currencies[usd_pair.currency.variable]);
+}
+
+test "number solution" {
+    var p = Problem.init(std.testing.allocator);
+    defer p.deinit();
+
+    const one = Number.fromFloat(1);
+    const six = Number.fromFloat(6);
+    const three = Number.fromFloat(3);
+
+    _ = try p.addPair(one, six, "EUR");
+    const eur_pair = try p.addPair(one, null, "EUR");
+    _ = try p.addPair(one, six, "USD");
+    const usd_pair = try p.addPair(null, three, "USD");
+
+    const solution = try p.solve();
+    try std.testing.expectEqual(Number.fromFloat(-6), solution.numbers[eur_pair.number.variable]);
+    try std.testing.expectEqual(Number.fromFloat(-2), solution.numbers[usd_pair.coeff.variable]);
+}
+
+test "too many variables" {
+    var p = Problem.init(std.testing.allocator);
+    defer p.deinit();
+
+    const one = Number.fromFloat(1);
+    const five = Number.fromFloat(5);
+
+    _ = try p.addPair(one, five, "EUR");
+    _ = try p.addPair(one, null, "EUR");
+    _ = try p.addPair(one, null, "EUR");
+
+    const solution = p.solve();
+    try std.testing.expectError(error.TooManyVariables, solution);
+}
+
+test "does not balance" {
     var p = Problem.init(std.testing.allocator);
     defer p.deinit();
 
     const one = Number.fromFloat(1);
 
-    try p.addPair(one, Number.fromFloat(5), "EUR");
-    try p.addPair(one, null, "USD");
-    try p.addPair(one, Number.fromFloat(3), null);
+    _ = try p.addPair(one, Number.fromFloat(5), "EUR");
+    _ = try p.addPair(one, null, "USD");
+    _ = try p.addPair(one, Number.fromFloat(3), null);
 
-    try p.solve();
+    const solution = p.solve();
+    try std.testing.expectError(error.DoesNotBalance, solution);
 }
