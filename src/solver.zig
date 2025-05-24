@@ -1,11 +1,41 @@
+//! Solver for balancing transactions.
+//!
+//! It takes as input a list of triples (price, number, currency), where each
+//! entry can be missing, indicating that the number or currency is not known and
+//! should be filled in by the solver. The solver will generate variables for the
+//! unknowns. In this example, n0 and c0 are variables, and should be filled in by
+//! the solver such that if all the tiples are summed up, the result is zero (i.e.
+//! the transaction balances):
+//!
+//! (1, 6, EUR)
+//! (2, n,   c)
+//!
+//! The unique solution in this case is n = -3, c = EUR because
+//!
+//! 1 * 6 EUR + 2 * -3 EUR = 0 EUR
+//!
+//! The solver works as follows. For the missing currencies, it tries all
+//! possible combinations of other currencies that are present in the triples.
+//! Then for each such combination, it tries to find numbers that balance all
+//! currencies.
+//!
+//! This is done by simply, for each currency, adding up all the triples while
+//! making sure at most one variable can exist (because otherwise the solution
+//! is not unique). Then we just rearrange the sum to get the number that
+//! balances the currency.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Number = @import("number.zig").Number;
 
-const Variable = usize;
+pub const Variable = usize;
 
 /// Upper bound on number of currencies and currency variables.
 const MAX_UNKNOWNS = 8;
+
+/// Assignment of currency variables to currency. The solver tries all
+/// combinations. For currency var i, assignment[i] tells which currency is
+/// chosen.
+const Assignment = [MAX_UNKNOWNS]usize;
 
 pub const MaybeCurrency = union(enum) {
     currency: []const u8,
@@ -17,13 +47,13 @@ pub const MaybeNumber = union(enum) {
     variable: Variable,
 };
 
-pub const Pair = struct {
-    coeff: MaybeNumber,
+pub const Triple = struct {
+    price: MaybeNumber,
     number: MaybeNumber,
     currency: MaybeCurrency,
 };
 
-const Solution = struct {
+pub const Solution = struct {
     currencies: [MAX_UNKNOWNS][]const u8,
     numbers: [MAX_UNKNOWNS]Number,
     num_number_vars: usize,
@@ -39,22 +69,37 @@ const Solution = struct {
             try std.fmt.format(writer, "{d} -> {s}, ", .{ i, self.currencies[i] });
         }
     }
+
+    pub fn currency(self: Solution, v: Variable) []const u8 {
+        std.debug.assert(v < self.num_currency_vars);
+        return self.currencies[v];
+    }
+
+    pub fn number(self: Solution, v: Variable) Number {
+        std.debug.assert(v < self.num_number_vars);
+        return self.numbers[v];
+    }
 };
 
 pub const Problem = struct {
     alloc: Allocator,
-    pairs: std.ArrayList(Pair),
+    triples: std.ArrayList(Triple),
+
     num_number_vars: Variable = 0,
+    num_currency_vars: Variable = 0,
 
     currencies: [MAX_UNKNOWNS][]const u8 = undefined,
     num_currencies: usize = 0,
-    num_currency_vars: usize = 0,
 
     pub fn init(alloc: Allocator) Problem {
         return Problem{
             .alloc = alloc,
-            .pairs = std.ArrayList(Pair).init(alloc),
+            .triples = std.ArrayList(Triple).init(alloc),
         };
+    }
+
+    pub fn deinit(p: *Problem) void {
+        p.triples.deinit();
     }
 
     fn nextNumberVar(p: *Problem) !Variable {
@@ -63,8 +108,9 @@ pub const Problem = struct {
         return p.num_number_vars - 1;
     }
 
-    pub fn addPair(p: *Problem, coeff: ?Number, number: ?Number, currency: ?[]const u8) !Pair {
-        const m_coeff = if (coeff) |c| MaybeNumber{ .value = c } else MaybeNumber{ .variable = try p.nextNumberVar() };
+    /// Add a triple to the problem.
+    pub fn addTriple(p: *Problem, price: ?Number, number: ?Number, currency: ?[]const u8) !Triple {
+        const m_price = if (price) |c| MaybeNumber{ .value = c } else MaybeNumber{ .variable = try p.nextNumberVar() };
         const m_number = if (number) |c| MaybeNumber{ .value = c } else MaybeNumber{ .variable = try p.nextNumberVar() };
 
         var m_currency: MaybeCurrency = undefined;
@@ -88,46 +134,41 @@ pub const Problem = struct {
             p.num_currency_vars += 1;
         }
 
-        const pair = Pair{ .coeff = m_coeff, .number = m_number, .currency = m_currency };
-        try p.pairs.append(pair);
-        return pair;
+        const triple = Triple{ .price = m_price, .number = m_number, .currency = m_currency };
+        try p.triples.append(triple);
+        return triple;
     }
 
-    pub fn deinit(p: *Problem) void {
-        p.pairs.deinit();
-    }
-
-    const SolverError = error{
+    pub const SolverError = error{
         NoSolution,
         MultipleSolutions,
     } || TryAssignmentError;
 
     pub fn solve(p: *Problem) SolverError!Solution {
-        // An assignment: for currency var i, currencies_assignment[i] tells which currency was chosen
-        var currencies_assignment: [MAX_UNKNOWNS]usize = .{0} ** MAX_UNKNOWNS;
+        var assignment: Assignment = .{0} ** MAX_UNKNOWNS;
 
         var err: ?TryAssignmentError = null;
-        var solution: ?Solution = null;
+        var prev_solution: ?Solution = null;
         while (true) {
-            const next_solution = p.try_assignment(currencies_assignment) catch |e| blk: {
+            const solution = p.try_assignment(assignment) catch |e| blk: {
                 err = e;
                 break :blk null;
             };
-            if (next_solution) |s| {
-                if (solution) |_| {
+            if (solution) |s| {
+                if (prev_solution) |_| {
                     return error.MultipleSolutions;
                 } else {
-                    solution = s;
+                    prev_solution = s;
                 }
             }
 
-            // Increment indices as if it were a number in fixed_len-base
+            // Increment indices as if it were a number in num_currencies base
             var carry: usize = 1;
             for (0..p.num_currency_vars) |var_i| {
                 if (carry == 0) break;
-                currencies_assignment[var_i] += carry;
-                if (currencies_assignment[var_i] >= p.num_currencies) {
-                    currencies_assignment[var_i] = 0;
+                assignment[var_i] += carry;
+                if (assignment[var_i] >= p.num_currencies) {
+                    assignment[var_i] = 0;
                     carry = 1;
                 } else {
                     carry = 0;
@@ -136,25 +177,18 @@ pub const Problem = struct {
             if (carry == 1) break;
         }
 
-        return solution orelse return err orelse error.NoSolution;
+        return prev_solution orelse return err orelse error.NoSolution;
     }
 
-    const TryAssignmentError = error{
+    pub const TryAssignmentError = error{
         TooManyVariables,
         DivisionByZero,
         DoesNotBalance,
         OutOfMemory,
     };
 
-    fn try_assignment(p: *Problem, currencies_assignment: [MAX_UNKNOWNS]usize) TryAssignmentError!Solution {
-        // std.debug.print("\ntry_assignment:\n", .{});
-        // for (0..p.num_currency_vars) |var_i| {
-        //     const idx = currencies_assignment[var_i];
-        //     const currency = p.currencies[idx];
-        //     std.debug.print("{d} -> {s}\n", .{ var_i, currency });
-        // }
-
-        const Accum = struct {
+    fn try_assignment(p: *Problem, assignment: Assignment) TryAssignmentError!Solution {
+        const Sum = struct {
             constant: Number,
             mixed: ?Mixed,
 
@@ -164,36 +198,36 @@ pub const Problem = struct {
             };
         };
 
-        var accum_by_currency = std.StringHashMap(Accum).init(p.alloc);
-        defer accum_by_currency.deinit();
+        var sum_by_currency = std.StringHashMap(Sum).init(p.alloc);
+        defer sum_by_currency.deinit();
 
-        for (p.pairs.items) |pair| {
-            // Substitute currency assignment into currency vars
-            var currency: []const u8 = undefined;
-            switch (pair.currency) {
-                .currency => |c| currency = c,
-                .variable => |v| currency = p.currencies[currencies_assignment[v]],
-            }
+        for (p.triples.items) |triple| {
+            // Substitute currency assignment into currency var
+            const currency = switch (triple.currency) {
+                .currency => |c| c,
+                .variable => |v| p.currencies[assignment[v]],
+            };
+
             var variable: ?Variable = undefined;
-            var number: Number = undefined;
-            switch (pair.coeff) {
-                .value => |n1| {
-                    switch (pair.number) {
-                        .value => |n2| {
-                            number = n1.mul(n2);
+            var coeff: Number = undefined;
+            switch (triple.price) {
+                .value => |val_p| {
+                    switch (triple.number) {
+                        .value => |val_n| {
+                            coeff = val_p.mul(val_n);
                             variable = null;
                         },
-                        .variable => |v1| {
-                            number = n1;
-                            variable = v1;
+                        .variable => |var_n| {
+                            coeff = val_p;
+                            variable = var_n;
                         },
                     }
                 },
-                .variable => |v1| {
-                    switch (pair.number) {
-                        .value => |n2| {
-                            number = n2;
-                            variable = v1;
+                .variable => |var_p| {
+                    switch (triple.number) {
+                        .value => |val_n| {
+                            coeff = val_n;
+                            variable = var_p;
                         },
                         .variable => |_| {
                             return error.TooManyVariables;
@@ -201,38 +235,39 @@ pub const Problem = struct {
                     }
                 },
             }
-            const result = try accum_by_currency.getOrPut(currency);
+
+            const result = try sum_by_currency.getOrPut(currency);
             if (result.found_existing) {
-                var accum = result.value_ptr;
+                var sum = result.value_ptr;
                 if (variable) |v| {
-                    if (accum.*.mixed) |mixed| {
+                    if (sum.*.mixed) |mixed| {
                         if (mixed.variable == v) {
-                            accum.*.mixed.?.coeff = mixed.coeff.add(number);
+                            sum.*.mixed.?.coeff = mixed.coeff.add(coeff);
                         } else {
                             return error.TooManyVariables;
                         }
                     } else {
-                        accum.*.mixed = Accum.Mixed{
+                        sum.*.mixed = Sum.Mixed{
                             .variable = v,
-                            .coeff = number,
+                            .coeff = coeff,
                         };
                     }
                 } else {
-                    accum.constant = accum.constant.add(number);
+                    sum.constant = sum.constant.add(coeff);
                 }
             } else {
-                var new: Accum = undefined;
+                var new: Sum = undefined;
                 if (variable) |v| {
-                    new = Accum{
+                    new = Sum{
                         .constant = Number.zero(),
-                        .mixed = Accum.Mixed{
+                        .mixed = Sum.Mixed{
                             .variable = v,
-                            .coeff = number,
+                            .coeff = coeff,
                         },
                     };
                 } else {
-                    new = Accum{
-                        .constant = number,
+                    new = Sum{
+                        .constant = coeff,
                         .mixed = null,
                     };
                 }
@@ -243,7 +278,7 @@ pub const Problem = struct {
 
         var currencies: [MAX_UNKNOWNS][]const u8 = undefined;
         for (0..p.num_currency_vars) |var_i| {
-            const idx = currencies_assignment[var_i];
+            const idx = assignment[var_i];
             currencies[var_i] = p.currencies[idx];
         }
         var solution = Solution{
@@ -253,7 +288,7 @@ pub const Problem = struct {
             .num_number_vars = p.num_number_vars,
         };
 
-        var it = accum_by_currency.iterator();
+        var it = sum_by_currency.iterator();
         while (it.next()) |kv| {
             if (kv.value_ptr.mixed) |mixed| {
                 if (mixed.coeff.is_zero()) {
@@ -282,8 +317,8 @@ test "plain balance" {
     const one = Number.fromFloat(1);
     const five = Number.fromFloat(5);
 
-    _ = try p.addPair(one, five, "EUR");
-    _ = try p.addPair(one, five.negate(), "EUR");
+    _ = try p.addTriple(one, five, "EUR");
+    _ = try p.addTriple(one, five.negate(), "EUR");
 
     _ = try p.solve();
 }
@@ -296,14 +331,14 @@ test "currency solution" {
     const five = Number.fromFloat(5);
     const three = Number.fromFloat(3);
 
-    _ = try p.addPair(one, five, "EUR");
-    const eur_pair = try p.addPair(one, five.negate(), null);
-    _ = try p.addPair(one, three, "USD");
-    const usd_pair = try p.addPair(one, three.negate(), null);
+    _ = try p.addTriple(one, five, "EUR");
+    const eur = try p.addTriple(one, five.negate(), null);
+    _ = try p.addTriple(one, three, "USD");
+    const usd = try p.addTriple(one, three.negate(), null);
 
-    const solution = try p.solve();
-    try std.testing.expectEqualStrings("EUR", solution.currencies[eur_pair.currency.variable]);
-    try std.testing.expectEqualStrings("USD", solution.currencies[usd_pair.currency.variable]);
+    const s = try p.solve();
+    try std.testing.expectEqualStrings("EUR", s.currency(eur.currency.variable));
+    try std.testing.expectEqualStrings("USD", s.currency(usd.currency.variable));
 }
 
 test "number solution" {
@@ -314,14 +349,29 @@ test "number solution" {
     const six = Number.fromFloat(6);
     const three = Number.fromFloat(3);
 
-    _ = try p.addPair(one, six, "EUR");
-    const eur_pair = try p.addPair(one, null, "EUR");
-    _ = try p.addPair(one, six, "USD");
-    const usd_pair = try p.addPair(null, three, "USD");
+    _ = try p.addTriple(one, six, "EUR");
+    const eur = try p.addTriple(one, null, "EUR");
+    _ = try p.addTriple(one, six, "USD");
+    const usd = try p.addTriple(null, three, "USD");
 
-    const solution = try p.solve();
-    try std.testing.expectEqual(Number.fromFloat(-6), solution.numbers[eur_pair.number.variable]);
-    try std.testing.expectEqual(Number.fromFloat(-2), solution.numbers[usd_pair.coeff.variable]);
+    const s = try p.solve();
+    try std.testing.expectEqual(Number.fromFloat(-6), s.number(eur.number.variable));
+    try std.testing.expectEqual(Number.fromFloat(-2), s.number(usd.price.variable));
+}
+
+test "currency + number solution" {
+    var p = Problem.init(std.testing.allocator);
+    defer p.deinit();
+
+    const one = Number.fromFloat(1);
+    const six = Number.fromFloat(6);
+
+    _ = try p.addTriple(one, six, "EUR");
+    const eur = try p.addTriple(one, null, null);
+
+    const s = try p.solve();
+    try std.testing.expectEqualStrings("EUR", s.currency(eur.currency.variable));
+    try std.testing.expectEqual(six.negate(), s.number(eur.number.variable));
 }
 
 test "too many variables" {
@@ -331,12 +381,22 @@ test "too many variables" {
     const one = Number.fromFloat(1);
     const five = Number.fromFloat(5);
 
-    _ = try p.addPair(one, five, "EUR");
-    _ = try p.addPair(one, null, "EUR");
-    _ = try p.addPair(one, null, "EUR");
+    _ = try p.addTriple(one, five, "EUR");
+    _ = try p.addTriple(one, null, "EUR");
+    _ = try p.addTriple(one, null, "EUR");
 
-    const solution = p.solve();
-    try std.testing.expectError(error.TooManyVariables, solution);
+    const s = p.solve();
+    try std.testing.expectError(error.TooManyVariables, s);
+}
+
+test "too many variables price" {
+    var p = Problem.init(std.testing.allocator);
+    defer p.deinit();
+
+    _ = try p.addTriple(null, null, "EUR");
+
+    const s = p.solve();
+    try std.testing.expectError(error.TooManyVariables, s);
 }
 
 test "does not balance" {
@@ -345,10 +405,10 @@ test "does not balance" {
 
     const one = Number.fromFloat(1);
 
-    _ = try p.addPair(one, Number.fromFloat(5), "EUR");
-    _ = try p.addPair(one, null, "USD");
-    _ = try p.addPair(one, Number.fromFloat(3), null);
+    _ = try p.addTriple(one, Number.fromFloat(5), "EUR");
+    _ = try p.addTriple(one, null, "USD");
+    _ = try p.addTriple(one, Number.fromFloat(3), null);
 
-    const solution = p.solve();
-    try std.testing.expectError(error.DoesNotBalance, solution);
+    const s = p.solve();
+    try std.testing.expectError(error.DoesNotBalance, s);
 }
