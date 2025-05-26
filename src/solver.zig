@@ -37,14 +37,14 @@ const MAX_UNKNOWNS = 8;
 /// chosen.
 const Assignment = [MAX_UNKNOWNS]usize;
 
-pub const MaybeCurrency = union(enum) {
-    currency: []const u8,
-    variable: Variable,
+pub const MaybeCurrency = struct {
+    currency: *?[]const u8,
+    variable: ?Variable,
 };
 
-pub const MaybeNumber = union(enum) {
-    value: Number,
-    variable: Variable,
+pub const MaybeNumber = struct {
+    number: *?Number,
+    variable: ?Variable,
 };
 
 pub const Triple = struct {
@@ -109,13 +109,15 @@ pub const Problem = struct {
     }
 
     /// Add a triple to the problem.
-    pub fn addTriple(p: *Problem, price: ?Number, number: ?Number, currency: ?[]const u8) !Triple {
-        const m_price = if (price) |c| MaybeNumber{ .value = c } else MaybeNumber{ .variable = try p.nextNumberVar() };
-        const m_number = if (number) |c| MaybeNumber{ .value = c } else MaybeNumber{ .variable = try p.nextNumberVar() };
+    pub fn addTriple(p: *Problem, price: *?Number, number: *?Number, currency: *?[]const u8) !void {
+        const price_var = if (price.*) |_| null else try p.nextNumberVar();
+        const m_price = MaybeNumber{ .number = price, .variable = price_var };
+        const number_var = if (number.*) |_| null else try p.nextNumberVar();
+        const m_number = MaybeNumber{ .number = number, .variable = number_var };
 
-        var m_currency: MaybeCurrency = undefined;
-        if (currency) |c| {
-            m_currency = MaybeCurrency{ .currency = c };
+        var currency_var: ?Variable = undefined;
+        if (currency.*) |c| {
+            currency_var = null;
             var currency_exists = false;
             for (0..p.num_currencies) |i| {
                 if (std.mem.eql(u8, c, p.currencies[i])) {
@@ -129,14 +131,14 @@ pub const Problem = struct {
                 p.num_currencies += 1;
             }
         } else {
-            m_currency = MaybeCurrency{ .variable = p.num_currency_vars };
+            currency_var = p.num_currency_vars;
             if (p.num_currency_vars >= MAX_UNKNOWNS) return error.TooManyCurrencyVars;
             p.num_currency_vars += 1;
         }
+        const m_currency = MaybeCurrency{ .currency = currency, .variable = currency_var };
 
         const triple = Triple{ .price = m_price, .number = m_number, .currency = m_currency };
         try p.triples.append(triple);
-        return triple;
     }
 
     pub const SolverError = error{
@@ -144,7 +146,7 @@ pub const Problem = struct {
         MultipleSolutions,
     } || TryAssignmentError;
 
-    pub fn solve(p: *Problem) SolverError!Solution {
+    pub fn solve(p: *Problem) SolverError!void {
         var assignment: Assignment = .{0} ** MAX_UNKNOWNS;
 
         var err: ?TryAssignmentError = null;
@@ -177,7 +179,18 @@ pub const Problem = struct {
             if (carry == 1) break;
         }
 
-        return prev_solution orelse return err orelse error.NoSolution;
+        if (prev_solution) |s| {
+            // Apply solution to triples
+            for (p.triples.items) |triple| {
+                if (triple.price.variable) |v| triple.price.number.* = s.numbers[v];
+                if (triple.number.variable) |v| triple.number.number.* = s.numbers[v];
+                if (triple.currency.variable) |v| triple.currency.currency.* = s.currencies[v];
+            }
+        } else if (err) |e| {
+            return e;
+        } else {
+            return error.NoSolution;
+        }
     }
 
     pub const TryAssignmentError = error{
@@ -203,37 +216,27 @@ pub const Problem = struct {
 
         for (p.triples.items) |triple| {
             // Substitute currency assignment into currency var
-            const currency = switch (triple.currency) {
-                .currency => |c| c,
-                .variable => |v| p.currencies[assignment[v]],
-            };
+            const currency = if (triple.currency.variable) |v| p.currencies[assignment[v]] else triple.currency.currency.*.?;
 
             var variable: ?Variable = undefined;
             var coeff: Number = undefined;
-            switch (triple.price) {
-                .value => |val_p| {
-                    switch (triple.number) {
-                        .value => |val_n| {
-                            coeff = val_p.mul(val_n);
-                            variable = null;
-                        },
-                        .variable => |var_n| {
-                            coeff = val_p;
-                            variable = var_n;
-                        },
-                    }
-                },
-                .variable => |var_p| {
-                    switch (triple.number) {
-                        .value => |val_n| {
-                            coeff = val_n;
-                            variable = var_p;
-                        },
-                        .variable => |_| {
-                            return error.TooManyVariables;
-                        },
-                    }
-                },
+            if (triple.price.variable) |var_p| {
+                if (triple.number.variable) |_| {
+                    return error.TooManyVariables;
+                } else {
+                    coeff = triple.number.number.*.?;
+                    variable = var_p;
+                }
+            } else {
+                const val_p = triple.price.number.*.?;
+                if (triple.number.variable) |var_n| {
+                    coeff = val_p;
+                    variable = var_n;
+                } else {
+                    const val_n = triple.number.number.*.?;
+                    coeff = val_p.mul(val_n);
+                    variable = null;
+                }
             }
 
             const result = try sum_by_currency.getOrPut(currency);
@@ -311,103 +314,160 @@ pub const Problem = struct {
 };
 
 test "plain balance" {
-    var p = Problem.init(std.testing.allocator);
+    const alloc = std.testing.allocator;
+    var p = Problem.init(alloc);
     defer p.deinit();
 
-    const one = Number.fromFloat(1);
-    const five = Number.fromFloat(5);
+    var one: ?Number = Number.fromFloat(1);
+    var five: ?Number = Number.fromFloat(5);
+    var neg_five: ?Number = Number.fromFloat(-5);
 
-    _ = try p.addTriple(one, five, "EUR");
-    _ = try p.addTriple(one, five.negate(), "EUR");
+    var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
+    defer alloc.free(eur.?);
 
-    _ = try p.solve();
+    try p.addTriple(&one, &five, &eur);
+    try p.addTriple(&one, &neg_five, &eur);
+
+    try p.solve();
 }
 
 test "currency solution" {
-    var p = Problem.init(std.testing.allocator);
+    const alloc = std.testing.allocator;
+    var p = Problem.init(alloc);
     defer p.deinit();
 
-    const one = Number.fromFloat(1);
-    const five = Number.fromFloat(5);
-    const three = Number.fromFloat(3);
+    var one: ?Number = Number.fromFloat(1);
+    var five: ?Number = Number.fromFloat(5);
+    var three: ?Number = Number.fromFloat(3);
+    var neg_five: ?Number = Number.fromFloat(-5);
+    var neg_three: ?Number = Number.fromFloat(-3);
 
-    _ = try p.addTriple(one, five, "EUR");
-    const eur = try p.addTriple(one, five.negate(), null);
-    _ = try p.addTriple(one, three, "USD");
-    const usd = try p.addTriple(one, three.negate(), null);
+    var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
+    var usd: ?[]const u8 = try alloc.dupe(u8, "USD");
+    defer alloc.free(eur.?);
+    defer alloc.free(usd.?);
 
-    const s = try p.solve();
-    try std.testing.expectEqualStrings("EUR", s.currency(eur.currency.variable));
-    try std.testing.expectEqualStrings("USD", s.currency(usd.currency.variable));
+    var c1: ?[]const u8 = null;
+    var c2: ?[]const u8 = null;
+
+    try p.addTriple(&one, &five, &eur);
+    try p.addTriple(&one, &neg_five, &c1);
+    try p.addTriple(&one, &three, &usd);
+    try p.addTriple(&one, &neg_three, &c2);
+
+    try p.solve();
+    try std.testing.expectEqualStrings("EUR", c1.?);
+    try std.testing.expectEqualStrings("USD", c2.?);
 }
 
 test "number solution" {
-    var p = Problem.init(std.testing.allocator);
+    const alloc = std.testing.allocator;
+    var p = Problem.init(alloc);
     defer p.deinit();
 
-    const one = Number.fromFloat(1);
-    const six = Number.fromFloat(6);
-    const three = Number.fromFloat(3);
+    var one: ?Number = Number.fromFloat(1);
+    var six: ?Number = Number.fromFloat(6);
+    var three: ?Number = Number.fromFloat(3);
 
-    _ = try p.addTriple(one, six, "EUR");
-    const eur = try p.addTriple(one, null, "EUR");
-    _ = try p.addTriple(one, six, "USD");
-    const usd = try p.addTriple(null, three, "USD");
+    var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
+    var usd: ?[]const u8 = try alloc.dupe(u8, "USD");
+    defer alloc.free(eur.?);
+    defer alloc.free(usd.?);
 
-    const s = try p.solve();
-    try std.testing.expectEqual(Number.fromFloat(-6), s.number(eur.number.variable));
-    try std.testing.expectEqual(Number.fromFloat(-2), s.number(usd.price.variable));
+    var n1: ?Number = null;
+    var n2: ?Number = null;
+
+    try p.addTriple(&one, &six, &eur);
+    try p.addTriple(&one, &n1, &eur);
+    try p.addTriple(&one, &six, &usd);
+    try p.addTriple(&n2, &three, &usd);
+
+    try p.solve();
+    try std.testing.expectEqual(Number.fromFloat(-6), n1.?);
+    try std.testing.expectEqual(Number.fromFloat(-2), n2.?);
 }
 
-test "currency + number solution" {
-    var p = Problem.init(std.testing.allocator);
+test "combined solution" {
+    const alloc = std.testing.allocator;
+    var p = Problem.init(alloc);
     defer p.deinit();
 
-    const one = Number.fromFloat(1);
-    const six = Number.fromFloat(6);
+    var one: ?Number = Number.fromFloat(1);
+    var six: ?Number = Number.fromFloat(6);
 
-    _ = try p.addTriple(one, six, "EUR");
-    const eur = try p.addTriple(one, null, null);
+    var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
+    defer alloc.free(eur.?);
 
-    const s = try p.solve();
-    try std.testing.expectEqualStrings("EUR", s.currency(eur.currency.variable));
-    try std.testing.expectEqual(six.negate(), s.number(eur.number.variable));
+    var n1: ?Number = null;
+    var c1: ?[]const u8 = null;
+
+    try p.addTriple(&one, &six, &eur);
+    try p.addTriple(&one, &n1, &c1);
+
+    try p.solve();
+    try std.testing.expectEqualStrings("EUR", c1.?);
+    try std.testing.expectEqual(Number.fromFloat(-6), n1.?);
 }
 
 test "too many variables" {
-    var p = Problem.init(std.testing.allocator);
+    const alloc = std.testing.allocator;
+    var p = Problem.init(alloc);
     defer p.deinit();
 
-    const one = Number.fromFloat(1);
-    const five = Number.fromFloat(5);
+    var one: ?Number = Number.fromFloat(1);
+    var five: ?Number = Number.fromFloat(5);
 
-    _ = try p.addTriple(one, five, "EUR");
-    _ = try p.addTriple(one, null, "EUR");
-    _ = try p.addTriple(one, null, "EUR");
+    var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
+    defer alloc.free(eur.?);
+
+    var n1: ?Number = null;
+    var n2: ?Number = null;
+
+    try p.addTriple(&one, &five, &eur);
+    try p.addTriple(&one, &n1, &eur);
+    try p.addTriple(&one, &n2, &eur);
 
     const s = p.solve();
     try std.testing.expectError(error.TooManyVariables, s);
 }
 
 test "too many variables price" {
-    var p = Problem.init(std.testing.allocator);
+    const alloc = std.testing.allocator;
+    var p = Problem.init(alloc);
     defer p.deinit();
 
-    _ = try p.addTriple(null, null, "EUR");
+    var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
+    defer alloc.free(eur.?);
+
+    var n1: ?Number = null;
+    var n2: ?Number = null;
+
+    try p.addTriple(&n1, &n2, &eur);
 
     const s = p.solve();
     try std.testing.expectError(error.TooManyVariables, s);
 }
 
 test "does not balance" {
-    var p = Problem.init(std.testing.allocator);
+    const alloc = std.testing.allocator;
+    var p = Problem.init(alloc);
     defer p.deinit();
 
-    const one = Number.fromFloat(1);
+    var one: ?Number = Number.fromFloat(1);
+    var five: ?Number = Number.fromFloat(5);
+    var three: ?Number = Number.fromFloat(3);
 
-    _ = try p.addTriple(one, Number.fromFloat(5), "EUR");
-    _ = try p.addTriple(one, null, "USD");
-    _ = try p.addTriple(one, Number.fromFloat(3), null);
+    var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
+    var usd: ?[]const u8 = try alloc.dupe(u8, "USD");
+    defer alloc.free(eur.?);
+    defer alloc.free(usd.?);
+
+    var n1: ?Number = null;
+    var c1: ?[]const u8 = null;
+
+    try p.addTriple(&one, &five, &eur);
+    try p.addTriple(&one, &n1, &usd);
+    try p.addTriple(&one, &three, &c1);
 
     const s = p.solve();
     try std.testing.expectError(error.DoesNotBalance, s);

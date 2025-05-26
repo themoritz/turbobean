@@ -4,6 +4,7 @@ const Date = @import("date.zig").Date;
 const Parser = @import("parser.zig");
 const Number = @import("number.zig").Number;
 const Lexer = @import("lexer.zig").Lexer;
+const solver = @import("solver.zig");
 
 const Self = @This();
 
@@ -317,6 +318,40 @@ fn add_file(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) 
 
 pub fn sort_entries(self: *Self) void {
     std.sort.block(Entry, self.entries.items, {}, Entry.compare);
+}
+
+pub fn balance_transactions(self: *Self) !void {
+    var one: ?Number = Number.fromFloat(1);
+    for (self.entries.items) |entry| {
+        switch (entry.payload) {
+            .transaction => |tx| {
+                if (tx.postings) |postings| {
+                    var problem = solver.Problem.init(self.alloc);
+                    defer problem.deinit();
+
+                    for (postings.start..postings.end) |i| {
+                        const number: *?Number = &self.postings.items(.amount)[i].number;
+                        var price: *?Number = undefined;
+                        var currency: *?[]const u8 = undefined;
+
+                        if (self.postings.items(.price)[i]) |_| {
+                            // TODO: Turn this into proper error
+                            std.debug.assert(self.postings.items(.amount)[i].currency != null);
+                            currency = &self.postings.items(.price)[i].?.amount.currency;
+                            price = &self.postings.items(.price)[i].?.amount.number;
+                        } else {
+                            currency = &self.postings.items(.amount)[i].currency;
+                            price = &one;
+                        }
+
+                        try problem.addTriple(price, number, currency);
+                    }
+                    try problem.solve();
+                }
+            },
+            else => continue,
+        }
+    }
 }
 
 pub fn deinit(self: *Self, alloc: Allocator) void {

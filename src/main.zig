@@ -17,6 +17,16 @@ pub fn main() !void {
     var data = try Data.load_file(allocator, filename);
     defer data.deinit(allocator);
 
+    try data.balance_transactions();
+    data.sort_entries();
+
+    // const pretty = @import("pretty.zig");
+    // for (0..10) |idx| {
+    //     const entry = data.entries.items[idx];
+    //     std.debug.print("{any}\n", .{entry.date});
+    //     try pretty.print(allocator, entry.payload, .{});
+    // }
+
     std.debug.print("{d}\n", .{data.entries.items.len});
     // try render.print(allocator, &data);
 }
