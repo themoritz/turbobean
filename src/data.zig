@@ -322,13 +322,13 @@ pub fn sort_entries(self: *Self) void {
 
 pub fn balance_transactions(self: *Self) !void {
     var one: ?Number = Number.fromFloat(1);
+    var problem = solver.Problem.init(self.alloc);
+    defer problem.deinit();
+
     for (self.entries.items) |entry| {
         switch (entry.payload) {
             .transaction => |tx| {
                 if (tx.postings) |postings| {
-                    var problem = solver.Problem.init(self.alloc);
-                    defer problem.deinit();
-
                     for (postings.start..postings.end) |i| {
                         const number: *?Number = &self.postings.items(.amount)[i].number;
                         var price: *?Number = undefined;

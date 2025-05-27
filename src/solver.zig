@@ -91,15 +91,36 @@ pub const Problem = struct {
     currencies: [MAX_UNKNOWNS][]const u8 = undefined,
     num_currencies: usize = 0,
 
+    sum_by_currency: std.StringHashMap(Sum),
+
+    const Sum = struct {
+        constant: Number,
+        mixed: ?Mixed,
+
+        const Mixed = struct {
+            variable: Variable,
+            coeff: Number,
+        };
+    };
+
     pub fn init(alloc: Allocator) Problem {
         return Problem{
             .alloc = alloc,
             .triples = std.ArrayList(Triple).init(alloc),
+            .sum_by_currency = std.StringHashMap(Sum).init(alloc),
         };
     }
 
     pub fn deinit(p: *Problem) void {
         p.triples.deinit();
+        p.sum_by_currency.deinit();
+    }
+
+    fn clear(p: *Problem) void {
+        p.num_number_vars = 0;
+        p.num_currency_vars = 0;
+        p.num_currencies = 0;
+        p.triples.clearRetainingCapacity();
     }
 
     fn nextNumberVar(p: *Problem) !Variable {
@@ -147,6 +168,7 @@ pub const Problem = struct {
     } || TryAssignmentError;
 
     pub fn solve(p: *Problem) SolverError!void {
+        defer p.clear();
         var assignment: Assignment = .{0} ** MAX_UNKNOWNS;
 
         var err: ?TryAssignmentError = null;
@@ -201,18 +223,7 @@ pub const Problem = struct {
     };
 
     fn try_assignment(p: *Problem, assignment: Assignment) TryAssignmentError!Solution {
-        const Sum = struct {
-            constant: Number,
-            mixed: ?Mixed,
-
-            const Mixed = struct {
-                variable: Variable,
-                coeff: Number,
-            };
-        };
-
-        var sum_by_currency = std.StringHashMap(Sum).init(p.alloc);
-        defer sum_by_currency.deinit();
+        p.sum_by_currency.clearRetainingCapacity();
 
         for (p.triples.items) |triple| {
             // Substitute currency assignment into currency var
@@ -239,7 +250,7 @@ pub const Problem = struct {
                 }
             }
 
-            const result = try sum_by_currency.getOrPut(currency);
+            const result = try p.sum_by_currency.getOrPut(currency);
             if (result.found_existing) {
                 var sum = result.value_ptr;
                 if (variable) |v| {
@@ -291,7 +302,7 @@ pub const Problem = struct {
             .num_number_vars = p.num_number_vars,
         };
 
-        var it = sum_by_currency.iterator();
+        var it = p.sum_by_currency.iterator();
         while (it.next()) |kv| {
             if (kv.value_ptr.mixed) |mixed| {
                 if (mixed.coeff.is_zero()) {
