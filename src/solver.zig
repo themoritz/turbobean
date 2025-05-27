@@ -27,7 +27,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Number = @import("number.zig").Number;
 
-pub const Variable = usize;
+const Variable = usize;
 
 /// Upper bound on number of currencies and currency variables.
 const MAX_UNKNOWNS = 8;
@@ -37,23 +37,23 @@ const MAX_UNKNOWNS = 8;
 /// chosen.
 const Assignment = [MAX_UNKNOWNS]usize;
 
-pub const MaybeCurrency = struct {
+const MaybeCurrency = struct {
     currency: *?[]const u8,
     variable: ?Variable,
 };
 
-pub const MaybeNumber = struct {
+const MaybeNumber = struct {
     number: *?Number,
     variable: ?Variable,
 };
 
-pub const Triple = struct {
+const Triple = struct {
     price: MaybeNumber,
     number: MaybeNumber,
     currency: MaybeCurrency,
 };
 
-pub const Solution = struct {
+const Solution = struct {
     currencies: [MAX_UNKNOWNS][]const u8,
     numbers: [MAX_UNKNOWNS]Number,
     num_number_vars: usize,
@@ -81,7 +81,7 @@ pub const Solution = struct {
     }
 };
 
-pub const Problem = struct {
+pub const Solver = struct {
     alloc: Allocator,
     triples: std.ArrayList(Triple),
 
@@ -103,34 +103,34 @@ pub const Problem = struct {
         };
     };
 
-    pub fn init(alloc: Allocator) Problem {
-        return Problem{
+    pub fn init(alloc: Allocator) Solver {
+        return Solver{
             .alloc = alloc,
             .triples = std.ArrayList(Triple).init(alloc),
             .sum_by_currency = std.StringHashMap(Sum).init(alloc),
         };
     }
 
-    pub fn deinit(p: *Problem) void {
+    pub fn deinit(p: *Solver) void {
         p.triples.deinit();
         p.sum_by_currency.deinit();
     }
 
-    fn clear(p: *Problem) void {
+    fn clear(p: *Solver) void {
         p.num_number_vars = 0;
         p.num_currency_vars = 0;
         p.num_currencies = 0;
         p.triples.clearRetainingCapacity();
     }
 
-    fn nextNumberVar(p: *Problem) !Variable {
+    fn nextNumberVar(p: *Solver) !Variable {
         if (p.num_number_vars >= MAX_UNKNOWNS) return error.TooManyNumberVars;
         p.num_number_vars += 1;
         return p.num_number_vars - 1;
     }
 
     /// Add a triple to the problem.
-    pub fn addTriple(p: *Problem, price: *?Number, number: *?Number, currency: *?[]const u8) !void {
+    pub fn addTriple(p: *Solver, price: *?Number, number: *?Number, currency: *?[]const u8) !void {
         const price_var = if (price.*) |_| null else try p.nextNumberVar();
         const m_price = MaybeNumber{ .number = price, .variable = price_var };
         const number_var = if (number.*) |_| null else try p.nextNumberVar();
@@ -167,7 +167,9 @@ pub const Problem = struct {
         MultipleSolutions,
     } || TryAssignmentError;
 
-    pub fn solve(p: *Problem) SolverError!void {
+    /// The solver can be reused after this. There is no need to allocate a new one
+    /// for each tx that needs balancing.
+    pub fn solve(p: *Solver) SolverError!void {
         defer p.clear();
         var assignment: Assignment = .{0} ** MAX_UNKNOWNS;
 
@@ -222,7 +224,7 @@ pub const Problem = struct {
         OutOfMemory,
     };
 
-    fn try_assignment(p: *Problem, assignment: Assignment) TryAssignmentError!Solution {
+    fn try_assignment(p: *Solver, assignment: Assignment) TryAssignmentError!Solution {
         p.sum_by_currency.clearRetainingCapacity();
 
         for (p.triples.items) |triple| {
@@ -326,7 +328,7 @@ pub const Problem = struct {
 
 test "plain balance" {
     const alloc = std.testing.allocator;
-    var p = Problem.init(alloc);
+    var p = Solver.init(alloc);
     defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
@@ -344,7 +346,7 @@ test "plain balance" {
 
 test "currency solution" {
     const alloc = std.testing.allocator;
-    var p = Problem.init(alloc);
+    var p = Solver.init(alloc);
     defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
@@ -373,7 +375,7 @@ test "currency solution" {
 
 test "number solution" {
     const alloc = std.testing.allocator;
-    var p = Problem.init(alloc);
+    var p = Solver.init(alloc);
     defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
@@ -400,7 +402,7 @@ test "number solution" {
 
 test "combined solution" {
     const alloc = std.testing.allocator;
-    var p = Problem.init(alloc);
+    var p = Solver.init(alloc);
     defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
@@ -422,7 +424,7 @@ test "combined solution" {
 
 test "too many variables" {
     const alloc = std.testing.allocator;
-    var p = Problem.init(alloc);
+    var p = Solver.init(alloc);
     defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
@@ -444,7 +446,7 @@ test "too many variables" {
 
 test "too many variables price" {
     const alloc = std.testing.allocator;
-    var p = Problem.init(alloc);
+    var p = Solver.init(alloc);
     defer p.deinit();
 
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
@@ -461,7 +463,7 @@ test "too many variables price" {
 
 test "does not balance" {
     const alloc = std.testing.allocator;
-    var p = Problem.init(alloc);
+    var p = Solver.init(alloc);
     defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);

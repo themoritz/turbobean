@@ -4,7 +4,7 @@ const Date = @import("date.zig").Date;
 const Parser = @import("parser.zig");
 const Number = @import("number.zig").Number;
 const Lexer = @import("lexer.zig").Lexer;
-const solver = @import("solver.zig");
+const Solver = @import("solver.zig").Solver;
 
 const Self = @This();
 
@@ -322,8 +322,8 @@ pub fn sort_entries(self: *Self) void {
 
 pub fn balance_transactions(self: *Self) !void {
     var one: ?Number = Number.fromFloat(1);
-    var problem = solver.Problem.init(self.alloc);
-    defer problem.deinit();
+    var solver = Solver.init(self.alloc);
+    defer solver.deinit();
 
     for (self.entries.items) |entry| {
         switch (entry.payload) {
@@ -344,9 +344,9 @@ pub fn balance_transactions(self: *Self) !void {
                             price = &one;
                         }
 
-                        try problem.addTriple(price, number, currency);
+                        try solver.addTriple(price, number, currency);
                     }
-                    try problem.solve();
+                    try solver.solve();
                 }
             },
             else => continue,
