@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const Number = @import("number.zig").Number;
 const Date = @import("date.zig").Date;
 
-const Inventory = struct {
+pub const Inventory = struct {
     alloc: Allocator,
     by_currency: std.StringHashMap(Number),
 
