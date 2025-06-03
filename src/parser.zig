@@ -640,10 +640,7 @@ fn expectNumberExpr(p: *Self) !Number {
 fn parseNumber(p: *Self) !?Number {
     const token = p.currentToken();
     if (token.tag == .number) {
-        const number = Number.fromSlice(token.loc) catch |err| switch (err) {
-            error.InvalidCharacter => return p.fail(.invalid_number),
-            else => return err,
-        };
+        const number = Number.fromSlice(token.loc) catch return p.fail(.invalid_number);
         _ = p.advanceToken();
         return number;
     } else return null;

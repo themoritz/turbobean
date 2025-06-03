@@ -5,6 +5,7 @@ const Parser = @import("parser.zig");
 const Number = @import("number.zig").Number;
 const Lexer = @import("lexer.zig").Lexer;
 const Solver = @import("solver.zig").Solver;
+const Tree = @import("tree.zig");
 
 const Self = @This();
 
@@ -314,6 +315,37 @@ fn add_file(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) 
     };
 
     return parser.imports.toOwnedSlice();
+}
+
+/// Assumes balanced transactions
+pub fn print_tree(self: *Self) !void {
+    var tree = try Tree.init(self.alloc);
+    defer tree.deinit();
+
+    for (self.entries.items) |entry| {
+        switch (entry.payload) {
+            .open => |open| {
+                _ = tree.open(open.account) catch |err| switch (err) {
+                    error.AccountExists => {},
+                    else => return err,
+                };
+            },
+            .transaction => |tx| {
+                if (tx.postings) |postings| {
+                    for (postings.start..postings.end) |i| {
+                        try tree.addPosition(
+                            self.postings.items(.account)[i],
+                            self.postings.items(.amount)[i].number.?,
+                            self.postings.items(.amount)[i].currency.?,
+                        );
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
+    try tree.print();
 }
 
 pub fn sort_entries(self: *Self) void {

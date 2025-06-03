@@ -19,6 +19,7 @@ pub fn main() !void {
 
     try data.balance_transactions();
     data.sort_entries();
+    try data.print_tree();
 
     // const pretty = @import("pretty.zig");
     // for (0..10) |idx| {

@@ -136,16 +136,22 @@ pub fn render(self: *Self) ![]const u8 {
     return buf.toOwnedSlice();
 }
 
+pub fn print(self: *Self) !void {
+    const s = try self.render();
+    defer self.alloc.free(s);
+    std.debug.print("{s}", .{s});
+}
+
 fn renderRec(self: *Self, buf: *std.ArrayList(u8), node_index: u32, max_width: u32, depth: u32) !void {
     const node = self.nodes.items[node_index];
     try buf.appendNTimes(' ', 2 * depth);
     try buf.appendSlice(node.name);
     var inv = try self.inventoryAggregatedByNode(self.alloc, node_index);
     defer inv.deinit();
-    if (!inv.is_empty()) {
+    if (!inv.isEmpty()) {
         const name_width: u32 = @intCast(self.nodes.items[node_index].name.len);
         const width: u32 = depth * 2 + name_width;
-        try buf.appendNTimes(' ', max_width - width + 1);
+        try buf.appendNTimes(' ', max_width - width + 3);
         try std.fmt.format(buf.writer(), "{any}", .{inv});
     }
     try buf.append('\n');
@@ -209,12 +215,12 @@ test "aggregated" {
     defer std.testing.allocator.free(rendered);
 
     const expected =
-        \\Assets      1 EUR, 2 USD
-        \\  Currency  1 EUR, 2 USD
-        \\    Chase   1 USD
-        \\    BoA     1 EUR, 1 USD
-        \\Income      1 USD
-        \\  Dividends 1 USD
+        \\Assets        1 EUR, 2 USD
+        \\  Currency    1 EUR, 2 USD
+        \\    Chase     1 USD
+        \\    BoA       1 EUR, 1 USD
+        \\Income        1 USD
+        \\  Dividends   1 USD
         \\
     ;
 
