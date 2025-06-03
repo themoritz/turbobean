@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Inventory = @import("inventory.zig").Inventory;
+const Number = @import("number.zig").Number;
 const Self = @This();
 
 alloc: Allocator,
@@ -9,7 +10,7 @@ nodes: std.ArrayList(Node),
 
 pub const Node = struct {
     name: []const u8,
-    inventory: ?Inventory,
+    inventory: Inventory,
     parent: ?u32,
     children: std.ArrayList(u32),
 
@@ -24,9 +25,7 @@ pub const Node = struct {
 
     pub fn deinit(self: *Node) void {
         self.children.deinit();
-        if (self.inventory) |*inv| {
-            inv.deinit();
-        }
+        self.inventory.deinit();
     }
 };
 
@@ -76,6 +75,49 @@ pub fn open(self: *Self, name: []const u8) !u32 {
     return current_index;
 }
 
+pub fn add_position(self: *Self, account: []const u8, number: Number, currency: []const u8) !void {
+    const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
+    try self.nodes.items[index].inventory.add(number, currency);
+}
+
+/// Caller doesn't own returned inventory.
+pub fn inventory(self: *Self, account: []const u8) !*Inventory {
+    const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
+    return &self.nodes.items[index].inventory;
+}
+
+pub fn find_node(self: *Self, account: []const u8) ?u32 {
+    var result: ?u32 = null;
+    for (self.nodes.items, 0..) |node, index| {
+        if (std.mem.eql(u8, node.name, account)) {
+            result = @intCast(index);
+            break;
+        }
+    }
+    return result;
+}
+
+/// Caller owns returned inventory.
+pub fn inventory_aggregated(self: *Self, alloc: Allocator, account: []const u8) !Inventory {
+    const start = self.node_by_name.get(account) orelse self.find_node(account) orelse return error.AccountDoesNotExist;
+    var inv = Inventory.init(alloc);
+    errdefer inv.deinit();
+
+    var stack = std.ArrayList(u32).init(alloc);
+    defer stack.deinit();
+
+    try stack.append(start);
+    while (stack.items.len > 0) {
+        const index = stack.pop();
+        var node = self.nodes.items[index];
+        try inv.combine(&node.inventory);
+        for (node.children.items) |child| {
+            try stack.append(child);
+        }
+    }
+    return inv;
+}
+
 pub fn render(self: *Self) ![]const u8 {
     var buf = std.ArrayList(u8).init(self.alloc);
     defer buf.deinit();
@@ -120,4 +162,22 @@ test "tree" {
     ;
 
     try std.testing.expectEqualStrings(expected, rendered);
+}
+
+test "aggregated" {
+    var tree = try Self.init(std.testing.allocator);
+    defer tree.deinit();
+
+    _ = try tree.open("Assets:Currency:Chase");
+    _ = try tree.open("Assets:Currency:BoA");
+    _ = try tree.open("Income:Dividends");
+
+    try tree.add_position("Assets:Currency:Chase", Number.fromInt(1000), "USD");
+    try tree.add_position("Assets:Currency:BoA", Number.fromInt(1000), "USD");
+    try tree.add_position("Income:Dividends", Number.fromInt(1000), "USD");
+
+    var inv = try tree.inventory_aggregated(std.testing.allocator, "Assets");
+    defer inv.deinit();
+
+    try std.testing.expectEqual(Number.fromInt(2000), inv.balance("USD"));
 }

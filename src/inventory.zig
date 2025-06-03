@@ -22,9 +22,16 @@ pub const Inventory = struct {
         const old = self.balance(currency);
         const new = old.add(number);
         if (new.is_zero()) {
-            try self.by_currency.remove(currency);
+            _ = self.by_currency.remove(currency);
         } else {
             try self.by_currency.put(currency, new);
+        }
+    }
+
+    pub fn combine(self: *Inventory, other: *Inventory) !void {
+        var iter = other.by_currency.iterator();
+        while (iter.next()) |entry| {
+            try self.add(entry.value_ptr.*, entry.key_ptr.*);
         }
     }
 
