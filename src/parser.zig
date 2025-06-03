@@ -391,7 +391,7 @@ fn parseDirective(p: *Self) !?void {
             const key = try p.expectToken(.string);
             const value = try p.expectToken(.string);
             if (p.is_root) {
-                try p.config.add_option(key.loc, value.loc);
+                try p.config.addOption(key.loc, value.loc);
             }
             // TODO: Else warn
         },
@@ -404,7 +404,7 @@ fn parseDirective(p: *Self) !?void {
             _ = p.advanceToken();
             const plugin = try p.expectToken(.string);
             if (p.is_root) {
-                try p.config.add_plugin(plugin.loc);
+                try p.config.addPlugin(plugin.loc);
             }
             // TODO: Else warn
         },

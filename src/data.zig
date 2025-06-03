@@ -46,7 +46,7 @@ pub const Amount = struct {
         return amount.number != null or amount.currency != null;
     }
 
-    pub fn is_complete(a: *const Amount) bool {
+    pub fn isComplete(a: *const Amount) bool {
         return a.number != null and a.currency != null;
     }
 };
@@ -112,13 +112,13 @@ pub const Config = struct {
         self.plugins.deinit();
     }
 
-    pub fn add_option(self: *Config, key: []const u8, value: []const u8) !void {
+    pub fn addOption(self: *Config, key: []const u8, value: []const u8) !void {
         if (!self.options.contains(key)) {
             try self.options.put(key, value);
         }
     }
 
-    pub fn add_plugin(self: *Config, plugin: []const u8) !void {
+    pub fn addPlugin(self: *Config, plugin: []const u8) !void {
         try self.plugins.append(plugin);
     }
 };
@@ -232,30 +232,30 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
     errdefer self.deinit(alloc);
     const name = try alloc.dupe(u8, "static");
     const owned_source = try alloc.dupeZ(u8, source);
-    const imports = try self.add_file(name, owned_source, true);
+    const imports = try self.addFile(name, owned_source, true);
     defer self.alloc.free(imports);
     return self;
 }
 
-pub fn load_file(alloc: Allocator, name: []const u8) !Self {
+pub fn loadFile(alloc: Allocator, name: []const u8) !Self {
     var self = Self.init(alloc);
-    try self.load_file_rec(name, true);
+    try self.loadFileRec(name, true);
     return self;
 }
 
-fn load_file_rec(self: *Self, name: []const u8, is_root: bool) !void {
+fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
     if (self.sources.get(name)) |_| return error.ImportCycle;
-    const imports = try self.load_single_file(name, is_root);
+    const imports = try self.loadSingleFile(name, is_root);
     defer self.alloc.free(imports);
     const dir = std.fs.path.dirname(name) orelse ".";
     for (imports) |import| {
         const joined = try std.fs.path.join(self.alloc, &.{ dir, import });
         defer self.alloc.free(joined);
-        try self.load_file_rec(joined, false);
+        try self.loadFileRec(joined, false);
     }
 }
 
-fn load_single_file(self: *Self, name: []const u8, is_root: bool) !Imports.Slice {
+fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Imports.Slice {
     const owned_name = try self.alloc.dupe(u8, name);
 
     const file = try std.fs.cwd().openFile(name, .{});
@@ -268,11 +268,11 @@ fn load_single_file(self: *Self, name: []const u8, is_root: bool) !Imports.Slice
     source[filesize] = 0;
 
     const null_terminated: [:0]u8 = source[0..filesize :0];
-    return try self.add_file(owned_name, null_terminated, is_root);
+    return try self.addFile(owned_name, null_terminated, is_root);
 }
 
 /// Takes ownership of name and source.
-fn add_file(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) !Imports.Slice {
+fn addFile(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) !Imports.Slice {
     try self.sources.put(name, source);
 
     var lexer = Lexer.init(source);
@@ -318,7 +318,7 @@ fn add_file(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) 
 }
 
 /// Assumes balanced transactions
-pub fn print_tree(self: *Self) !void {
+pub fn printTree(self: *Self) !void {
     var tree = try Tree.init(self.alloc);
     defer tree.deinit();
 
@@ -348,11 +348,11 @@ pub fn print_tree(self: *Self) !void {
     try tree.print();
 }
 
-pub fn sort_entries(self: *Self) void {
+pub fn sortEntries(self: *Self) void {
     std.sort.block(Entry, self.entries.items, {}, Entry.compare);
 }
 
-pub fn balance_transactions(self: *Self) !void {
+pub fn balanceTransactions(self: *Self) !void {
     var one: ?Number = Number.fromFloat(1);
     var solver = Solver.init(self.alloc);
     defer solver.deinit();

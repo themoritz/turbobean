@@ -14,12 +14,12 @@ pub fn main() !void {
     if (args.len < 2) return error.MissingArgument;
     const filename = args[1];
 
-    var data = try Data.load_file(allocator, filename);
+    var data = try Data.loadFile(allocator, filename);
     defer data.deinit(allocator);
 
-    try data.balance_transactions();
-    data.sort_entries();
-    try data.print_tree();
+    try data.balanceTransactions();
+    data.sortEntries();
+    try data.printTree();
 
     // const pretty = @import("pretty.zig");
     // for (0..10) |idx| {

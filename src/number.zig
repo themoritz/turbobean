@@ -44,6 +44,7 @@ pub const Number = struct {
                     buf[j] = b;
                     j += 1;
                     if (seen_dot) precision += 1;
+                    if (precision == MAX_PRECISION) break;
                 },
             }
         }
