@@ -38,4 +38,59 @@ pub const Inventory = struct {
     pub fn balance(self: *const Inventory, currency: []const u8) Number {
         return self.by_currency.get(currency) orelse Number.zero();
     }
+
+    pub fn isEmpty(self: *const Inventory) bool {
+        return self.by_currency.count() == 0;
+    }
+
+    pub fn format(self: *const Inventory, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        var iter = self.by_currency.iterator();
+        var first = true;
+        while (iter.next()) |entry| {
+            if (!first) {
+                try std.fmt.format(writer, ", ", .{});
+            }
+            first = false;
+            try std.fmt.format(writer, "{any} {s}", .{ entry.value_ptr.*, entry.key_ptr.* });
+        }
+    }
 };
+
+test "combine" {
+    var inv1 = Inventory.init(std.testing.allocator);
+    defer inv1.deinit();
+    var inv2 = Inventory.init(std.testing.allocator);
+    defer inv2.deinit();
+    try inv1.add(Number.fromInt(1), "USD");
+    try inv2.add(Number.fromInt(2), "USD");
+    try inv2.add(Number.fromInt(2), "EUR");
+    try inv1.combine(&inv2);
+    try std.testing.expectEqual(Number.fromInt(3), inv1.balance("USD"));
+    try std.testing.expectEqual(Number.fromInt(2), inv1.balance("EUR"));
+}
+
+test "empty" {
+    var inv = Inventory.init(std.testing.allocator);
+    defer inv.deinit();
+
+    try std.testing.expect(inv.isEmpty());
+    try inv.add(Number.fromInt(1), "USD");
+    try std.testing.expect(!inv.isEmpty());
+    try inv.add(Number.fromInt(-1), "USD");
+    try std.testing.expect(inv.isEmpty());
+}
+
+test "format" {
+    var inv = Inventory.init(std.testing.allocator);
+    defer inv.deinit();
+
+    try inv.add(Number.fromInt(1), "USD");
+    try inv.add(Number.fromInt(2), "EUR");
+
+    const result = try std.fmt.allocPrint(std.testing.allocator, "{any}", .{inv});
+    defer std.testing.allocator.free(result);
+
+    try std.testing.expectEqualStrings("2 EUR, 1 USD", result);
+}

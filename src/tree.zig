@@ -75,7 +75,7 @@ pub fn open(self: *Self, name: []const u8) !u32 {
     return current_index;
 }
 
-pub fn add_position(self: *Self, account: []const u8, number: Number, currency: []const u8) !void {
+pub fn addPosition(self: *Self, account: []const u8, number: Number, currency: []const u8) !void {
     const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
     try self.nodes.items[index].inventory.add(number, currency);
 }
@@ -86,7 +86,7 @@ pub fn inventory(self: *Self, account: []const u8) !*Inventory {
     return &self.nodes.items[index].inventory;
 }
 
-pub fn find_node(self: *Self, account: []const u8) ?u32 {
+pub fn findNode(self: *Self, account: []const u8) ?u32 {
     var result: ?u32 = null;
     for (self.nodes.items, 0..) |node, index| {
         if (std.mem.eql(u8, node.name, account)) {
@@ -98,20 +98,25 @@ pub fn find_node(self: *Self, account: []const u8) ?u32 {
 }
 
 /// Caller owns returned inventory.
-pub fn inventory_aggregated(self: *Self, alloc: Allocator, account: []const u8) !Inventory {
-    const start = self.node_by_name.get(account) orelse self.find_node(account) orelse return error.AccountDoesNotExist;
+pub fn inventoryAggregatedByAccount(self: *Self, alloc: Allocator, account: []const u8) !Inventory {
+    const node = self.node_by_name.get(account) orelse self.findNode(account) orelse return error.AccountDoesNotExist;
+    return self.inventoryAggregatedByNode(alloc, node);
+}
+
+/// Caller owns returned inventory.
+pub fn inventoryAggregatedByNode(self: *Self, alloc: Allocator, node: u32) !Inventory {
     var inv = Inventory.init(alloc);
     errdefer inv.deinit();
 
     var stack = std.ArrayList(u32).init(alloc);
     defer stack.deinit();
 
-    try stack.append(start);
+    try stack.append(node);
     while (stack.items.len > 0) {
         const index = stack.pop();
-        var node = self.nodes.items[index];
-        try inv.combine(&node.inventory);
-        for (node.children.items) |child| {
+        var n = self.nodes.items[index];
+        try inv.combine(&n.inventory);
+        for (n.children.items) |child| {
             try stack.append(child);
         }
     }
@@ -122,21 +127,44 @@ pub fn render(self: *Self) ![]const u8 {
     var buf = std.ArrayList(u8).init(self.alloc);
     defer buf.deinit();
 
+    const max_width = self.maxWidth();
+
     for (self.nodes.items[0].children.items) |child| {
-        try self.renderRec(&buf, child, 0);
+        try self.renderRec(&buf, child, max_width, 0);
     }
 
     return buf.toOwnedSlice();
 }
 
-fn renderRec(self: *Self, buf: *std.ArrayList(u8), node_index: u32, depth: u32) !void {
+fn renderRec(self: *Self, buf: *std.ArrayList(u8), node_index: u32, max_width: u32, depth: u32) !void {
     const node = self.nodes.items[node_index];
     try buf.appendNTimes(' ', 2 * depth);
     try buf.appendSlice(node.name);
+    var inv = try self.inventoryAggregatedByNode(self.alloc, node_index);
+    defer inv.deinit();
+    if (!inv.is_empty()) {
+        const name_width: u32 = @intCast(self.nodes.items[node_index].name.len);
+        const width: u32 = depth * 2 + name_width;
+        try buf.appendNTimes(' ', max_width - width + 1);
+        try std.fmt.format(buf.writer(), "{any}", .{inv});
+    }
     try buf.append('\n');
     for (node.children.items) |child| {
-        try self.renderRec(buf, child, depth + 1);
+        try self.renderRec(buf, child, max_width, depth + 1);
     }
+}
+
+fn maxWidth(self: *Self) u32 {
+    return self.maxWidthRec(0, 0) - 2;
+}
+
+fn maxWidthRec(self: *Self, node_index: u32, depth: u32) u32 {
+    const name_width: u32 = @intCast(self.nodes.items[node_index].name.len);
+    var width: u32 = depth * 2 + name_width;
+    for (self.nodes.items[node_index].children.items) |child| {
+        width = @max(width, self.maxWidthRec(child, depth + 1));
+    }
+    return width;
 }
 
 test "tree" {
@@ -172,12 +200,23 @@ test "aggregated" {
     _ = try tree.open("Assets:Currency:BoA");
     _ = try tree.open("Income:Dividends");
 
-    try tree.add_position("Assets:Currency:Chase", Number.fromInt(1000), "USD");
-    try tree.add_position("Assets:Currency:BoA", Number.fromInt(1000), "USD");
-    try tree.add_position("Income:Dividends", Number.fromInt(1000), "USD");
+    try tree.addPosition("Assets:Currency:Chase", Number.fromInt(1), "USD");
+    try tree.addPosition("Assets:Currency:BoA", Number.fromInt(1), "EUR");
+    try tree.addPosition("Assets:Currency:BoA", Number.fromInt(1), "USD");
+    try tree.addPosition("Income:Dividends", Number.fromInt(1), "USD");
 
-    var inv = try tree.inventory_aggregated(std.testing.allocator, "Assets");
-    defer inv.deinit();
+    const rendered = try tree.render();
+    defer std.testing.allocator.free(rendered);
 
-    try std.testing.expectEqual(Number.fromInt(2000), inv.balance("USD"));
+    const expected =
+        \\Assets      1 EUR, 2 USD
+        \\  Currency  1 EUR, 2 USD
+        \\    Chase   1 USD
+        \\    BoA     1 EUR, 1 USD
+        \\Income      1 USD
+        \\  Dividends 1 USD
+        \\
+    ;
+
+    try std.testing.expectEqualStrings(expected, rendered);
 }
