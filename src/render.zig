@@ -230,7 +230,7 @@ fn renderAmount(r: *Render, amount: Data.Amount) !void {
     if (amount.number) |number| {
         try r.format("{}", .{number});
     }
-    if (amount.is_complete()) {
+    if (amount.isComplete()) {
         try r.space();
     }
     if (amount.currency) |c| {

@@ -5,6 +5,7 @@ const Self = @This();
 
 tag: Tag,
 token: Lexer.Token,
+source_file: []const u8,
 expected: ?Lexer.Token.Tag,
 
 pub const Tag = enum {
@@ -19,6 +20,12 @@ pub const Tag = enum {
     meta_already_pushed,
     tag_not_pushed,
     meta_not_pushed,
+
+    tx_does_not_balance,
+    tx_no_solution,
+    tx_too_many_variables,
+    tx_division_by_zero,
+    tx_multiple_solutions,
 };
 
 pub fn print(e: Self, alloc: Allocator, source: [:0]const u8) !void {
@@ -69,6 +76,8 @@ pub fn dump(e: Self, alloc: Allocator, source: [:0]const u8) ![]const u8 {
         }
     }
 
+    try std.fmt.format(buffer.writer(), "{s}:\n", .{e.source_file});
+
     try std.fmt.format(buffer.writer(), "{d:>5} | {s}\n", .{ line_start + 1, source[line_pos..line_pos_end] });
     for (0..col_start + 8) |_| try buffer.append(' ');
     if (col_start == col_end) {
@@ -96,6 +105,7 @@ test "render" {
     try testLoc(2, 0,
         \\Hello Foo
     ,
+        \\test.bean:
         \\    1 | Hello Foo
         \\          \
         \\          Expected string, found number
@@ -105,6 +115,7 @@ test "render" {
     try testLoc(0, 1,
         \\Hello Foo
     ,
+        \\test.bean:
         \\    1 | Hello Foo
         \\        ^
         \\        Expected string, found number
@@ -114,6 +125,7 @@ test "render" {
     try testLoc(6, 3,
         \\Hello Foo
     ,
+        \\test.bean:
         \\    1 | Hello Foo
         \\              ^^^
         \\              Expected string, found number
@@ -122,7 +134,12 @@ test "render" {
 }
 
 fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !void {
-    const e = Self{ .tag = .expected_token, .token = Lexer.Token{ .tag = .number, .loc = source[start .. start + len] }, .expected = .string };
+    const e = Self{
+        .tag = .expected_token,
+        .token = Lexer.Token{ .tag = .number, .loc = source[start .. start + len] },
+        .source_file = "test.bean",
+        .expected = .string,
+    };
     const alloc = std.testing.allocator;
     const rendered = try e.dump(alloc, source);
     defer alloc.free(rendered);

@@ -27,6 +27,7 @@ alloc: Allocator,
 tokens: Data.Tokens,
 tok_i: usize,
 is_root: bool,
+source_file: []const u8,
 
 entries: *Data.Entries,
 config: *Data.Config,
@@ -82,6 +83,7 @@ fn failExpected(p: *Self, expected_token: Lexer.Token.Tag) error{ParseError} {
     return p.failMsg(.{
         .tag = .expected_token,
         .token = p.currentToken(),
+        .source_file = p.source_file,
         .expected = expected_token,
     });
 }
@@ -94,6 +96,7 @@ fn failAt(p: *Self, token: Lexer.Token, msg: ErrorDetails.Tag) error{ParseError}
     return p.failMsg(.{
         .tag = msg,
         .token = token,
+        .source_file = p.source_file,
         .expected = null,
     });
 }
@@ -175,11 +178,12 @@ fn parseDeclaration(p: *Self) !?void {
 
 /// Returns index of newly parsed entry in entries array.
 fn parseEntry(p: *Self) !?void {
-    const date = try p.parseDate() orelse return null;
+    const date_token = p.tryToken(.date) orelse return null;
+    const date = try Date.fromSlice(date_token.loc);
     var payload: Data.Entry.Payload = undefined;
     switch (p.currentToken().tag) {
         .keyword_txn, .flag, .asterisk, .hash => {
-            return try p.expectTransactionBody(date);
+            return try p.expectTransactionBody(date, date_token);
         },
         .keyword_open => {
             _ = p.advanceToken();
@@ -300,13 +304,15 @@ fn parseEntry(p: *Self) !?void {
 
     _ = try p.addEntry(Data.Entry{
         .date = date,
+        .main_token = date_token,
+        .source_file = p.source_file,
         .payload = payload,
         .tagslinks = tagslinks,
         .meta = meta,
     });
 }
 
-fn expectTransactionBody(p: *Self, date: Date) !void {
+fn expectTransactionBody(p: *Self, date: Date, date_token: Lexer.Token) !void {
     const flag = p.advanceToken();
 
     const s1 = p.tryTokenSlice(.string);
@@ -339,6 +345,8 @@ fn expectTransactionBody(p: *Self, date: Date) !void {
 
     _ = try p.addEntry(Data.Entry{
         .date = date,
+        .main_token = date_token,
+        .source_file = p.source_file,
         .payload = payload,
         .tagslinks = tagslinks,
         .meta = meta,

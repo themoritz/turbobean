@@ -18,17 +18,21 @@ pub fn main() !void {
     defer data.deinit(allocator);
 
     try data.balanceTransactions();
-    data.sortEntries();
-    try data.printTree();
+    if (data.errors.items.len > 0) {
+        try data.printErrors();
+    } else {
+        data.sortEntries();
+        try data.printTree();
 
-    // const pretty = @import("pretty.zig");
-    // for (0..10) |idx| {
-    //     const entry = data.entries.items[idx];
-    //     std.debug.print("{any}\n", .{entry.date});
-    //     try pretty.print(allocator, entry.payload, .{});
-    // }
+        // const pretty = @import("pretty.zig");
+        // for (0..10) |idx| {
+        //     const entry = data.entries.items[idx];
+        //     std.debug.print("{any}\n", .{entry.date});
+        //     try pretty.print(allocator, entry.payload, .{});
+        // }
 
-    std.debug.print("{d}\n", .{data.entries.items.len});
+        std.debug.print("{d}\n", .{data.entries.items.len});
+    }
     // try render.print(allocator, &data);
 }
 

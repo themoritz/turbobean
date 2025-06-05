@@ -6,6 +6,7 @@ const Number = @import("number.zig").Number;
 const Lexer = @import("lexer.zig").Lexer;
 const Solver = @import("solver.zig").Solver;
 const Tree = @import("tree.zig");
+const ErrorDetails = @import("ErrorDetails.zig");
 
 const Self = @This();
 
@@ -18,6 +19,8 @@ tagslinks: TagsLinks,
 meta: Meta,
 costcomps: CostComps,
 currencies: Currencies,
+
+errors: std.ArrayList(ErrorDetails),
 
 pub const Entries = std.ArrayList(Entry);
 pub const Postings = std.MultiArrayList(Posting);
@@ -69,6 +72,8 @@ pub const Price = struct {
 
 pub const Entry = struct {
     date: Date,
+    main_token: Lexer.Token,
+    source_file: []const u8,
     tagslinks: ?Range,
     meta: ?Range,
     payload: Payload,
@@ -224,6 +229,7 @@ pub fn init(alloc: Allocator) Self {
         .entries = Entries.init(alloc),
         .sources = sources,
         .config = Config.init(alloc),
+        .errors = std.ArrayList(ErrorDetails).init(alloc),
     };
 }
 
@@ -290,6 +296,7 @@ fn addFile(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) !
         .tokens = tokens,
         .tok_i = 0,
         .is_root = is_root,
+        .source_file = name,
         .entries = &self.entries,
         .postings = &self.postings,
         .tagslinks = &self.tagslinks,
@@ -378,11 +385,36 @@ pub fn balanceTransactions(self: *Self) !void {
 
                         try solver.addTriple(price, number, currency);
                     }
-                    try solver.solve();
+                    solver.solve() catch |err| {
+                        const tag: ErrorDetails.Tag = switch (err) {
+                            error.DoesNotBalance => .tx_does_not_balance,
+                            error.NoSolution => .tx_no_solution,
+                            error.TooManyVariables => .tx_too_many_variables,
+                            error.DivisionByZero => .tx_division_by_zero,
+                            error.MultipleSolutions => .tx_multiple_solutions,
+                            else => return err,
+                        };
+                        try self.addError(entry.main_token, entry.source_file, tag);
+                    };
                 }
             },
             else => continue,
         }
+    }
+}
+
+fn addError(self: *Self, token: Lexer.Token, source_file: []const u8, tag: ErrorDetails.Tag) !void {
+    try self.errors.append(ErrorDetails{
+        .tag = tag,
+        .token = token,
+        .source_file = source_file,
+        .expected = null,
+    });
+}
+
+pub fn printErrors(self: *Self) !void {
+    for (self.errors.items) |err| {
+        try err.print(self.alloc, self.sources.get(err.source_file).?);
     }
 }
 
@@ -401,4 +433,6 @@ pub fn deinit(self: *Self, alloc: Allocator) void {
     self.tagslinks.deinit(alloc);
     self.meta.deinit(alloc);
     self.config.deinit();
+
+    self.errors.deinit();
 }
