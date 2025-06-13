@@ -12,6 +12,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    exe.root_module.addImport("lsp", b.dependency("lsp_codegen", .{}).module("lsp"));
+
     b.installArtifact(exe);
 
     // Add a unit test step

@@ -6,7 +6,11 @@ const number = @import("number.zig");
 const Data = @import("data.zig");
 const parser = @import("parser.zig");
 
+const lsp = @import("lsp.zig");
+
 pub fn main() !void {
+    try lsp.main();
+
     const allocator = std.heap.page_allocator;
 
     const args = try std.process.argsAlloc(allocator);

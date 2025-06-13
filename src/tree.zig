@@ -108,12 +108,12 @@ pub fn inventoryAggregatedByNode(self: *Self, alloc: Allocator, node: u32) !Inve
     var inv = Inventory.init(alloc);
     errdefer inv.deinit();
 
-    var stack = std.ArrayList(u32).init(alloc);
+    var stack = std.ArrayList(usize).init(alloc);
     defer stack.deinit();
 
     try stack.append(node);
     while (stack.items.len > 0) {
-        const index = stack.pop();
+        const index = stack.pop().?;
         var n = self.nodes.items[index];
         try inv.combine(&n.inventory);
         for (n.children.items) |child| {

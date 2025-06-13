@@ -413,7 +413,11 @@ fn addError(self: *Self, token: Lexer.Token, source_file: []const u8, tag: Error
 }
 
 pub fn printErrors(self: *Self) !void {
-    for (self.errors.items) |err| {
+    for (self.errors.items, 0..) |err, i| {
+        if (i == 10) {
+            std.debug.print("... and {d} more errors\n", .{self.errors.items.len - 10});
+            break;
+        }
         try err.print(self.alloc, self.sources.get(err.source_file).?);
     }
 }
