@@ -137,7 +137,7 @@ fn expectToken(p: *Self, tag: Lexer.Token.Tag) Error!Lexer.Token {
 
 fn expectTokenSlice(p: *Self, tag: Lexer.Token.Tag) Error![]const u8 {
     const token = try p.expectToken(tag);
-    return token.loc;
+    return token.slice;
 }
 
 /// If successful, returns the token looked for and advances the
@@ -152,7 +152,7 @@ fn tryToken(p: *Self, tag: Lexer.Token.Tag) ?Lexer.Token {
 
 fn tryTokenSlice(p: *Self, tag: Lexer.Token.Tag) ?[]const u8 {
     const token = p.tryToken(tag) orelse return null;
-    return token.loc;
+    return token.slice;
 }
 
 pub fn parse(p: *Self) !void {
@@ -179,7 +179,7 @@ fn parseDeclaration(p: *Self) !?void {
 /// Returns index of newly parsed entry in entries array.
 fn parseEntry(p: *Self) !?void {
     const date_token = p.tryToken(.date) orelse return null;
-    const date = try Date.fromSlice(date_token.loc);
+    const date = try Date.fromSlice(date_token.slice);
     var payload: Data.Entry.Payload = undefined;
     switch (p.currentToken().tag) {
         .keyword_txn, .flag, .asterisk, .hash => {
@@ -191,15 +191,15 @@ fn parseEntry(p: *Self) !?void {
 
             const currency_top = p.currencies.items.len;
             if (p.tryToken(.currency)) |cur| {
-                _ = try p.addCurrency(cur.loc);
+                _ = try p.addCurrency(cur.slice);
                 while (true) {
                     _ = p.tryToken(.comma) orelse break;
                     const c = try p.expectToken(.currency);
-                    _ = try p.addCurrency(c.loc);
+                    _ = try p.addCurrency(c.slice);
                 }
             }
             const currencies = Data.Range.create(currency_top, p.currencies.items.len);
-            const booking = if (p.tryToken(.string)) |b| b.loc else null;
+            const booking = if (p.tryToken(.string)) |b| b.slice else null;
 
             payload = .{ .open = .{
                 .account = account,
@@ -365,32 +365,32 @@ fn parseDirective(p: *Self) !?void {
         .keyword_pushtag => {
             _ = p.advanceToken();
             const tag = try p.expectToken(.tag);
-            if (p.active_tags.contains(tag.loc)) {
+            if (p.active_tags.contains(tag.slice)) {
                 return p.failAt(tag, .tag_already_pushed);
             } else {
-                try p.active_tags.put(tag.loc, {});
+                try p.active_tags.put(tag.slice, {});
             }
         },
         .keyword_poptag => {
             _ = p.advanceToken();
             const tag = try p.expectToken(.tag);
-            if (!p.active_tags.remove(tag.loc)) {
+            if (!p.active_tags.remove(tag.slice)) {
                 return p.failAt(tag, .tag_not_pushed);
             }
         },
         .keyword_pushmeta => {
             _ = p.advanceToken();
             const kv = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
-            if (p.active_meta.contains(kv.key.loc)) {
+            if (p.active_meta.contains(kv.key.slice)) {
                 return p.failAt(kv.key, .meta_already_pushed);
             } else {
-                try p.active_meta.put(kv.key.loc, kv.value.loc);
+                try p.active_meta.put(kv.key.slice, kv.value.slice);
             }
         },
         .keyword_popmeta => {
             _ = p.advanceToken();
             const kv = try p.parseKeyValue() orelse return p.fail(.expected_key_value);
-            if (!p.active_meta.remove(kv.key.loc)) {
+            if (!p.active_meta.remove(kv.key.slice)) {
                 return p.failAt(kv.key, .meta_not_pushed);
             }
         },
@@ -399,20 +399,20 @@ fn parseDirective(p: *Self) !?void {
             const key = try p.expectToken(.string);
             const value = try p.expectToken(.string);
             if (p.is_root) {
-                try p.config.addOption(key.loc, value.loc);
+                try p.config.addOption(key.slice, value.slice);
             }
             // TODO: Else warn
         },
         .keyword_include => {
             _ = p.advanceToken();
             const file = try p.expectToken(.string);
-            try p.imports.append(file.loc[1 .. file.loc.len - 1]);
+            try p.imports.append(file.slice[1 .. file.slice.len - 1]);
         },
         .keyword_plugin => {
             _ = p.advanceToken();
             const plugin = try p.expectToken(.string);
             if (p.is_root) {
-                try p.config.addPlugin(plugin.loc);
+                try p.config.addPlugin(plugin.slice);
             }
             // TODO: Else warn
         },
@@ -432,8 +432,8 @@ fn parseMeta(p: *Self, add_from_stack: bool) !?Data.Range {
         var meta_iter = p.active_meta.iterator();
         while (meta_iter.next()) |kv| {
             _ = try p.addKeyValue(Data.KeyValue{
-                .key = Lexer.Token{ .loc = kv.key_ptr.*, .tag = .key },
-                .value = Lexer.Token{ .loc = kv.value_ptr.*, .tag = .string },
+                .key = Lexer.Token{ .slice = kv.key_ptr.*, .tag = .key, .line = 0, .start_col = 0, .end_col = 0 },
+                .value = Lexer.Token{ .slice = kv.value_ptr.*, .tag = .string, .line = 0, .start_col = 0, .end_col = 0 },
             });
         }
     }
@@ -501,7 +501,7 @@ fn parseCost(p: *Self) !?Data.Cost {
                 _ = try p.addCostComp(.{ .date = date });
             },
             .string => {
-                const label = p.advanceToken().loc;
+                const label = p.advanceToken().slice;
                 _ = try p.addCostComp(.{ .label = label });
             },
             else => {
@@ -588,9 +588,9 @@ fn parseTagsLinks(p: *Self) !?Data.Range {
     const tagslinks_top = p.tagslinks.len;
     while (true) {
         if (p.tryToken(.tag)) |tag| {
-            _ = try p.addTagLink(Data.TagLink{ .kind = .tag, .slice = tag.loc });
+            _ = try p.addTagLink(Data.TagLink{ .kind = .tag, .slice = tag.slice });
         } else if (p.tryToken(.link)) |link| {
-            _ = try p.addTagLink(Data.TagLink{ .kind = .link, .slice = link.loc });
+            _ = try p.addTagLink(Data.TagLink{ .kind = .link, .slice = link.slice });
         } else break;
     }
 
@@ -626,7 +626,7 @@ fn eatWhitespace(p: *Self) void {
 
 fn parseDate(p: *Self) !?Date {
     const token = p.tryToken(.date) orelse return null;
-    return try Date.fromSlice(token.loc);
+    return try Date.fromSlice(token.slice);
 }
 
 fn parseNumberExpr(p: *Self) !?Number {
@@ -648,7 +648,7 @@ fn expectNumberExpr(p: *Self) !Number {
 fn parseNumber(p: *Self) !?Number {
     const token = p.currentToken();
     if (token.tag == .number) {
-        const number = Number.fromSlice(token.loc) catch return p.fail(.invalid_number);
+        const number = Number.fromSlice(token.slice) catch return p.fail(.invalid_number);
         _ = p.advanceToken();
         return number;
     } else return null;

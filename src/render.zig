@@ -65,7 +65,7 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
     try r.format("{} ", .{entry.date});
     switch (entry.payload) {
         .transaction => |tx| {
-            try r.slice(tx.flag.loc);
+            try r.slice(tx.flag.slice);
             if (tx.payee) |payee| {
                 try r.space();
                 try r.slice(payee);
@@ -174,7 +174,7 @@ fn renderPosting(r: *Render, posting: usize) !void {
     try r.indent();
 
     if (r.data.postings.items(.flag)[posting]) |flag| {
-        try r.slice(flag.loc);
+        try r.slice(flag.slice);
         try r.space();
     }
 
@@ -211,9 +211,9 @@ fn renderPosting(r: *Render, posting: usize) !void {
 }
 
 fn renderKeyValue(r: *Render, i: usize) !void {
-    try r.slice(r.data.meta.items(.key)[i].loc);
+    try r.slice(r.data.meta.items(.key)[i].slice);
     try r.slice(": ");
-    try r.slice(r.data.meta.items(.value)[i].loc);
+    try r.slice(r.data.meta.items(.value)[i].slice);
 }
 
 fn renderMeta(r: *Render, range: Data.Range, num_indent: usize) !void {

@@ -3,12 +3,22 @@ const unicode = std.unicode;
 
 pub const Lexer = struct {
     buffer: [:0]const u8,
-    index: usize,
-    at_line_start: bool,
+    cursor: Cursor,
+
+    pub const Cursor = struct {
+        pos: usize,
+        line: u32,
+        /// Number of character columns from the start of the line (takes
+        /// unicode into account, so not bytes!).
+        col: u16,
+    };
 
     pub const Token = struct {
         tag: Tag,
-        loc: []const u8,
+        slice: []const u8,
+        line: u32,
+        start_col: u16,
+        end_col: u16,
 
         pub const keywords = std.StaticStringMap(Tag).initComptime(.{
             .{ "txn", .keyword_txn },
@@ -110,8 +120,11 @@ pub const Lexer = struct {
     pub fn init(buffer: [:0]const u8) Lexer {
         return .{
             .buffer = buffer,
-            .index = 0,
-            .at_line_start = true,
+            .cursor = Cursor{
+                .pos = 0,
+                .line = 0,
+                .col = 0,
+            },
         };
     }
 
@@ -151,7 +164,7 @@ pub const Lexer = struct {
             return null;
         };
         // Make sure we have enough bytes in the buffer
-        if (self.index + length > self.buffer.len) {
+        if (self.cursor.pos + length > self.buffer.len) {
             return null;
         }
         switch (length) {
@@ -162,60 +175,70 @@ pub const Lexer = struct {
             },
             2 => {
                 // Decode and consume
-                const bytes = .{ self.buffer[self.index], self.buffer[self.index + 1] };
+                const bytes = .{ self.buffer[self.cursor.pos], self.buffer[self.cursor.pos + 1] };
                 _ = unicode.utf8Decode2(bytes) catch {
                     return null;
                 };
             },
             3 => {
                 // Decode and consume
-                const bytes = .{ self.buffer[self.index], self.buffer[self.index + 1], self.buffer[self.index + 2] };
+                const bytes = .{ self.buffer[self.cursor.pos], self.buffer[self.cursor.pos + 1], self.buffer[self.cursor.pos + 2] };
                 _ = unicode.utf8Decode3(bytes) catch {
                     return null;
                 };
             },
             4 => {
                 // Decode and consume
-                const bytes = .{ self.buffer[self.index], self.buffer[self.index + 1], self.buffer[self.index + 2], self.buffer[self.index + 3] };
+                const bytes = .{ self.buffer[self.cursor.pos], self.buffer[self.cursor.pos + 1], self.buffer[self.cursor.pos + 2], self.buffer[self.cursor.pos + 3] };
                 _ = unicode.utf8Decode4(bytes) catch {
                     return null;
                 };
             },
             else => unreachable,
         }
-        self.index += length;
-        self.at_line_start = false;
+        self.cursor.pos += length;
+        self.cursor.col += 1; // Since we only consumed one unicode char.
         return length;
     }
 
     /// Consume the current character. If it's a newline, we're at the start of
     /// the line for the next character. Otherwise, we're not.
     inline fn consume(self: *Lexer) void {
-        switch (self.buffer[self.index]) {
-            '\n' => self.at_line_start = true,
-            else => self.at_line_start = false,
+        switch (self.buffer[self.cursor.pos]) {
+            '\n' => {
+                self.cursor.line += 1;
+                self.cursor.col = 0;
+            },
+            else => self.cursor.col += 1,
         }
 
-        self.index += 1;
+        self.cursor.pos += 1;
     }
 
     /// Return character we're currently looking at.
     inline fn current(self: *Lexer) u8 {
-        return self.buffer[self.index];
+        return self.buffer[self.cursor.pos];
+    }
+
+    inline fn atLineStart(self: *Lexer) bool {
+        return self.cursor.col == 0;
     }
 
     pub fn next(self: *Lexer) Token {
         var result: Token = .{
             .tag = undefined,
-            .loc = undefined,
+            .slice = undefined,
+            .line = undefined,
+            .start_col = undefined,
+            .end_col = undefined,
         };
-        var start = self.index;
+        var start = self.cursor;
 
         state: switch (State.start) {
             .start => {
                 // Lines starting with an asterisk, a colon, a hash or a flag
                 // character are ignored.
-                if (self.at_line_start) {
+                if (self.atLineStart()) {
                     switch (self.current()) {
                         '*', ':', '#', '!', '&', '?', '%', 'P', 'S', 'T', 'C', 'U', 'R', 'M' => {
                             continue :state .comment;
@@ -226,7 +249,7 @@ pub const Lexer = struct {
 
                 switch (self.current()) {
                     0 => {
-                        if (self.index == self.buffer.len) {
+                        if (self.cursor.pos == self.buffer.len) {
                             result.tag = .eof;
                         } else {
                             continue :state .invalid;
@@ -237,12 +260,12 @@ pub const Lexer = struct {
                         result.tag = .eol;
                     },
                     ' ', '\t' => {
-                        if (self.at_line_start) {
+                        if (self.atLineStart()) {
                             self.consume();
                             continue :state .indent;
                         } else {
                             self.consume();
-                            start = self.index;
+                            start = self.cursor;
                             continue :state .start;
                         }
                     },
@@ -359,7 +382,7 @@ pub const Lexer = struct {
 
             .invalid => {
                 switch (self.current()) {
-                    0 => if (self.index == self.buffer.len) {
+                    0 => if (self.cursor.pos == self.buffer.len) {
                         result.tag = .invalid;
                     } else {
                         self.consume();
@@ -382,12 +405,12 @@ pub const Lexer = struct {
                     continue :state .indent;
                 },
                 '\n' => {
-                    start = self.index;
+                    start = self.cursor;
                     self.consume();
                     result.tag = .eol;
                 },
                 0 => {
-                    if (self.index == self.buffer.len) {
+                    if (self.cursor.pos == self.buffer.len) {
                         result.tag = .eof;
                     } else {
                         continue :state .invalid;
@@ -425,7 +448,7 @@ pub const Lexer = struct {
                 '-', '/' => {
                     self.consume();
                     // Make sure we're at least 5th digit
-                    if (self.index - start >= 5) {
+                    if (self.cursor.pos - start.pos >= 5) {
                         result.tag = .date;
                         continue :state .date;
                     } else {
@@ -565,12 +588,12 @@ pub const Lexer = struct {
                 },
                 else => {
                     // Check for TRUE, FALSE, NULL here since they look like currency symbols.
-                    const literal = self.buffer[start..self.index];
+                    const literal = self.buffer[start.pos..self.cursor.pos];
                     if (Token.getLiteral(literal)) |tag| {
                         result.tag = tag;
                     }
                     // Check at least 2 and most 24 (22 middle + start + end) chars
-                    const length = self.index - start;
+                    const length = self.cursor.pos - start.pos;
                     if (length < 2 or length > 24) {
                         continue :state .invalid;
                     }
@@ -639,7 +662,7 @@ pub const Lexer = struct {
                     continue :state .keyword;
                 },
                 0, ' ', '\n' => {
-                    const keyword = self.buffer[start..self.index];
+                    const keyword = self.buffer[start.pos..self.cursor.pos];
                     if (Token.getKeyword(keyword)) |tag| {
                         result.tag = tag;
                     } else {
@@ -656,18 +679,21 @@ pub const Lexer = struct {
             .comment => switch (self.current()) {
                 0 => continue :state .start,
                 '\n' => {
-                    start = self.index;
+                    start = self.cursor;
                     continue :state .start;
                 },
                 else => {
                     self.consume();
-                    start = self.index;
+                    start = self.cursor;
                     continue :state .comment;
                 },
             },
         }
 
-        result.loc = self.buffer[start..self.index];
+        result.slice = self.buffer[start.pos..self.cursor.pos];
+        result.line = self.cursor.line;
+        result.start_col = start.col;
+        result.end_col = self.cursor.col;
         return result;
     }
 };
@@ -1036,9 +1062,9 @@ fn testLex(source: [:0]const u8, expected_tags: []const Lexer.Token.Tag) !void {
     }
     const last_token = lexer.next();
     try std.testing.expectEqual(last_token.tag, .eof);
-    const first_index = @intFromPtr(last_token.loc.ptr) - @intFromPtr(source.ptr);
+    const first_index = @intFromPtr(last_token.slice.ptr) - @intFromPtr(source.ptr);
     try std.testing.expectEqual(source.len, first_index);
-    try std.testing.expectEqual(source.len, first_index + last_token.loc.len);
+    try std.testing.expectEqual(source.len, first_index + last_token.slice.len);
 }
 
 fn testValid(source: [:0]const u8) !void {

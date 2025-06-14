@@ -39,7 +39,7 @@ pub fn dump(e: Self, alloc: Allocator, source: [:0]const u8) ![]const u8 {
     defer buffer.deinit();
 
     // Calculate line and col from token.loc
-    const loc = e.token.loc;
+    const loc = e.token.slice;
     var line_start: u32 = 0;
     var col_start: u32 = 0;
     const start = @intFromPtr(loc.ptr) - @intFromPtr(source.ptr);
@@ -136,7 +136,7 @@ test "render" {
 fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !void {
     const e = Self{
         .tag = .expected_token,
-        .token = Lexer.Token{ .tag = .number, .loc = source[start .. start + len] },
+        .token = Lexer.Token{ .tag = .number, .slice = source[start .. start + len], .line = 0, .start_col = @intCast(start), .end_col = @intCast(start + len) },
         .source_file = "test.bean",
         .expected = .string,
     };
