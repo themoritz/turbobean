@@ -9,14 +9,17 @@ const parser = @import("parser.zig");
 const lsp = @import("lsp.zig");
 
 pub fn main() !void {
-    try lsp.main();
-
     const allocator = std.heap.page_allocator;
 
     const args = try std.process.argsAlloc(allocator);
     defer allocator.free(args);
     if (args.len < 2) return error.MissingArgument;
     const filename = args[1];
+
+    if (std.mem.eql(u8, filename, "--lsp")) {
+        try lsp.loop();
+        return;
+    }
 
     var data = try Data.loadFile(allocator, filename);
     defer data.deinit(allocator);
