@@ -7,15 +7,20 @@ const Self = @This();
 
 alloc: Allocator,
 files: std.ArrayList(Data),
-files_by_name: std.StringHashMap(usize), // Index into files
-sorted_entries: std.ArrayList(*Data.Entry), // Pointers into files
+files_by_name: std.StringHashMap(usize),
+sorted_entries: std.ArrayList(SortedEntry),
+
+const SortedEntry = struct {
+    file: u8,
+    entry: u32,
+};
 
 pub fn load(alloc: Allocator, name: []const u8) !Self {
     var self = Self{
         .alloc = alloc,
         .files = std.ArrayList(Data).init(alloc),
         .files_by_name = std.StringHashMap(usize).init(alloc),
-        .sorted_entries = std.ArrayList(*Data.Entry).init(alloc),
+        .sorted_entries = std.ArrayList(SortedEntry).init(alloc),
     };
     try self.loadFileRec(name, true);
     return self;
@@ -85,12 +90,21 @@ pub fn printErrors(self: *Self) !bool {
 
 pub fn sortEntries(self: *Self) !void {
     self.sorted_entries.clearRetainingCapacity();
-    for (self.files.items) |*data| {
-        for (data.entries.items) |*entry| {
-            try self.sorted_entries.append(entry);
+    for (self.files.items, 0..) |data, f| {
+        for (0..data.entries.items.len) |e| {
+            try self.sorted_entries.append(SortedEntry{
+                .file = @intCast(f),
+                .entry = @intCast(e),
+            });
         }
     }
-    // std.sort.block(Data.Entry, self.entries.items, {}, Data.Entry.compare);
+    std.sort.block(SortedEntry, self.sorted_entries.items, self, lessThanFn);
+}
+
+fn lessThanFn(self: *Self, lhs: SortedEntry, rhs: SortedEntry) bool {
+    const entry_lhs = self.files.items[lhs.file].entries.items[lhs.entry];
+    const entry_rhs = self.files.items[rhs.file].entries.items[rhs.entry];
+    return Data.Entry.compare({}, entry_lhs, entry_rhs);
 }
 
 /// Assumes balanced transactions
@@ -98,28 +112,30 @@ pub fn printTree(self: *Self) !void {
     var tree = try Tree.init(self.alloc);
     defer tree.deinit();
 
-    // for (self.sorted_entries.items) |entry| {
-    //     switch (entry.payload) {
-    //         .open => |open| {
-    //             _ = tree.open(open.account) catch |err| switch (err) {
-    //                 error.AccountExists => {},
-    //                 else => return err,
-    //             };
-    //         },
-    //         .transaction => |tx| {
-    //             if (tx.postings) |postings| {
-    //                 for (postings.start..postings.end) |i| {
-    //                     try tree.addPosition(
-    //                         self.postings.items(.account)[i],
-    //                         self.postings.items(.amount)[i].number.?,
-    //                         self.postings.items(.amount)[i].currency.?,
-    //                     );
-    //                 }
-    //             }
-    //         },
-    //         else => {},
-    //     }
-    // }
+    for (self.sorted_entries.items) |sorted_entry| {
+        const data = self.files.items[sorted_entry.file];
+        const entry = data.entries.items[sorted_entry.entry];
+        switch (entry.payload) {
+            .open => |open| {
+                _ = tree.open(open.account) catch |err| switch (err) {
+                    error.AccountExists => {},
+                    else => return err,
+                };
+            },
+            .transaction => |tx| {
+                if (tx.postings) |postings| {
+                    for (postings.start..postings.end) |i| {
+                        try tree.addPosition(
+                            data.postings.items(.account)[i],
+                            data.postings.items(.amount)[i].number.?,
+                            data.postings.items(.amount)[i].currency.?,
+                        );
+                    }
+                }
+            },
+            else => {},
+        }
+    }
 
     try tree.print();
 }

@@ -317,7 +317,7 @@ pub fn balanceTransactions(self: *Self) !void {
                             error.MultipleSolutions => .tx_multiple_solutions,
                             else => return err,
                         };
-                        try self.addError(entry.main_token, entry.source_file, tag);
+                        try self.addError(entry.main_token, "", tag);
                     };
                 }
             },
