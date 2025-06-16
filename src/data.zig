@@ -1,3 +1,4 @@
+//! Data for one file.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Date = @import("date.zig").Date;
@@ -5,13 +6,12 @@ const Parser = @import("parser.zig");
 const Number = @import("number.zig").Number;
 const Lexer = @import("lexer.zig").Lexer;
 const Solver = @import("solver.zig").Solver;
-const Tree = @import("tree.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
 
 const Self = @This();
 
 alloc: Allocator,
-sources: std.StringHashMap([:0]const u8),
+source: [:0]const u8,
 entries: Entries,
 config: Config,
 postings: Postings,
@@ -73,7 +73,6 @@ pub const Price = struct {
 pub const Entry = struct {
     date: Date,
     main_token: Lexer.Token,
-    source_file: []const u8,
     tagslinks: ?Range,
     meta: ?Range,
     payload: Payload,
@@ -217,9 +216,16 @@ pub const KeyValue = struct {
     value: Lexer.Token,
 };
 
-pub fn init(alloc: Allocator) Self {
-    const sources = std.StringHashMap([:0]const u8).init(alloc);
-    return Self{
+pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
+    const owned_source = try alloc.dupeZ(u8, source);
+    const self, const imports = try loadSource(alloc, owned_source, true);
+    defer self.alloc.free(imports);
+    return self;
+}
+
+/// Takes ownership of source.
+pub fn loadSource(alloc: Allocator, source: [:0]const u8, is_root: bool) !struct { Self, Imports.Slice } {
+    var self = Self{
         .alloc = alloc,
         .postings = .{},
         .tagslinks = .{},
@@ -227,59 +233,11 @@ pub fn init(alloc: Allocator) Self {
         .costcomps = CostComps.init(alloc),
         .currencies = Currencies.init(alloc),
         .entries = Entries.init(alloc),
-        .sources = sources,
+        .source = source,
         .config = Config.init(alloc),
         .errors = std.ArrayList(ErrorDetails).init(alloc),
     };
-}
-
-pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
-    var self = Self.init(alloc);
-    errdefer self.deinit(alloc);
-    const name = try alloc.dupe(u8, "static");
-    const owned_source = try alloc.dupeZ(u8, source);
-    const imports = try self.addFile(name, owned_source, true);
-    defer self.alloc.free(imports);
-    return self;
-}
-
-pub fn loadFile(alloc: Allocator, name: []const u8) !Self {
-    var self = Self.init(alloc);
-    try self.loadFileRec(name, true);
-    return self;
-}
-
-fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
-    if (self.sources.get(name)) |_| return error.ImportCycle;
-    const imports = try self.loadSingleFile(name, is_root);
-    defer self.alloc.free(imports);
-    const dir = std.fs.path.dirname(name) orelse ".";
-    for (imports) |import| {
-        const joined = try std.fs.path.join(self.alloc, &.{ dir, import });
-        defer self.alloc.free(joined);
-        try self.loadFileRec(joined, false);
-    }
-}
-
-fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Imports.Slice {
-    const owned_name = try self.alloc.dupe(u8, name);
-
-    const file = try std.fs.cwd().openFile(name, .{});
-    defer file.close();
-
-    const filesize = try file.getEndPos();
-    const source = try self.alloc.alloc(u8, filesize + 1);
-
-    _ = try file.readAll(source[0..filesize]);
-    source[filesize] = 0;
-
-    const null_terminated: [:0]u8 = source[0..filesize :0];
-    return try self.addFile(owned_name, null_terminated, is_root);
-}
-
-/// Takes ownership of name and source.
-fn addFile(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) !Imports.Slice {
-    try self.sources.put(name, source);
+    errdefer self.deinit();
 
     var lexer = Lexer.init(source);
     var tokens = Tokens.init(self.alloc);
@@ -296,7 +254,7 @@ fn addFile(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) !
         .tokens = tokens,
         .tok_i = 0,
         .is_root = is_root,
-        .source_file = name,
+        .source_file = source,
         .entries = &self.entries,
         .postings = &self.postings,
         .tagslinks = &self.tagslinks,
@@ -321,42 +279,7 @@ fn addFile(self: *Self, name: []const u8, source: [:0]const u8, is_root: bool) !
         else => return err,
     };
 
-    return parser.imports.toOwnedSlice();
-}
-
-/// Assumes balanced transactions
-pub fn printTree(self: *Self) !void {
-    var tree = try Tree.init(self.alloc);
-    defer tree.deinit();
-
-    for (self.entries.items) |entry| {
-        switch (entry.payload) {
-            .open => |open| {
-                _ = tree.open(open.account) catch |err| switch (err) {
-                    error.AccountExists => {},
-                    else => return err,
-                };
-            },
-            .transaction => |tx| {
-                if (tx.postings) |postings| {
-                    for (postings.start..postings.end) |i| {
-                        try tree.addPosition(
-                            self.postings.items(.account)[i],
-                            self.postings.items(.amount)[i].number.?,
-                            self.postings.items(.amount)[i].currency.?,
-                        );
-                    }
-                }
-            },
-            else => {},
-        }
-    }
-
-    try tree.print();
-}
-
-pub fn sortEntries(self: *Self) void {
-    std.sort.block(Entry, self.entries.items, {}, Entry.compare);
+    return .{ self, try parser.imports.toOwnedSlice() };
 }
 
 pub fn balanceTransactions(self: *Self) !void {
@@ -412,30 +335,29 @@ fn addError(self: *Self, token: Lexer.Token, source_file: []const u8, tag: Error
     });
 }
 
-pub fn printErrors(self: *Self) !void {
+/// Returns true if errors were printed.
+pub fn printErrors(self: *Self) !bool {
+    var errors_printed = false;
     for (self.errors.items, 0..) |err, i| {
         if (i == 10) {
             std.debug.print("... and {d} more errors\n", .{self.errors.items.len - 10});
             break;
         }
-        try err.print(self.alloc, self.sources.get(err.source_file).?);
+        try err.print(self.alloc, self.source);
+        errors_printed = true;
     }
+    return errors_printed;
 }
 
-pub fn deinit(self: *Self, alloc: Allocator) void {
-    var iter = self.sources.iterator();
-    while (iter.next()) |kv| {
-        alloc.free(kv.key_ptr.*);
-        alloc.free(kv.value_ptr.*);
-    }
-    self.sources.deinit();
+pub fn deinit(self: *Self) void {
+    self.alloc.free(self.source);
 
     self.entries.deinit();
     self.costcomps.deinit();
     self.currencies.deinit();
-    self.postings.deinit(alloc);
-    self.tagslinks.deinit(alloc);
-    self.meta.deinit(alloc);
+    self.postings.deinit(self.alloc);
+    self.tagslinks.deinit(self.alloc);
+    self.meta.deinit(self.alloc);
     self.config.deinit();
 
     self.errors.deinit();

@@ -305,7 +305,6 @@ fn parseEntry(p: *Self) !?void {
     _ = try p.addEntry(Data.Entry{
         .date = date,
         .main_token = date_token,
-        .source_file = p.source_file,
         .payload = payload,
         .tagslinks = tagslinks,
         .meta = meta,
@@ -346,7 +345,6 @@ fn expectTransactionBody(p: *Self, date: Date, date_token: Lexer.Token) !void {
     _ = try p.addEntry(Data.Entry{
         .date = date,
         .main_token = date_token,
-        .source_file = p.source_file,
         .payload = payload,
         .tagslinks = tagslinks,
         .meta = meta,
@@ -741,7 +739,7 @@ test "pushpop" {
     ;
 
     var data = try Data.parse(std.testing.allocator, source);
-    defer data.deinit(std.testing.allocator);
+    defer data.deinit();
 
     // Tags
     try expectEqual(@as(usize, 2), data.entries.items[0].tagslinks.?.len());
@@ -950,7 +948,7 @@ const EntryTag = @typeInfo(Data.Entry.Payload).@"union".tag_type.?;
 
 fn testEntries(source: [:0]const u8, expected: []const EntryTag) !void {
     var data = try Data.parse(std.testing.allocator, source);
-    defer data.deinit(std.testing.allocator);
+    defer data.deinit();
 
     for (expected, 0..) |tag, i| {
         const entry = data.entries.items[i];
@@ -960,14 +958,14 @@ fn testEntries(source: [:0]const u8, expected: []const EntryTag) !void {
 
 fn testParse(source: [:0]const u8) !void {
     var data = try Data.parse(std.testing.allocator, source);
-    defer data.deinit(std.testing.allocator);
+    defer data.deinit();
 }
 
 fn testRoundtrip(source: [:0]const u8) !void {
     const alloc = std.testing.allocator;
 
     var data = try Data.parse(alloc, source);
-    defer data.deinit(alloc);
+    defer data.deinit();
 
     // const pretty = @import("pretty.zig");
     // try pretty.print(alloc, data.entries, .{});
