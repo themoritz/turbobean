@@ -15,9 +15,17 @@ files_by_uri: std.StringHashMap(usize),
 sorted_entries: std.ArrayList(SortedEntry),
 errors: std.ArrayList(ErrorDetails),
 
+// LSP specific caches
+accounts: std.StringHashMap(AccountPos),
+
 const SortedEntry = struct {
     file: u8,
     entry: u32,
+};
+
+const AccountPos = struct {
+    file: u32,
+    line: u32,
 };
 
 /// Load a project from a root file relative to the CWD.
@@ -29,6 +37,8 @@ pub fn load(alloc: Allocator, name: []const u8) !Self {
         .files_by_uri = std.StringHashMap(usize).init(alloc),
         .sorted_entries = std.ArrayList(SortedEntry).init(alloc),
         .errors = std.ArrayList(ErrorDetails).init(alloc),
+
+        .accounts = std.StringHashMap(AccountPos).init(alloc),
     };
     errdefer self.deinit();
     try self.loadFileRec(name, true);
@@ -47,6 +57,8 @@ pub fn deinit(self: *Self) void {
 
     self.sorted_entries.deinit();
     self.errors.deinit();
+
+    self.accounts.deinit();
 }
 
 fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
@@ -157,6 +169,24 @@ pub fn pipeline(self: *Self) !void {
     self.errors.clearRetainingCapacity();
     try self.sortEntries();
     // TODO: Perform all sorts of checks.
+    try self.refreshLspCache();
+}
+
+pub fn refreshLspCache(self: *Self) !void {
+    self.accounts.clearRetainingCapacity();
+    for (self.files.items, 0..) |data, f| {
+        for (data.entries.items) |entry| {
+            switch (entry.payload) {
+                .open => |open| {
+                    try self.accounts.put(open.account, .{
+                        .file = @intCast(f),
+                        .line = entry.main_token.line,
+                    });
+                },
+                else => {},
+            }
+        }
+    }
 }
 
 pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !void {
