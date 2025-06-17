@@ -1,30 +1,37 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
 const lsp = @import("lsp");
+const Project = @import("project.zig");
+const Config = @import("Config.zig");
 
-pub const std_options: std.Options = .{
-    .log_level = std.log.default_level,
+const LspState = struct {
+    project: Project = undefined,
+    initialized: bool = false,
+
+    pub fn initialize(self: *LspState, alloc: Allocator, root: []const u8) !void {
+        self.project = try Project.load(alloc, root);
+        self.initialized = true;
+    }
+
+    pub fn deinit(self: *LspState) void {
+        if (self.initialized) {
+            self.project.deinit();
+        }
+    }
 };
 
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-
-pub fn loop() !void {
-    const gpa, const is_debug = switch (builtin.mode) {
-        .Debug, .ReleaseSafe => .{ debug_allocator.allocator(), true },
-        .ReleaseFast, .ReleaseSmall => .{ std.heap.smp_allocator, false },
-    };
-    defer if (is_debug) {
-        _ = debug_allocator.deinit();
-    };
-
+pub fn loop(alloc: std.mem.Allocator) !void {
     var transport: lsp.TransportOverStdio = .init(std.io.getStdIn(), std.io.getStdOut());
+    var state: LspState = .{};
+    defer state.deinit();
 
     while (true) {
-        const json_message = try transport.readJsonMessage(gpa);
-        defer gpa.free(json_message);
+        const json_message = try transport.readJsonMessage(alloc);
+        defer alloc.free(json_message);
 
         const parsed_message: std.json.Parsed(Message) = try Message.parseFromSlice(
-            gpa,
+            alloc,
             json_message,
             .{ .ignore_unknown_fields = true },
         );
@@ -39,48 +46,100 @@ pub fn loop() !void {
         switch (parsed_message.value) {
             .request => |request| switch (request.params) {
                 .initialize => |params| {
-                    _ = params.capabilities;
-                    try transport.any().writeResponse(
-                        gpa,
-                        request.id,
-                        lsp.types.InitializeResult,
-                        .{
-                            .serverInfo = .{
-                                .name = "zigcount language server",
-                            },
-                            .capabilities = .{
-                                .hoverProvider = .{ .bool = true },
-                            },
+                    const init_result = try initialize(alloc, params, &state);
+                    defer init_result.deinit(alloc);
+                    switch (init_result) {
+                        .fail_message => |message| {
+                            std.log.err("Failed to initialize: {s}", .{message});
+                            defer alloc.free(message);
+                            try transport.any().writeErrorResponse(alloc, request.id, .{ .code = .internal_error, .message = message }, .{});
+                            try transport.any().writeNotification(alloc, "exit", void, {}, .{});
+                            std.process.exit(1);
                         },
-                        .{ .emit_null_optional_fields = false },
-                    );
+                        .success => {
+                            try transport.any().writeResponse(
+                                alloc,
+                                request.id,
+                                lsp.types.InitializeResult,
+                                .{
+                                    .serverInfo = .{
+                                        .name = "zigcount language server",
+                                    },
+                                    .capabilities = .{ .hoverProvider = .{ .bool = true }, .textDocumentSync = .{ .TextDocumentSyncOptions = .{
+                                        .openClose = false,
+                                        .change = lsp.types.TextDocumentSyncKind.Full,
+                                    } } },
+                                },
+                                .{},
+                            );
+                        },
+                    }
                 },
-                .shutdown => try transport.any().writeResponse(gpa, request.id, void, {}, .{}),
+                .shutdown => try transport.any().writeResponse(alloc, request.id, void, {}, .{}),
                 .@"textDocument/hover" => |params| {
                     _ = params;
                     const result = lsp.types.Hover{ .contents = .{ .MarkupContent = lsp.types.MarkupContent{
                         .kind = lsp.types.MarkupKind.plaintext,
                         .value = "Hello, world!",
                     } } };
-                    try transport.any().writeResponse(gpa, request.id, lsp.types.Hover, result, .{});
+                    try transport.any().writeResponse(alloc, request.id, lsp.types.Hover, result, .{});
                 },
-                .other => try transport.any().writeResponse(gpa, request.id, void, {}, .{}),
+                .other => try transport.any().writeResponse(alloc, request.id, void, {}, .{}),
             },
             .notification => |notification| switch (notification.params) {
                 .initialized => {},
                 .exit => return,
-                .@"textDocument/didOpen" => |params| {
-                    _ = params;
-                },
-                .@"textDocument/didChange" => @panic("TODO: implement textDocument/didChange"),
-                .@"textDocument/didClose" => |params| {
-                    _ = params;
+                .@"textDocument/didChange" => |params| {
+                    const uri = params.textDocument.uri;
+                    std.debug.assert(params.contentChanges.len == 1);
+                    const text = switch (params.contentChanges[0]) {
+                        .literal_1 => |lit| lit.text,
+                        else => @panic("Expected full text change"),
+                    };
+                    // Make a null-terminated copy of text
+                    const null_terminated = try alloc.dupeZ(u8, text);
+                    _ = null_terminated;
+                    _ = uri;
+                    // try state.project.update_file(uri, null_terminated);
                 },
                 .other => {},
             },
             .response => @panic("Haven't sent any requests to the client"),
         }
     }
+}
+
+const InitResult = union(enum) {
+    success: void,
+    fail_message: []const u8,
+
+    pub fn deinit(self: InitResult, alloc: Allocator) void {
+        if (self == .fail_message) {
+            alloc.free(self.fail_message);
+        }
+    }
+};
+
+fn initialize(alloc: std.mem.Allocator, params: lsp.types.InitializeParams, state: *LspState) !InitResult {
+    if (params.workspaceFolders == null) return .{ .fail_message = try alloc.dupe(u8, "No workspace folder") };
+    const workspace_folders = params.workspaceFolders.?;
+    if (workspace_folders.len != 1) return .{ .fail_message = try alloc.dupe(u8, "Expected one workspace folder") };
+    const root = workspace_folders[0].name;
+
+    const config = Config.load_from_dir(alloc, root) catch |err| switch (err) {
+        error.FileNotFound => return .{ .fail_message = try alloc.dupe(u8, "No config found. Make sure to put a `zigcount.config` file in the workspace folder") },
+        error.InvalidConfig => return .{ .fail_message = try alloc.dupe(u8, "Invalid config. The config should contain a line like `root = file.bean` where file.bean is relative to the workspace root") },
+        else => return .{ .fail_message = try std.fmt.allocPrint(alloc, "Error: {s}", .{@errorName(err)}) },
+    };
+    defer config.deinit(alloc);
+
+    std.log.debug("Loaded config: {any}", .{config});
+    state.initialize(alloc, config.root) catch |err| switch (err) {
+        error.FileNotFound => return .{ .fail_message = try std.fmt.allocPrint(alloc, "Could not open `{s}` defined in your `zigcount.config` file", .{config.root}) },
+        else => return .{ .fail_message = try std.fmt.allocPrint(alloc, "Error: {s}", .{@errorName(err)}) },
+    };
+
+    return .{ .success = {} };
 }
 
 const Message = lsp.Message(RequestMethods, NotificationMethods, .{});
@@ -95,8 +154,8 @@ const RequestMethods = union(enum) {
 const NotificationMethods = union(enum) {
     initialized: lsp.types.InitializedParams,
     exit,
-    @"textDocument/didOpen": lsp.types.DidOpenTextDocumentParams,
+    // @"textDocument/didOpen": lsp.types.DidOpenTextDocumentParams,
     @"textDocument/didChange": lsp.types.DidChangeTextDocumentParams,
-    @"textDocument/didClose": lsp.types.DidCloseTextDocumentParams,
+    // @"textDocument/didClose": lsp.types.DidCloseTextDocumentParams,
     other: lsp.MethodWithParams,
 };

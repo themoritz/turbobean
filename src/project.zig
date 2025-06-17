@@ -10,7 +10,8 @@ const Self = @This();
 alloc: Allocator,
 files: std.ArrayList(Data),
 uris: std.ArrayList(Uri),
-files_by_uri: std.StringHashMap(usize), // Keys are URI values
+/// Keys are URI values, values are index into files and uris.
+files_by_uri: std.StringHashMap(usize),
 sorted_entries: std.ArrayList(SortedEntry),
 errors: std.ArrayList(ErrorDetails),
 
@@ -29,7 +30,9 @@ pub fn load(alloc: Allocator, name: []const u8) !Self {
         .sorted_entries = std.ArrayList(SortedEntry).init(alloc),
         .errors = std.ArrayList(ErrorDetails).init(alloc),
     };
+    errdefer self.deinit();
     try self.loadFileRec(name, true);
+    try self.pipeline();
     return self;
 }
 
@@ -58,9 +61,9 @@ fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
     }
 }
 
+/// Parses a file and balances all transactions.
 fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Data.Imports.Slice {
     const uri = try Uri.from_relative_to_cwd(self.alloc, name);
-    try self.uris.append(uri);
 
     const file = try std.fs.openFileAbsolute(uri.absolute(), .{});
     defer file.close();
@@ -73,18 +76,15 @@ fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Data.Imports.Sl
 
     const null_terminated: [:0]u8 = source[0..filesize :0];
 
-    const data, const imports = try Data.loadSource(self.alloc, uri, null_terminated, is_root);
+    var data, const imports = try Data.loadSource(self.alloc, uri, null_terminated, is_root);
+    try data.balanceTransactions();
 
     try self.files.append(data);
+    try self.uris.append(uri);
+
     try self.files_by_uri.put(uri.value, self.files.items.len - 1);
 
     return imports;
-}
-
-pub fn balanceTransactions(self: *Self) !void {
-    for (self.files.items) |*data| {
-        try data.balanceTransactions();
-    }
 }
 
 pub fn hasErrors(self: *Self) bool {
@@ -96,11 +96,20 @@ pub fn hasErrors(self: *Self) bool {
 }
 
 pub fn printErrors(self: *Self) !void {
+    var num_errors: usize = 0;
+    for (self.files.items) |data| {
+        num_errors += data.errors.items.len;
+    }
+    num_errors += self.errors.items.len;
+    if (num_errors == 0) return;
+
+    std.debug.print("\x1b[31mError:\x1b[0m The following errors were encountered:\n\n", .{});
+
     var num_printed: usize = 0;
     for (self.files.items) |data| {
         for (data.errors.items) |err| {
             if (num_printed == 10) {
-                std.debug.print("... and {d} more errors\n", .{self.errors.items.len - 10});
+                std.debug.print("... and {d} more errors\n", .{num_errors - 10});
                 return;
             }
             try err.print(self.alloc);
@@ -126,6 +135,27 @@ fn lessThanFn(self: *Self, lhs: SortedEntry, rhs: SortedEntry) bool {
     const entry_lhs = self.files.items[lhs.file].entries.items[lhs.entry];
     const entry_rhs = self.files.items[rhs.file].entries.items[rhs.entry];
     return Data.Entry.compare({}, entry_lhs, entry_rhs);
+}
+
+pub fn pipeline(self: *Self) !void {
+    self.errors.clearRetainingCapacity();
+    try self.sortEntries();
+    // TODO: Perform all sorts of checks.
+}
+
+pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !void {
+    const index = self.files_by_uri.get(uri_value) orelse return error.FileNotFound;
+    const data = &self.files.items[index];
+
+    const uri = self.uris.items[index];
+    var new_data, _ = try Data.loadSource(self.alloc, uri, source, false);
+    // TODO: Do something with imports
+    try new_data.balanceTransactions();
+
+    data.deinit();
+    data.* = new_data;
+
+    try self.pipeline();
 }
 
 /// Assumes balanced transactions
