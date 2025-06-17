@@ -26,7 +26,9 @@ pub fn main() !void {
     defer project.deinit();
 
     try project.balanceTransactions();
-    if (!try project.printErrors()) {
+    if (project.hasErrors()) {
+        try project.printErrors();
+    } else {
         try project.sortEntries();
         try project.printTree();
     }

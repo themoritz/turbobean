@@ -2,25 +2,32 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Data = @import("data.zig");
 const Tree = @import("tree.zig");
+const Uri = @import("Uri.zig");
+const ErrorDetails = @import("ErrorDetails.zig");
 
 const Self = @This();
 
 alloc: Allocator,
 files: std.ArrayList(Data),
-files_by_name: std.StringHashMap(usize),
+uris: std.ArrayList(Uri),
+files_by_uri: std.StringHashMap(usize), // Keys are URI values
 sorted_entries: std.ArrayList(SortedEntry),
+errors: std.ArrayList(ErrorDetails),
 
 const SortedEntry = struct {
     file: u8,
     entry: u32,
 };
 
+/// Load a project from a root file relative to the CWD.
 pub fn load(alloc: Allocator, name: []const u8) !Self {
     var self = Self{
         .alloc = alloc,
         .files = std.ArrayList(Data).init(alloc),
-        .files_by_name = std.StringHashMap(usize).init(alloc),
+        .uris = std.ArrayList(Uri).init(alloc),
+        .files_by_uri = std.StringHashMap(usize).init(alloc),
         .sorted_entries = std.ArrayList(SortedEntry).init(alloc),
+        .errors = std.ArrayList(ErrorDetails).init(alloc),
     };
     try self.loadFileRec(name, true);
     return self;
@@ -30,17 +37,17 @@ pub fn deinit(self: *Self) void {
     for (self.files.items) |*data| data.deinit();
     self.files.deinit();
 
-    var iter = self.files_by_name.iterator();
-    while (iter.next()) |kv| {
-        self.alloc.free(kv.key_ptr.*);
-    }
-    self.files_by_name.deinit();
+    for (self.uris.items) |*uri| uri.deinit(self.alloc);
+    self.uris.deinit();
+
+    self.files_by_uri.deinit();
 
     self.sorted_entries.deinit();
+    self.errors.deinit();
 }
 
 fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
-    if (self.files_by_name.get(name)) |_| return error.ImportCycle;
+    if (self.files_by_uri.get(name)) |_| return error.ImportCycle;
     const imports = try self.loadSingleFile(name, is_root);
     defer self.alloc.free(imports);
     const dir = std.fs.path.dirname(name) orelse ".";
@@ -52,9 +59,10 @@ fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
 }
 
 fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Data.Imports.Slice {
-    const owned_name = try self.alloc.dupe(u8, name);
+    const uri = try Uri.from_relative_to_cwd(self.alloc, name);
+    try self.uris.append(uri);
 
-    const file = try std.fs.cwd().openFile(name, .{});
+    const file = try std.fs.openFileAbsolute(uri.absolute(), .{});
     defer file.close();
 
     const filesize = try file.getEndPos();
@@ -65,9 +73,11 @@ fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Data.Imports.Sl
 
     const null_terminated: [:0]u8 = source[0..filesize :0];
 
-    const data, const imports = try Data.loadSource(self.alloc, null_terminated, is_root);
+    const data, const imports = try Data.loadSource(self.alloc, uri, null_terminated, is_root);
+
     try self.files.append(data);
-    try self.files_by_name.put(owned_name, self.files.items.len - 1);
+    try self.files_by_uri.put(uri.value, self.files.items.len - 1);
+
     return imports;
 }
 
@@ -77,15 +87,26 @@ pub fn balanceTransactions(self: *Self) !void {
     }
 }
 
-/// Returns true if errors were printed
-pub fn printErrors(self: *Self) !bool {
-    var errors_printed = false;
-    for (self.files.items) |*data| {
-        if (try data.printErrors()) {
-            errors_printed = true;
+pub fn hasErrors(self: *Self) bool {
+    for (self.files.items) |data| {
+        if (data.errors.items.len > 0) return true;
+    }
+    if (self.errors.items.len > 0) return true;
+    return false;
+}
+
+pub fn printErrors(self: *Self) !void {
+    var num_printed: usize = 0;
+    for (self.files.items) |data| {
+        for (data.errors.items) |err| {
+            if (num_printed == 10) {
+                std.debug.print("... and {d} more errors\n", .{self.errors.items.len - 10});
+                return;
+            }
+            try err.print(self.alloc);
+            num_printed += 1;
         }
     }
-    return errors_printed;
 }
 
 pub fn sortEntries(self: *Self) !void {

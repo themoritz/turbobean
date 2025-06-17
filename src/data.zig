@@ -7,11 +7,13 @@ const Number = @import("number.zig").Number;
 const Lexer = @import("lexer.zig").Lexer;
 const Solver = @import("solver.zig").Solver;
 const ErrorDetails = @import("ErrorDetails.zig");
+const Uri = @import("Uri.zig");
 
 const Self = @This();
 
 alloc: Allocator,
 source: [:0]const u8,
+uri: Uri,
 entries: Entries,
 config: Config,
 postings: Postings,
@@ -218,13 +220,15 @@ pub const KeyValue = struct {
 
 pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
     const owned_source = try alloc.dupeZ(u8, source);
-    const self, const imports = try loadSource(alloc, owned_source, true);
+    var uri = try Uri.from_relative_to_cwd(alloc, "test.bean");
+    defer uri.deinit(alloc);
+    const self, const imports = try loadSource(alloc, uri, owned_source, true);
     defer self.alloc.free(imports);
     return self;
 }
 
 /// Takes ownership of source.
-pub fn loadSource(alloc: Allocator, source: [:0]const u8, is_root: bool) !struct { Self, Imports.Slice } {
+pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: bool) !struct { Self, Imports.Slice } {
     var self = Self{
         .alloc = alloc,
         .postings = .{},
@@ -234,6 +238,7 @@ pub fn loadSource(alloc: Allocator, source: [:0]const u8, is_root: bool) !struct
         .currencies = Currencies.init(alloc),
         .entries = Entries.init(alloc),
         .source = source,
+        .uri = uri,
         .config = Config.init(alloc),
         .errors = std.ArrayList(ErrorDetails).init(alloc),
     };
@@ -254,7 +259,8 @@ pub fn loadSource(alloc: Allocator, source: [:0]const u8, is_root: bool) !struct
         .tokens = tokens,
         .tok_i = 0,
         .is_root = is_root,
-        .source_file = source,
+        .uri = uri,
+        .source = source,
         .entries = &self.entries,
         .postings = &self.postings,
         .tagslinks = &self.tagslinks,
@@ -265,19 +271,13 @@ pub fn loadSource(alloc: Allocator, source: [:0]const u8, is_root: bool) !struct
         .imports = Imports.init(self.alloc),
         .active_tags = std.StringHashMap(void).init(self.alloc),
         .active_meta = std.StringHashMap([]const u8).init(self.alloc),
-        .err = null,
+        .errors = &self.errors,
     };
     defer parser.imports.deinit();
     defer parser.active_tags.deinit();
     defer parser.active_meta.deinit();
 
-    parser.parse() catch |err| switch (err) {
-        error.ParseError => {
-            try parser.err.?.print(self.alloc, source);
-            return err;
-        },
-        else => return err,
-    };
+    try parser.parse();
 
     return .{ self, try parser.imports.toOwnedSlice() };
 }
@@ -317,7 +317,7 @@ pub fn balanceTransactions(self: *Self) !void {
                             error.MultipleSolutions => .tx_multiple_solutions,
                             else => return err,
                         };
-                        try self.addError(entry.main_token, "", tag);
+                        try self.addError(entry.main_token, self.uri, tag);
                     };
                 }
             },
@@ -326,27 +326,14 @@ pub fn balanceTransactions(self: *Self) !void {
     }
 }
 
-fn addError(self: *Self, token: Lexer.Token, source_file: []const u8, tag: ErrorDetails.Tag) !void {
+fn addError(self: *Self, token: Lexer.Token, uri: Uri, tag: ErrorDetails.Tag) !void {
     try self.errors.append(ErrorDetails{
         .tag = tag,
         .token = token,
-        .source_file = source_file,
+        .uri = uri,
+        .source = self.source,
         .expected = null,
     });
-}
-
-/// Returns true if errors were printed.
-pub fn printErrors(self: *Self) !bool {
-    var errors_printed = false;
-    for (self.errors.items, 0..) |err, i| {
-        if (i == 10) {
-            std.debug.print("... and {d} more errors\n", .{self.errors.items.len - 10});
-            break;
-        }
-        try err.print(self.alloc, self.source);
-        errors_printed = true;
-    }
-    return errors_printed;
 }
 
 pub fn deinit(self: *Self) void {

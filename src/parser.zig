@@ -20,6 +20,7 @@ const Self = @This();
 const Lexer = @import("lexer.zig").Lexer;
 const Number = @import("number.zig").Number;
 const ErrorDetails = @import("ErrorDetails.zig");
+const Uri = @import("Uri.zig");
 
 pub const Error = error{ParseError} || Allocator.Error;
 
@@ -27,7 +28,8 @@ alloc: Allocator,
 tokens: Data.Tokens,
 tok_i: usize,
 is_root: bool,
-source_file: []const u8,
+uri: Uri,
+source: [:0]const u8,
 
 entries: *Data.Entries,
 config: *Data.Config,
@@ -41,7 +43,7 @@ currencies: *Data.Currencies,
 active_tags: std.StringHashMap(void),
 active_meta: std.StringHashMap([]const u8),
 
-err: ?ErrorDetails,
+errors: *std.ArrayList(ErrorDetails),
 
 fn addEntry(p: *Self, entry: Data.Entry) !usize {
     const result = p.entries.items.len;
@@ -79,30 +81,32 @@ fn addCurrency(p: *Self, currency: []const u8) !usize {
     return result;
 }
 
-fn failExpected(p: *Self, expected_token: Lexer.Token.Tag) error{ParseError} {
+fn failExpected(p: *Self, expected_token: Lexer.Token.Tag) Error {
     return p.failMsg(.{
         .tag = .expected_token,
         .token = p.currentToken(),
-        .source_file = p.source_file,
+        .uri = p.uri,
+        .source = p.source,
         .expected = expected_token,
     });
 }
 
-fn fail(p: *Self, msg: ErrorDetails.Tag) error{ParseError} {
+fn fail(p: *Self, msg: ErrorDetails.Tag) Error {
     return p.failAt(p.currentToken(), msg);
 }
 
-fn failAt(p: *Self, token: Lexer.Token, msg: ErrorDetails.Tag) error{ParseError} {
+fn failAt(p: *Self, token: Lexer.Token, msg: ErrorDetails.Tag) Error {
     return p.failMsg(.{
         .tag = msg,
         .token = token,
-        .source_file = p.source_file,
+        .uri = p.uri,
+        .source = p.source,
         .expected = null,
     });
 }
 
-fn failMsg(p: *Self, err: ErrorDetails) error{ParseError} {
-    p.err = err;
+fn failMsg(p: *Self, err: ErrorDetails) Error {
+    try p.errors.append(err);
     return error.ParseError;
 }
 
@@ -158,9 +162,28 @@ fn tryTokenSlice(p: *Self, tag: Lexer.Token.Tag) ?[]const u8 {
 pub fn parse(p: *Self) !void {
     p.eatWhitespace();
     while (true) {
-        _ = try p.parseDeclaration() orelse break;
+        _ = try p.parseDeclarationRecoverable() orelse break;
         p.eatWhitespace();
     }
+}
+
+fn parseDeclarationRecoverable(p: *Self) !?void {
+    return p.parseDeclaration() catch |err| switch (err) {
+        error.ParseError => {
+            // Skip ahead until next newline, consume it and then try the next
+            // declaration.
+            while (true) {
+                switch (p.currentToken().tag) {
+                    .eol => {
+                        _ = p.advanceToken();
+                        break;
+                    },
+                    else => _ = p.advanceToken(),
+                }
+            }
+        },
+        else => return err,
+    };
 }
 
 /// Only returns null at EOF.

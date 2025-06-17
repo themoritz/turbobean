@@ -1,11 +1,13 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Lexer = @import("lexer.zig").Lexer;
+const Uri = @import("Uri.zig");
 const Self = @This();
 
 tag: Tag,
 token: Lexer.Token,
-source_file: []const u8,
+uri: Uri,
+source: [:0]const u8,
 expected: ?Lexer.Token.Tag,
 
 pub const Tag = enum {
@@ -28,13 +30,13 @@ pub const Tag = enum {
     tx_multiple_solutions,
 };
 
-pub fn print(e: Self, alloc: Allocator, source: [:0]const u8) !void {
-    const rendered = try dump(e, alloc, source);
+pub fn print(e: Self, alloc: Allocator) !void {
+    const rendered = try dump(e, alloc);
     defer alloc.free(rendered);
     std.debug.print("{s}\n", .{rendered});
 }
 
-pub fn dump(e: Self, alloc: Allocator, source: [:0]const u8) ![]const u8 {
+pub fn dump(e: Self, alloc: Allocator) ![]const u8 {
     var buffer = std.ArrayList(u8).init(alloc);
     defer buffer.deinit();
 
@@ -42,11 +44,11 @@ pub fn dump(e: Self, alloc: Allocator, source: [:0]const u8) ![]const u8 {
     const loc = e.token.slice;
     var line_start: u32 = 0;
     var col_start: u32 = 0;
-    const start = @intFromPtr(loc.ptr) - @intFromPtr(source.ptr);
+    const start = @intFromPtr(loc.ptr) - @intFromPtr(e.source.ptr);
     const end = start + loc.len;
     var line_pos: usize = 0;
     for (0..start) |i| {
-        if (source[i] == '\n') {
+        if (e.source[i] == '\n') {
             line_start += 1;
             col_start = 0;
             line_pos = i + 1;
@@ -57,7 +59,7 @@ pub fn dump(e: Self, alloc: Allocator, source: [:0]const u8) ![]const u8 {
     var line_end = line_start;
     var col_end = col_start;
     for (start..end) |i| {
-        if (source[i] == '\n') {
+        if (e.source[i] == '\n') {
             line_end += 1;
             col_end = 0;
         } else {
@@ -68,17 +70,19 @@ pub fn dump(e: Self, alloc: Allocator, source: [:0]const u8) ![]const u8 {
     std.debug.assert(line_start == line_end);
     std.debug.assert(col_start <= col_end);
 
-    var line_pos_end = source.len;
-    for (end..source.len) |i| {
-        if (source[i] == '\n') {
+    var line_pos_end = e.source.len;
+    for (end..e.source.len) |i| {
+        if (e.source[i] == '\n') {
             line_pos_end = i;
             break;
         }
     }
 
-    try std.fmt.format(buffer.writer(), "{s}:\n", .{e.source_file});
+    const relative = try e.uri.relative(alloc);
+    defer alloc.free(relative);
+    try std.fmt.format(buffer.writer(), "{s}:\n", .{relative});
 
-    try std.fmt.format(buffer.writer(), "{d:>5} | {s}\n", .{ line_start + 1, source[line_pos..line_pos_end] });
+    try std.fmt.format(buffer.writer(), "{d:>5} | {s}\n", .{ line_start + 1, e.source[line_pos..line_pos_end] });
     for (0..col_start + 8) |_| try buffer.append(' ');
     if (col_start == col_end) {
         try buffer.append('\\');
@@ -134,14 +138,17 @@ test "render" {
 }
 
 fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !void {
+    const alloc = std.testing.allocator;
+    var uri = try Uri.from_relative_to_cwd(alloc, "test.bean");
+    defer uri.deinit(alloc);
     const e = Self{
         .tag = .expected_token,
         .token = Lexer.Token{ .tag = .number, .slice = source[start .. start + len], .line = 0, .start_col = @intCast(start), .end_col = @intCast(start + len) },
-        .source_file = "test.bean",
+        .uri = uri,
+        .source = source,
         .expected = .string,
     };
-    const alloc = std.testing.allocator;
-    const rendered = try e.dump(alloc, source);
+    const rendered = try e.dump(alloc);
     defer alloc.free(rendered);
 
     try std.testing.expectEqualSlices(u8, expected, rendered);
