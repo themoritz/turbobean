@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const lsp = @import("lsp");
 const Project = @import("project.zig");
 const Config = @import("Config.zig");
+const ErrorDetails = @import("ErrorDetails.zig");
 
 const LspState = struct {
     project: Project = undefined,
@@ -51,7 +52,6 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     switch (init_result) {
                         .fail_message => |message| {
                             std.log.err("Failed to initialize: {s}", .{message});
-                            defer alloc.free(message);
                             try transport.any().writeErrorResponse(alloc, request.id, .{ .code = .internal_error, .message = message }, .{});
                             try transport.any().writeNotification(alloc, "exit", void, {}, .{});
                             std.process.exit(1);
@@ -98,15 +98,42 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     };
                     // Make a null-terminated copy of text
                     const null_terminated = try alloc.dupeZ(u8, text);
-                    _ = null_terminated;
-                    _ = uri;
-                    // try state.project.update_file(uri, null_terminated);
+                    try state.project.update_file(uri, null_terminated);
+                    std.log.debug("Updated file {s}", .{uri});
+
+                    var errors = try state.project.collectErrors(alloc);
+                    defer {
+                        var iter = errors.iterator();
+                        while (iter.next()) |kv| {
+                            kv.value_ptr.deinit();
+                        }
+                    }
+                    var iter = errors.iterator();
+                    while (iter.next()) |kv| {
+                        var diagnostics = std.ArrayList(lsp.types.Diagnostic).init(alloc);
+                        defer diagnostics.deinit();
+                        for (kv.value_ptr.items) |err| {
+                            try diagnostics.append(try mkDiagnostic(err, alloc));
+                        }
+                        try transport.any().writeNotification(alloc, "textDocument/publishDiagnostics", lsp.types.PublishDiagnosticsParams, .{ .uri = kv.key_ptr.*, .diagnostics = diagnostics.items }, .{});
+                    }
                 },
                 .other => {},
             },
             .response => @panic("Haven't sent any requests to the client"),
         }
     }
+}
+
+fn mkDiagnostic(err: ErrorDetails, alloc: Allocator) !lsp.types.Diagnostic {
+    return .{
+        .severity = .Error,
+        .range = .{
+            .start = .{ .line = err.token.line, .character = err.token.start_col },
+            .end = .{ .line = err.token.line, .character = err.token.end_col },
+        },
+        .message = try err.message(alloc),
+    };
 }
 
 const InitResult = union(enum) {

@@ -95,6 +95,22 @@ pub fn hasErrors(self: *Self) bool {
     return false;
 }
 
+pub fn collectErrors(self: *Self, alloc: Allocator) !std.StringHashMap(std.ArrayList(ErrorDetails)) {
+    var errors = std.StringHashMap(std.ArrayList(ErrorDetails)).init(alloc);
+    for (self.uris.items) |uri| {
+        try errors.put(uri.value, std.ArrayList(ErrorDetails).init(alloc));
+    }
+    for (self.files.items) |data| {
+        for (data.errors.items) |err| {
+            try errors.getPtr(err.uri.value).?.append(err);
+        }
+    }
+    for (self.errors.items) |err| {
+        try errors.getPtr(err.uri.value).?.append(err);
+    }
+    return errors;
+}
+
 pub fn printErrors(self: *Self) !void {
     var num_errors: usize = 0;
     for (self.files.items) |data| {

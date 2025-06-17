@@ -30,6 +30,19 @@ pub const Tag = enum {
     tx_multiple_solutions,
 };
 
+pub fn message(e: Self, alloc: Allocator) ![]const u8 {
+    var buffer = std.ArrayList(u8).init(alloc);
+    switch (e.tag) {
+        .expected_token => {
+            try std.fmt.format(buffer.writer(), "Expected {s}, found {s}\n", .{ @tagName(e.expected.?), @tagName(e.token.tag) });
+        },
+        else => {
+            try std.fmt.format(buffer.writer(), "{s}\n", .{@tagName(e.tag)});
+        },
+    }
+    return buffer.toOwnedSlice();
+}
+
 pub fn print(e: Self, alloc: Allocator) !void {
     const rendered = try dump(e, alloc);
     defer alloc.free(rendered);
@@ -93,14 +106,9 @@ pub fn dump(e: Self, alloc: Allocator) ![]const u8 {
     try buffer.append('\n');
 
     for (0..col_start + 8) |_| try buffer.append(' ');
-    switch (e.tag) {
-        .expected_token => {
-            try std.fmt.format(buffer.writer(), "Expected {s}, found {s}\n", .{ @tagName(e.expected.?), @tagName(e.token.tag) });
-        },
-        else => {
-            try std.fmt.format(buffer.writer(), "{s}\n", .{@tagName(e.tag)});
-        },
-    }
+    const msg = try e.message(alloc);
+    defer alloc.free(msg);
+    try buffer.appendSlice(msg);
 
     return buffer.toOwnedSlice();
 }
