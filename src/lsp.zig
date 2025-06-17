@@ -20,6 +20,25 @@ const LspState = struct {
             self.project.deinit();
         }
     }
+
+    pub fn sendDiagnostics(self: *const LspState, alloc: Allocator, transport: lsp.AnyTransport) !void {
+        var errors = try self.project.collectErrors(alloc);
+        defer {
+            var iter = errors.iterator();
+            while (iter.next()) |kv| {
+                kv.value_ptr.deinit();
+            }
+        }
+        var iter = errors.iterator();
+        while (iter.next()) |kv| {
+            var diagnostics = std.ArrayList(lsp.types.Diagnostic).init(alloc);
+            defer diagnostics.deinit();
+            for (kv.value_ptr.items) |err| {
+                try diagnostics.append(try mkDiagnostic(err, alloc));
+            }
+            try transport.writeNotification(alloc, "textDocument/publishDiagnostics", lsp.types.PublishDiagnosticsParams, .{ .uri = kv.key_ptr.*, .diagnostics = diagnostics.items }, .{});
+        }
+    }
 };
 
 pub fn loop(alloc: std.mem.Allocator) !void {
@@ -87,7 +106,9 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                 .other => try transport.any().writeResponse(alloc, request.id, void, {}, .{}),
             },
             .notification => |notification| switch (notification.params) {
-                .initialized => {},
+                .initialized => {
+                    try state.sendDiagnostics(alloc, transport.any());
+                },
                 .exit => return,
                 .@"textDocument/didChange" => |params| {
                     const uri = params.textDocument.uri;
@@ -101,22 +122,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     try state.project.update_file(uri, null_terminated);
                     std.log.debug("Updated file {s}", .{uri});
 
-                    var errors = try state.project.collectErrors(alloc);
-                    defer {
-                        var iter = errors.iterator();
-                        while (iter.next()) |kv| {
-                            kv.value_ptr.deinit();
-                        }
-                    }
-                    var iter = errors.iterator();
-                    while (iter.next()) |kv| {
-                        var diagnostics = std.ArrayList(lsp.types.Diagnostic).init(alloc);
-                        defer diagnostics.deinit();
-                        for (kv.value_ptr.items) |err| {
-                            try diagnostics.append(try mkDiagnostic(err, alloc));
-                        }
-                        try transport.any().writeNotification(alloc, "textDocument/publishDiagnostics", lsp.types.PublishDiagnosticsParams, .{ .uri = kv.key_ptr.*, .diagnostics = diagnostics.items }, .{});
-                    }
+                    try state.sendDiagnostics(alloc, transport.any());
                 },
                 .other => {},
             },

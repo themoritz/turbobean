@@ -64,6 +64,7 @@ fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
 /// Parses a file and balances all transactions.
 fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Data.Imports.Slice {
     const uri = try Uri.from_relative_to_cwd(self.alloc, name);
+    try self.uris.append(uri);
 
     const file = try std.fs.openFileAbsolute(uri.absolute(), .{});
     defer file.close();
@@ -80,7 +81,6 @@ fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Data.Imports.Sl
     try data.balanceTransactions();
 
     try self.files.append(data);
-    try self.uris.append(uri);
 
     try self.files_by_uri.put(uri.value, self.files.items.len - 1);
 
@@ -95,7 +95,7 @@ pub fn hasErrors(self: *Self) bool {
     return false;
 }
 
-pub fn collectErrors(self: *Self, alloc: Allocator) !std.StringHashMap(std.ArrayList(ErrorDetails)) {
+pub fn collectErrors(self: *const Self, alloc: Allocator) !std.StringHashMap(std.ArrayList(ErrorDetails)) {
     var errors = std.StringHashMap(std.ArrayList(ErrorDetails)).init(alloc);
     for (self.uris.items) |uri| {
         try errors.put(uri.value, std.ArrayList(ErrorDetails).init(alloc));

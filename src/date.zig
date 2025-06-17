@@ -31,15 +31,32 @@ pub const Date = struct {
         return .equal;
     }
 
-    pub fn fromSlice(bytes: []const u8) std.fmt.ParseIntError!Date {
-        const year = try std.fmt.parseInt(u32, bytes[0..4], 10);
-        const month = try std.fmt.parseInt(u4, bytes[5..7], 10);
-        const day = try std.fmt.parseInt(u5, bytes[8..10], 10);
-        return Date{
-            .year = year,
-            .month = month,
-            .day = day,
-        };
+    pub fn fromSlice(bytes: []const u8) !Date {
+        var date: Date = undefined;
+        var chunks = std.mem.splitAny(u8, bytes, "-/");
+        var i: usize = 0;
+        while (chunks.next()) |chunk| : (i += 1) {
+            if (i == 0) {
+                date.year = try std.fmt.parseInt(u32, chunk, 10);
+            } else if (i == 1) {
+                date.month = try std.fmt.parseInt(u4, chunk, 10);
+            } else if (i == 2) {
+                date.day = try std.fmt.parseInt(u5, chunk, 10);
+            }
+        }
+        if (i != 3) {
+            return error.InvalidDateFormat;
+        }
+        if (chunks.next()) |_| {
+            return error.InvalidDateFormat;
+        }
+        if (date.month < 1 or date.month > 12) {
+            return error.InvalidDateFormat;
+        }
+        if (date.day < 1 or date.day > 31) {
+            return error.InvalidDateFormat;
+        }
+        return date;
     }
 
     pub fn format(self: Date, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -50,3 +67,22 @@ pub const Date = struct {
 };
 
 const Comparison = enum { after, before, equal };
+
+test "fromSlice" {
+    const date = try Date.fromSlice("2021-01-01");
+    try std.testing.expectEqual(Date{ .year = 2021, .month = 1, .day = 1 }, date);
+}
+
+test "fromSlice slash" {
+    const date = try Date.fromSlice("2021/01/01");
+    try std.testing.expectEqual(Date{ .year = 2021, .month = 1, .day = 1 }, date);
+}
+
+test "fromSlice error" {
+    try std.testing.expectError(error.InvalidCharacter, Date.fromSlice("2021-01-"));
+    try std.testing.expectError(error.InvalidDateFormat, Date.fromSlice("2021-01-01-01"));
+    try std.testing.expectError(error.InvalidDateFormat, Date.fromSlice("2021-01"));
+    try std.testing.expectError(error.InvalidCharacter, Date.fromSlice("2021-01-0x"));
+    try std.testing.expectError(error.InvalidDateFormat, Date.fromSlice("2021-0-1"));
+    try std.testing.expectError(error.Overflow, Date.fromSlice("2021-1-32"));
+}

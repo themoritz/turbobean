@@ -13,6 +13,7 @@ expected: ?Lexer.Token.Tag,
 pub const Tag = enum {
     expected_declaration,
     invalid_number,
+    invalid_date,
     expected_token,
     expected_entry,
     expected_key_value,

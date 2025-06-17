@@ -202,7 +202,7 @@ fn parseDeclaration(p: *Self) !?void {
 /// Returns index of newly parsed entry in entries array.
 fn parseEntry(p: *Self) !?void {
     const date_token = p.tryToken(.date) orelse return null;
-    const date = try Date.fromSlice(date_token.slice);
+    const date = Date.fromSlice(date_token.slice) catch return p.failAt(date_token, .invalid_date);
     var payload: Data.Entry.Payload = undefined;
     switch (p.currentToken().tag) {
         .keyword_txn, .flag, .asterisk, .hash => {
@@ -647,7 +647,7 @@ fn eatWhitespace(p: *Self) void {
 
 fn parseDate(p: *Self) !?Date {
     const token = p.tryToken(.date) orelse return null;
-    return try Date.fromSlice(token.slice);
+    return Date.fromSlice(token.slice) catch return p.failAt(token, .invalid_date);
 }
 
 fn parseNumberExpr(p: *Self) !?Number {
