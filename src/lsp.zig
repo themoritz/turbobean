@@ -84,7 +84,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                     .serverInfo = .{
                                         .name = "zigcount language server",
                                     },
-                                    .capabilities = .{ .hoverProvider = .{ .bool = true }, .textDocumentSync = .{ .TextDocumentSyncOptions = .{
+                                    .capabilities = .{ .hoverProvider = .{ .bool = true }, .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "#", "^" } }, .textDocumentSync = .{ .TextDocumentSyncOptions = .{
                                         .openClose = false,
                                         .change = lsp.types.TextDocumentSyncKind.Full,
                                     } } },
@@ -102,6 +102,51 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         .value = "Hello, world!",
                     } } };
                     try transport.any().writeResponse(alloc, request.id, lsp.types.Hover, result, .{});
+                },
+                .@"textDocument/completion" => |params| {
+                    var completions = std.ArrayList(lsp.types.CompletionItem).init(alloc);
+                    errdefer completions.deinit();
+
+                    if (params.context) |context| {
+                        if (context.triggerKind == .TriggerCharacter) {
+                            if (context.triggerCharacter) |char| {
+                                std.log.debug("trigger char: {s}", .{char});
+                                switch (char[0]) {
+                                    '#' => {
+                                        var iter = state.project.tags.keyIterator();
+                                        while (iter.next()) |k| {
+                                            try completions.append(lsp.types.CompletionItem{
+                                                .label = k.*,
+                                                .kind = .Variable,
+                                            });
+                                        }
+                                    },
+                                    '^' => {
+                                        var iter = state.project.links.keyIterator();
+                                        while (iter.next()) |k| {
+                                            try completions.append(lsp.types.CompletionItem{
+                                                .label = k.*,
+                                                .kind = .Variable,
+                                            });
+                                        }
+                                    },
+                                    else => try transport.any().writeErrorResponse(alloc, request.id, .{ .code = .invalid_params, .message = "Unknown trigger character" }, .{}),
+                                }
+                            }
+                        } else {
+                            var iter = state.project.accounts.keyIterator();
+                            while (iter.next()) |k| {
+                                try completions.append(lsp.types.CompletionItem{
+                                    .label = k.*,
+                                    .kind = .Variable,
+                                });
+                            }
+                        }
+                    }
+
+                    if (completions.items.len > 0) {
+                        try transport.any().writeResponse(alloc, request.id, lsp.types.CompletionList, .{ .isIncomplete = false, .items = completions.items }, .{});
+                    }
                 },
                 .other => try transport.any().writeResponse(alloc, request.id, void, {}, .{}),
             },
@@ -181,6 +226,7 @@ const RequestMethods = union(enum) {
     initialize: lsp.types.InitializeParams,
     shutdown,
     @"textDocument/hover": lsp.types.HoverParams,
+    @"textDocument/completion": lsp.types.CompletionParams,
     other: lsp.MethodWithParams,
 };
 

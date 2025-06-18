@@ -17,6 +17,8 @@ errors: std.ArrayList(ErrorDetails),
 
 // LSP specific caches
 accounts: std.StringHashMap(AccountPos),
+tags: std.StringHashMap(void),
+links: std.StringHashMap(void),
 
 const SortedEntry = struct {
     file: u8,
@@ -39,6 +41,8 @@ pub fn load(alloc: Allocator, name: []const u8) !Self {
         .errors = std.ArrayList(ErrorDetails).init(alloc),
 
         .accounts = std.StringHashMap(AccountPos).init(alloc),
+        .tags = std.StringHashMap(void).init(alloc),
+        .links = std.StringHashMap(void).init(alloc),
     };
     errdefer self.deinit();
     try self.loadFileRec(name, true);
@@ -59,6 +63,8 @@ pub fn deinit(self: *Self) void {
     self.errors.deinit();
 
     self.accounts.deinit();
+    self.tags.deinit();
+    self.links.deinit();
 }
 
 fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
@@ -172,10 +178,23 @@ pub fn pipeline(self: *Self) !void {
     try self.refreshLspCache();
 }
 
-pub fn refreshLspCache(self: *Self) !void {
+fn refreshLspCache(self: *Self) !void {
     self.accounts.clearRetainingCapacity();
+    self.tags.clearRetainingCapacity();
+    self.links.clearRetainingCapacity();
+
     for (self.files.items, 0..) |data, f| {
         for (data.entries.items) |entry| {
+            if (entry.tagslinks) |range| {
+                for (range.start..range.end) |i| {
+                    const slice = data.tagslinks.items(.slice)[i];
+                    const kind = data.tagslinks.items(.kind)[i];
+                    switch (kind) {
+                        .tag => try self.tags.put(slice, {}),
+                        .link => try self.links.put(slice, {}),
+                    }
+                }
+            }
             switch (entry.payload) {
                 .open => |open| {
                     try self.accounts.put(open.account, .{

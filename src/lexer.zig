@@ -569,7 +569,9 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .link;
                 },
-                0, ' ', '\t', '\n' => {},
+                0, ' ', '\t', '\n' => {
+                    if (self.cursor.pos - start.pos < 2) continue :state .invalid;
+                },
                 else => continue :state .invalid,
             },
 
@@ -815,6 +817,10 @@ test "indented line" {
         \\  ; Waschmachine?
         \\  Assets:Currency
     , &.{ .date, .asterisk, .string, .eol, .indent, .eol, .indent, .account });
+}
+
+test "invalid link" {
+    try testLex("^", &.{.invalid});
 }
 
 test "beancount iter" {
