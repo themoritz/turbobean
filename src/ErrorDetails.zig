@@ -29,6 +29,28 @@ pub const Tag = enum {
     tx_too_many_variables,
     tx_division_by_zero,
     tx_multiple_solutions,
+
+    pub fn message(self: Tag) []const u8 {
+        return switch (self) {
+            .expected_declaration => "Expected declaration",
+            .invalid_number => "Invalid number",
+            .invalid_date => "Invalid date",
+            .expected_token => unreachable,
+            .expected_entry => "Expected entry",
+            .expected_key_value => "Expected key: value",
+            .expected_value => "Expected value",
+            .expected_amount => "Expected amount",
+            .tag_already_pushed => "Tag already pushed",
+            .meta_already_pushed => "Key already pushed",
+            .tag_not_pushed => "Tag has not been pushed before",
+            .meta_not_pushed => "Key has not been pushed before",
+            .tx_does_not_balance => "Transaction does not balance",
+            .tx_no_solution => "Transaction can't be balanced",
+            .tx_too_many_variables => "Transaction can't be balanced unambiguously",
+            .tx_division_by_zero => "Division by zero while balancing transaction",
+            .tx_multiple_solutions => "Transaction can't be balanced unambiguously",
+        };
+    }
 };
 
 pub fn message(e: Self, alloc: Allocator) ![]const u8 {
@@ -38,7 +60,7 @@ pub fn message(e: Self, alloc: Allocator) ![]const u8 {
             try std.fmt.format(buffer.writer(), "Expected {s}, found {s}\n", .{ @tagName(e.expected.?), @tagName(e.token.tag) });
         },
         else => {
-            try std.fmt.format(buffer.writer(), "{s}\n", .{@tagName(e.tag)});
+            try std.fmt.format(buffer.writer(), "{s}\n", .{e.tag.message()});
         },
     }
     return buffer.toOwnedSlice();
