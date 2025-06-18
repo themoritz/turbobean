@@ -5,6 +5,7 @@ const Tree = @import("tree.zig");
 const Uri = @import("Uri.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
 const lookup = @import("lookup.zig");
+const Token = @import("lexer.zig").Lexer.Token;
 
 const Self = @This();
 
@@ -21,6 +22,7 @@ accounts: std.StringHashMap(lookup.FileLine),
 tags: std.StringHashMap(void),
 links: std.StringHashMap(void),
 accounts_by_line: lookup.AccountsByLine,
+positions_by_account: lookup.PositionsByAccount,
 
 const SortedEntry = struct {
     file: u8,
@@ -41,6 +43,7 @@ pub fn load(alloc: Allocator, name: []const u8) !Self {
         .tags = std.StringHashMap(void).init(alloc),
         .links = std.StringHashMap(void).init(alloc),
         .accounts_by_line = lookup.AccountsByLine.init(alloc),
+        .positions_by_account = lookup.PositionsByAccount.init(alloc),
     };
     errdefer self.deinit();
     try self.loadFileRec(name, true);
@@ -65,6 +68,7 @@ pub fn deinit(self: *Self) void {
     self.links.deinit();
 
     self.accounts_by_line.deinit();
+    self.positions_by_account.deinit();
 }
 
 fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
@@ -185,11 +189,17 @@ pub fn pipeline(self: *Self) !void {
     try self.refreshLspCache();
 }
 
+fn cacheAccountPos(self: *Self, file: usize, token: Token) !void {
+    try self.accounts_by_line.put(@intCast(file), token);
+    try self.positions_by_account.put(@intCast(file), token);
+}
+
 fn refreshLspCache(self: *Self) !void {
     self.accounts.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
     self.links.clearRetainingCapacity();
     self.accounts_by_line.clear();
+    self.positions_by_account.clear();
 
     for (self.files.items, 0..) |data, f| {
         for (data.entries.items) |entry| {
@@ -207,7 +217,7 @@ fn refreshLspCache(self: *Self) !void {
                 .transaction => |tx| {
                     if (tx.postings) |range| {
                         for (range.start..range.end) |i| {
-                            try self.accounts_by_line.put(@intCast(f), data.postings.items(.account)[i]);
+                            try self.cacheAccountPos(f, data.postings.items(.account)[i]);
                         }
                     }
                 },
@@ -216,23 +226,23 @@ fn refreshLspCache(self: *Self) !void {
                         .file = @intCast(f),
                         .line = entry.main_token.line,
                     });
-                    try self.accounts_by_line.put(@intCast(f), open.account);
+                    try self.cacheAccountPos(f, open.account);
                 },
                 .close => |close| {
-                    try self.accounts_by_line.put(@intCast(f), close.account);
+                    try self.cacheAccountPos(f, close.account);
                 },
                 .pad => |pad| {
-                    try self.accounts_by_line.put(@intCast(f), pad.account);
-                    try self.accounts_by_line.put(@intCast(f), pad.pad_to);
+                    try self.cacheAccountPos(f, pad.account);
+                    try self.cacheAccountPos(f, pad.pad_to);
                 },
                 .balance => |balance| {
-                    try self.accounts_by_line.put(@intCast(f), balance.account);
+                    try self.cacheAccountPos(f, balance.account);
                 },
                 .note => |note| {
-                    try self.accounts_by_line.put(@intCast(f), note.account);
+                    try self.cacheAccountPos(f, note.account);
                 },
                 .document => |document| {
-                    try self.accounts_by_line.put(@intCast(f), document.account);
+                    try self.cacheAccountPos(f, document.account);
                 },
                 else => {},
             }
@@ -248,6 +258,11 @@ pub fn get_account_by_pos(self: *Self, uri_value: []const u8, line: u32, col: u1
 pub fn get_account_open_pos(self: *Self, account: []const u8) ?struct { Uri, u32 } {
     const entry = self.accounts.get(account) orelse return null;
     return .{ self.uris.items[entry.file], entry.line };
+}
+
+pub fn get_account_positions(self: *Self, uri_value: []const u8, account: []const u8) ?[]const lookup.LineSpan {
+    const file = self.files_by_uri.get(uri_value) orelse return null;
+    return self.positions_by_account.get_positions(@intCast(file), account);
 }
 
 pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !void {

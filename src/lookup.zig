@@ -20,7 +20,6 @@ pub const AccountsByLine = struct {
         var iter = self.map.valueIterator();
         while (iter.next()) |v| v.deinit();
         self.map.deinit();
-        std.debug.print("AccountsByLine deinit\n", .{});
     }
 
     pub fn clear(self: *AccountsByLine) void {
@@ -57,6 +56,80 @@ pub const AccountsByLine = struct {
             }
         }
         return null;
+    }
+};
+
+pub const PositionsByAccount = struct {
+    map: Map,
+
+    const Map = std.HashMap(FileAccount, std.ArrayList(LineSpan), FileAccountContext, std.hash_map.default_max_load_percentage);
+
+    pub fn init(alloc: std.mem.Allocator) PositionsByAccount {
+        return .{
+            .map = Map.init(alloc),
+        };
+    }
+
+    pub fn deinit(self: *PositionsByAccount) void {
+        var iter = self.map.valueIterator();
+        while (iter.next()) |v| v.deinit();
+        self.map.deinit();
+    }
+
+    pub fn clear(self: *PositionsByAccount) void {
+        var iter = self.map.valueIterator();
+        while (iter.next()) |v| v.deinit();
+        self.map.clearRetainingCapacity();
+    }
+
+    pub fn put(self: *PositionsByAccount, file: u32, token: Lexer.Token) !void {
+        const file_account = FileAccount{
+            .file = file,
+            .account = token.slice,
+        };
+        const entry = try self.map.getOrPut(file_account);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = std.ArrayList(LineSpan).init(self.map.allocator);
+        }
+        try entry.value_ptr.append(LineSpan{
+            .line = token.line,
+            .start_col = token.start_col,
+            .end_col = token.end_col,
+        });
+    }
+
+    pub fn get_positions(self: *PositionsByAccount, file: u32, account: []const u8) ?[]const LineSpan {
+        const file_account = FileAccount{
+            .file = file,
+            .account = account,
+        };
+        const entry = self.map.get(file_account) orelse return null;
+        return entry.items;
+    }
+};
+
+pub const LineSpan = struct {
+    line: u32,
+    start_col: u16,
+    end_col: u16,
+};
+
+const FileAccount = struct {
+    file: u32,
+    account: []const u8,
+};
+
+const FileAccountContext = struct {
+    pub fn hash(self: @This(), key: FileAccount) u64 {
+        _ = self;
+        var hasher = std.hash.Wyhash.init(0);
+        std.hash.autoHashStrat(&hasher, key, .Deep);
+        return hasher.final();
+    }
+
+    pub fn eql(self: @This(), a: FileAccount, b: FileAccount) bool {
+        _ = self;
+        return std.mem.eql(u8, a.account, b.account) and a.file == b.file;
     }
 };
 

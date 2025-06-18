@@ -85,7 +85,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                     .serverInfo = .{
                                         .name = "zigcount language server",
                                     },
-                                    .capabilities = .{ .definitionProvider = .{ .bool = true }, .hoverProvider = .{ .bool = true }, .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "#", "^" } }, .textDocumentSync = .{ .TextDocumentSyncOptions = .{
+                                    .capabilities = .{ .documentHighlightProvider = .{ .bool = true }, .definitionProvider = .{ .bool = true }, .hoverProvider = .{ .bool = true }, .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "#", "^" } }, .textDocumentSync = .{ .TextDocumentSyncOptions = .{
                                         .openClose = false,
                                         .change = lsp.types.TextDocumentSyncKind.Full,
                                     } } },
@@ -174,6 +174,35 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     };
                     try transport.any().writeResponse(alloc, request.id, lsp.types.Location, result, .{});
                 },
+                .@"textDocument/documentHighlight" => |params| {
+                    const uri = params.textDocument.uri;
+                    const account = state.project.get_account_by_pos(uri, @intCast(params.position.line), @intCast(params.position.character)) orelse {
+                        try transport.any().writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
+                    if (state.project.get_account_positions(uri, account)) |positions| {
+                        const highlights = try alloc.alloc(lsp.types.DocumentHighlight, positions.len);
+                        defer alloc.free(highlights);
+                        for (positions, 0..) |pos, i| {
+                            highlights[i] = .{
+                                .range = .{
+                                    .start = .{
+                                        .line = @intCast(pos.line),
+                                        .character = @intCast(pos.start_col),
+                                    },
+                                    .end = .{
+                                        .line = @intCast(pos.line),
+                                        .character = @intCast(pos.end_col),
+                                    },
+                                },
+                                .kind = .Text,
+                            };
+                        }
+                        try transport.any().writeResponse(alloc, request.id, []lsp.types.DocumentHighlight, highlights, .{});
+                    } else {
+                        try transport.any().writeResponse(alloc, request.id, void, {}, .{});
+                    }
+                },
                 .other => try transport.any().writeResponse(alloc, request.id, void, {}, .{}),
             },
             .notification => |notification| switch (notification.params) {
@@ -254,6 +283,7 @@ const RequestMethods = union(enum) {
     @"textDocument/hover": lsp.types.HoverParams,
     @"textDocument/completion": lsp.types.CompletionParams,
     @"textDocument/definition": lsp.types.DefinitionParams,
+    @"textDocument/documentHighlight": lsp.types.DocumentHighlightParams,
     other: lsp.MethodWithParams,
 };
 
