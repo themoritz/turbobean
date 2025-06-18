@@ -36,7 +36,7 @@ pub const Tokens = std.ArrayList(Lexer.Token);
 
 pub const Posting = struct {
     flag: ?Lexer.Token,
-    account: []const u8,
+    account: Lexer.Token,
     amount: Amount,
     cost: ?Cost,
     price: ?Price,
@@ -130,13 +130,13 @@ pub const Config = struct {
 };
 
 pub const Open = struct {
-    account: []const u8,
+    account: Lexer.Token,
     currencies: ?Range,
     booking: ?[]const u8,
 };
 
 pub const Close = struct {
-    account: []const u8,
+    account: Lexer.Token,
 };
 
 pub const Commodity = struct {
@@ -144,12 +144,12 @@ pub const Commodity = struct {
 };
 
 pub const Pad = struct {
-    account: []const u8,
-    pad_to: []const u8,
+    account: Lexer.Token,
+    pad_to: Lexer.Token,
 };
 
 pub const Balance = struct {
-    account: []const u8,
+    account: Lexer.Token,
     amount: Amount,
     tolerance: ?Number,
 };
@@ -170,12 +170,12 @@ pub const Query = struct {
 };
 
 pub const Note = struct {
-    account: []const u8,
+    account: Lexer.Token,
     note: []const u8,
 };
 
 pub const Document = struct {
-    account: []const u8,
+    account: Lexer.Token,
     filename: []const u8,
 };
 

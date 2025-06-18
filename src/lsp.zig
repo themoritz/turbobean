@@ -84,7 +84,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                     .serverInfo = .{
                                         .name = "zigcount language server",
                                     },
-                                    .capabilities = .{ .hoverProvider = .{ .bool = true }, .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "#", "^" } }, .textDocumentSync = .{ .TextDocumentSyncOptions = .{
+                                    .capabilities = .{ .definitionProvider = .{ .bool = true }, .hoverProvider = .{ .bool = true }, .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "#", "^" } }, .textDocumentSync = .{ .TextDocumentSyncOptions = .{
                                         .openClose = false,
                                         .change = lsp.types.TextDocumentSyncKind.Full,
                                     } } },
@@ -147,6 +147,31 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     if (completions.items.len > 0) {
                         try transport.any().writeResponse(alloc, request.id, lsp.types.CompletionList, .{ .isIncomplete = false, .items = completions.items }, .{});
                     }
+                },
+                .@"textDocument/definition" => |params| {
+                    const uri = params.textDocument.uri;
+                    const account = state.project.get_account_by_pos(uri, @intCast(params.position.line), @intCast(params.position.character)) orelse {
+                        try transport.any().writeResponse(alloc, request.id, void, {}, .{});
+                        continue;
+                    };
+                    const result_uri, const result_line = state.project.get_account_open_pos(account) orelse {
+                        try transport.any().writeResponse(alloc, request.id, void, {}, .{});
+                        continue;
+                    };
+                    const result = lsp.types.Location{
+                        .uri = result_uri.value,
+                        .range = .{
+                            .start = .{
+                                .line = result_line,
+                                .character = 0,
+                            },
+                            .end = .{
+                                .line = result_line,
+                                .character = 0,
+                            },
+                        },
+                    };
+                    try transport.any().writeResponse(alloc, request.id, lsp.types.Location, result, .{});
                 },
                 .other => try transport.any().writeResponse(alloc, request.id, void, {}, .{}),
             },
@@ -227,6 +252,7 @@ const RequestMethods = union(enum) {
     shutdown,
     @"textDocument/hover": lsp.types.HoverParams,
     @"textDocument/completion": lsp.types.CompletionParams,
+    @"textDocument/definition": lsp.types.DefinitionParams,
     other: lsp.MethodWithParams,
 };
 

@@ -210,7 +210,7 @@ fn parseEntry(p: *Self) !?void {
         },
         .keyword_open => {
             _ = p.advanceToken();
-            const account = try p.expectTokenSlice(.account);
+            const account = try p.expectToken(.account);
 
             const currency_top = p.currencies.items.len;
             if (p.tryToken(.currency)) |cur| {
@@ -232,7 +232,7 @@ fn parseEntry(p: *Self) !?void {
         },
         .keyword_close => {
             _ = p.advanceToken();
-            const account = try p.expectTokenSlice(.account);
+            const account = try p.expectToken(.account);
             payload = .{ .close = .{
                 .account = account,
             } };
@@ -246,8 +246,8 @@ fn parseEntry(p: *Self) !?void {
         },
         .keyword_pad => {
             _ = p.advanceToken();
-            const account = try p.expectTokenSlice(.account);
-            const pad_to = try p.expectTokenSlice(.account);
+            const account = try p.expectToken(.account);
+            const pad_to = try p.expectToken(.account);
             payload = .{ .pad = .{
                 .account = account,
                 .pad_to = pad_to,
@@ -255,7 +255,7 @@ fn parseEntry(p: *Self) !?void {
         },
         .keyword_balance => {
             _ = p.advanceToken();
-            const account = try p.expectTokenSlice(.account);
+            const account = try p.expectToken(.account);
             const number = try p.expectNumberExpr();
             var tolerance: ?Number = null;
             switch (p.currentToken().tag) {
@@ -302,7 +302,7 @@ fn parseEntry(p: *Self) !?void {
         },
         .keyword_note => {
             _ = p.advanceToken();
-            const account = try p.expectTokenSlice(.account);
+            const account = try p.expectToken(.account);
             const note = try p.expectTokenSlice(.string);
             payload = .{ .note = .{
                 .account = account,
@@ -311,7 +311,7 @@ fn parseEntry(p: *Self) !?void {
         },
         .keyword_document => {
             _ = p.advanceToken();
-            const account = try p.expectTokenSlice(.account);
+            const account = try p.expectToken(.account);
             const filename = try p.expectTokenSlice(.string);
             payload = .{ .document = .{
                 .account = account,
@@ -472,7 +472,7 @@ fn parsePosting(p: *Self) !?usize {
 
     _ = try p.expectToken(.indent);
     const flag = p.parseFlag();
-    const account = p.tryTokenSlice(.account) orelse return null;
+    const account = p.tryToken(.account) orelse return null;
     const amount = try p.parseIncomleteAmount();
     const cost = try p.parseCost();
     const price = try p.parsePriceAnnotation();

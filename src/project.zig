@@ -4,6 +4,7 @@ const Data = @import("data.zig");
 const Tree = @import("tree.zig");
 const Uri = @import("Uri.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
+const lookup = @import("lookup.zig");
 
 const Self = @This();
 
@@ -16,18 +17,14 @@ sorted_entries: std.ArrayList(SortedEntry),
 errors: std.ArrayList(ErrorDetails),
 
 // LSP specific caches
-accounts: std.StringHashMap(AccountPos),
+accounts: std.StringHashMap(lookup.FileLine),
 tags: std.StringHashMap(void),
 links: std.StringHashMap(void),
+accounts_by_line: lookup.AccountsByLine,
 
 const SortedEntry = struct {
     file: u8,
     entry: u32,
-};
-
-const AccountPos = struct {
-    file: u32,
-    line: u32,
 };
 
 /// Load a project from a root file relative to the CWD.
@@ -40,9 +37,10 @@ pub fn load(alloc: Allocator, name: []const u8) !Self {
         .sorted_entries = std.ArrayList(SortedEntry).init(alloc),
         .errors = std.ArrayList(ErrorDetails).init(alloc),
 
-        .accounts = std.StringHashMap(AccountPos).init(alloc),
+        .accounts = std.StringHashMap(lookup.FileLine).init(alloc),
         .tags = std.StringHashMap(void).init(alloc),
         .links = std.StringHashMap(void).init(alloc),
+        .accounts_by_line = lookup.AccountsByLine.init(alloc),
     };
     errdefer self.deinit();
     try self.loadFileRec(name, true);
@@ -65,6 +63,8 @@ pub fn deinit(self: *Self) void {
     self.accounts.deinit();
     self.tags.deinit();
     self.links.deinit();
+
+    self.accounts_by_line.deinit();
 }
 
 fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
@@ -196,16 +196,50 @@ fn refreshLspCache(self: *Self) !void {
                 }
             }
             switch (entry.payload) {
+                .transaction => |tx| {
+                    if (tx.postings) |range| {
+                        for (range.start..range.end) |i| {
+                            try self.accounts_by_line.put(@intCast(f), data.postings.items(.account)[i]);
+                        }
+                    }
+                },
                 .open => |open| {
-                    try self.accounts.put(open.account, .{
+                    try self.accounts.put(open.account.slice, .{
                         .file = @intCast(f),
                         .line = entry.main_token.line,
                     });
+                    try self.accounts_by_line.put(@intCast(f), open.account);
+                },
+                .close => |close| {
+                    try self.accounts_by_line.put(@intCast(f), close.account);
+                },
+                .pad => |pad| {
+                    try self.accounts_by_line.put(@intCast(f), pad.account);
+                    try self.accounts_by_line.put(@intCast(f), pad.pad_to);
+                },
+                .balance => |balance| {
+                    try self.accounts_by_line.put(@intCast(f), balance.account);
+                },
+                .note => |note| {
+                    try self.accounts_by_line.put(@intCast(f), note.account);
+                },
+                .document => |document| {
+                    try self.accounts_by_line.put(@intCast(f), document.account);
                 },
                 else => {},
             }
         }
     }
+}
+
+pub fn get_account_by_pos(self: *Self, uri_value: []const u8, line: u32, col: u16) ?[]const u8 {
+    const file = self.files_by_uri.get(uri_value) orelse return null;
+    return self.accounts_by_line.get_account_by_pos(@intCast(file), line, col);
+}
+
+pub fn get_account_open_pos(self: *Self, account: []const u8) ?struct { Uri, u32 } {
+    const entry = self.accounts.get(account) orelse return null;
+    return .{ self.uris.items[entry.file], entry.line };
 }
 
 pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !void {
@@ -233,7 +267,7 @@ pub fn printTree(self: *Self) !void {
         const entry = data.entries.items[sorted_entry.entry];
         switch (entry.payload) {
             .open => |open| {
-                _ = tree.open(open.account) catch |err| switch (err) {
+                _ = tree.open(open.account.slice) catch |err| switch (err) {
                     error.AccountExists => {},
                     else => return err,
                 };
@@ -242,7 +276,7 @@ pub fn printTree(self: *Self) !void {
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
                         try tree.addPosition(
-                            data.postings.items(.account)[i],
+                            data.postings.items(.account)[i].slice,
                             data.postings.items(.amount)[i].number.?,
                             data.postings.items(.amount)[i].currency.?,
                         );

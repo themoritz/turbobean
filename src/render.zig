@@ -77,7 +77,7 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
         },
         .open => |open| {
             try r.slice("open ");
-            try r.slice(open.account);
+            try r.slice(open.account.slice);
             if (open.currencies) |currencies| {
                 try r.space();
                 for (currencies.start..currencies.end, 0..) |i, j| {
@@ -92,7 +92,7 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
         },
         .close => |close| {
             try r.slice("close ");
-            try r.slice(close.account);
+            try r.slice(close.account.slice);
         },
         .commodity => |commodity| {
             try r.slice("commodity ");
@@ -100,13 +100,13 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
         },
         .pad => |pad| {
             try r.slice("pad ");
-            try r.slice(pad.account);
+            try r.slice(pad.account.slice);
             try r.space();
-            try r.slice(pad.pad_to);
+            try r.slice(pad.pad_to.slice);
         },
         .balance => |balance| {
             try r.slice("balance ");
-            try r.slice(balance.account);
+            try r.slice(balance.account.slice);
             try r.space();
             if (balance.tolerance) |tolerance| {
                 try r.format("{}", .{balance.amount.number.?});
@@ -138,13 +138,13 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
         },
         .note => |note| {
             try r.slice("note ");
-            try r.slice(note.account);
+            try r.slice(note.account.slice);
             try r.space();
             try r.slice(note.note);
         },
         .document => |document| {
             try r.slice("document ");
-            try r.slice(document.account);
+            try r.slice(document.account.slice);
             try r.space();
             try r.slice(document.filename);
         },
@@ -178,7 +178,7 @@ fn renderPosting(r: *Render, posting: usize) !void {
         try r.space();
     }
 
-    try r.slice(r.data.postings.items(.account)[posting]);
+    try r.slice(r.data.postings.items(.account)[posting].slice);
 
     const amount = r.data.postings.items(.amount)[posting];
     if (amount.exists()) try r.space();
