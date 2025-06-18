@@ -18,10 +18,15 @@ pub const AccountsByLine = struct {
 
     pub fn deinit(self: *AccountsByLine) void {
         var iter = self.map.valueIterator();
-        while (iter.next()) |v| {
-            v.*.deinit();
-        }
+        while (iter.next()) |v| v.deinit();
         self.map.deinit();
+        std.debug.print("AccountsByLine deinit\n", .{});
+    }
+
+    pub fn clear(self: *AccountsByLine) void {
+        var iter = self.map.valueIterator();
+        while (iter.next()) |v| v.deinit();
+        self.map.clearRetainingCapacity();
     }
 
     pub fn put(self: *AccountsByLine, file: u32, token: Lexer.Token) !void {
@@ -33,7 +38,7 @@ pub const AccountsByLine = struct {
         if (!entry.found_existing) {
             entry.value_ptr.* = std.ArrayList(AccountSpan).init(self.map.allocator);
         }
-        try entry.value_ptr.*.append(AccountSpan{
+        try entry.value_ptr.append(AccountSpan{
             .name = token.slice,
             .start = token.start_col,
             .end = token.end_col,

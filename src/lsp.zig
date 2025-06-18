@@ -28,6 +28,7 @@ const LspState = struct {
             while (iter.next()) |kv| {
                 kv.value_ptr.deinit();
             }
+            errors.deinit();
         }
         var iter = errors.iterator();
         while (iter.next()) |kv| {
@@ -46,7 +47,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
     var state: LspState = .{};
     defer state.deinit();
 
-    while (true) {
+    loop: while (true) {
         const json_message = try transport.readJsonMessage(alloc);
         defer alloc.free(json_message);
 
@@ -152,11 +153,11 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     const uri = params.textDocument.uri;
                     const account = state.project.get_account_by_pos(uri, @intCast(params.position.line), @intCast(params.position.character)) orelse {
                         try transport.any().writeResponse(alloc, request.id, void, {}, .{});
-                        continue;
+                        continue :loop;
                     };
                     const result_uri, const result_line = state.project.get_account_open_pos(account) orelse {
                         try transport.any().writeResponse(alloc, request.id, void, {}, .{});
-                        continue;
+                        continue :loop;
                     };
                     const result = lsp.types.Location{
                         .uri = result_uri.value,

@@ -115,6 +115,13 @@ pub fn hasErrors(self: *Self) bool {
 
 pub fn collectErrors(self: *const Self, alloc: Allocator) !std.StringHashMap(std.ArrayList(ErrorDetails)) {
     var errors = std.StringHashMap(std.ArrayList(ErrorDetails)).init(alloc);
+    errdefer {
+        var iter = errors.iterator();
+        while (iter.next()) |kv| {
+            kv.value_ptr.deinit();
+        }
+        errors.deinit();
+    }
     for (self.uris.items) |uri| {
         try errors.put(uri.value, std.ArrayList(ErrorDetails).init(alloc));
     }
@@ -182,6 +189,7 @@ fn refreshLspCache(self: *Self) !void {
     self.accounts.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
     self.links.clearRetainingCapacity();
+    self.accounts_by_line.clear();
 
     for (self.files.items, 0..) |data, f| {
         for (data.entries.items) |entry| {
@@ -247,7 +255,8 @@ pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !vo
     const data = &self.files.items[index];
 
     const uri = self.uris.items[index];
-    var new_data, _ = try Data.loadSource(self.alloc, uri, source, false);
+    var new_data, const imports = try Data.loadSource(self.alloc, uri, source, false);
+    defer self.alloc.free(imports);
     // TODO: Do something with imports
     try new_data.balanceTransactions();
 

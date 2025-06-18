@@ -14,7 +14,9 @@ pub const std_options: std.Options = .{
     .log_level = std.log.default_level,
 };
 
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+var debug_allocator: std.heap.DebugAllocator(.{
+    .stack_trace_frames = 24,
+}) = .init;
 
 pub fn main() !void {
     const alloc, const is_debug = switch (builtin.mode) {
