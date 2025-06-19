@@ -49,6 +49,7 @@ const LspState = struct {
 
 pub fn loop(alloc: std.mem.Allocator) !void {
     var transport: lsp.TransportOverStdio = .init(std.io.getStdIn(), std.io.getStdOut());
+    var timer = try std.time.Timer.start();
     var state: LspState = .{};
     defer state.deinit();
 
@@ -68,6 +69,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
             .notification => |notification| std.log.debug("received '{s}' notification from client", .{@tagName(notification.params)}),
             .response => std.log.debug("received response from client", .{}),
         }
+        timer.reset();
 
         switch (parsed_message.value) {
             .request => |request| switch (request.params) {
@@ -233,6 +235,10 @@ pub fn loop(alloc: std.mem.Allocator) !void {
             },
             .response => @panic("Haven't sent any requests to the client"),
         }
+
+        const elapsed_ns = timer.read();
+        const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
+        std.log.debug("Done processing request in {d} ms\n", .{elapsed_ms});
     }
 }
 
