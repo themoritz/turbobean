@@ -42,7 +42,13 @@ const LspState = struct {
             for (kv.value_ptr.items) |err| {
                 try diagnostics.append(try mkDiagnostic(err, alloc));
             }
-            try transport.writeNotification(alloc, "textDocument/publishDiagnostics", lsp.types.PublishDiagnosticsParams, .{ .uri = kv.key_ptr.*, .diagnostics = diagnostics.items }, .{});
+            try transport.writeNotification(
+                alloc,
+                "textDocument/publishDiagnostics",
+                lsp.types.PublishDiagnosticsParams,
+                .{ .uri = kv.key_ptr.*, .diagnostics = diagnostics.items },
+                .{},
+            );
         }
     }
 };
@@ -79,7 +85,12 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     switch (init_result) {
                         .fail_message => |message| {
                             std.log.err("Failed to initialize: {s}", .{message});
-                            try transport.any().writeErrorResponse(alloc, request.id, .{ .code = .internal_error, .message = message }, .{});
+                            try transport.any().writeErrorResponse(
+                                alloc,
+                                request.id,
+                                .{ .code = .internal_error, .message = message },
+                                .{},
+                            );
                             try transport.any().writeNotification(alloc, "exit", void, {}, .{});
                             std.process.exit(1);
                         },
@@ -92,10 +103,20 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                     .serverInfo = .{
                                         .name = "zigcount language server",
                                     },
-                                    .capabilities = .{ .documentHighlightProvider = .{ .bool = true }, .definitionProvider = .{ .bool = true }, .hoverProvider = .{ .bool = true }, .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "#", "^" } }, .textDocumentSync = .{ .TextDocumentSyncOptions = .{
-                                        .openClose = false,
-                                        .change = lsp.types.TextDocumentSyncKind.Full,
-                                    } } },
+                                    .capabilities = .{
+                                        .renameProvider = .{ .bool = true },
+                                        .documentHighlightProvider = .{ .bool = true },
+                                        .definitionProvider = .{ .bool = true },
+                                        .hoverProvider = .{ .bool = true },
+                                        .completionProvider = .{
+                                            .resolveProvider = false,
+                                            .triggerCharacters = &.{ "#", "^" },
+                                        },
+                                        .textDocumentSync = .{ .TextDocumentSyncOptions = .{
+                                            .openClose = false,
+                                            .change = lsp.types.TextDocumentSyncKind.Full,
+                                        } },
+                                    },
                                 },
                                 .{},
                             );
@@ -138,7 +159,12 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                             });
                                         }
                                     },
-                                    else => try transport.any().writeErrorResponse(alloc, request.id, .{ .code = .invalid_params, .message = "Unknown trigger character" }, .{}),
+                                    else => try transport.any().writeErrorResponse(
+                                        alloc,
+                                        request.id,
+                                        .{ .code = .invalid_params, .message = "Unknown trigger character" },
+                                        .{},
+                                    ),
                                 }
                             }
                         } else {
@@ -153,14 +179,23 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     }
 
                     if (completions.items.len > 0) {
-                        try transport.any().writeResponse(alloc, request.id, lsp.types.CompletionList, .{ .isIncomplete = false, .items = completions.items }, .{});
+                        try transport.any().writeResponse(
+                            alloc,
+                            request.id,
+                            lsp.types.CompletionList,
+                            .{ .isIncomplete = false, .items = completions.items },
+                            .{},
+                        );
                     }
                 },
                 .@"textDocument/definition" => |params| {
                     const uri = params.textDocument.uri;
+                    const position = params.position;
                     var iter = state.project.accountIterator(uri);
                     const account = while (iter.next()) |next| {
-                        if (next.token.line == params.position.line and next.token.start_col <= params.position.character and next.token.end_col >= params.position.character) break next.token.slice;
+                        const same_line = next.token.line == position.line;
+                        const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
+                        if (same_line and within_token) break next.token.slice;
                     } else {
                         try transport.any().writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
@@ -186,9 +221,12 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                 },
                 .@"textDocument/documentHighlight" => |params| {
                     const uri = params.textDocument.uri;
+                    const position = params.position;
                     var iter = state.project.accountIterator(uri);
                     const account = while (iter.next()) |next| {
-                        if (next.token.line == params.position.line and next.token.start_col <= params.position.character and next.token.end_col >= params.position.character) break next.token.slice;
+                        const same_line = next.token.line == position.line;
+                        const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
+                        if (same_line and within_token) break next.token.slice;
                     } else {
                         try transport.any().writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
@@ -270,22 +308,36 @@ const InitResult = union(enum) {
 };
 
 fn initialize(alloc: std.mem.Allocator, params: lsp.types.InitializeParams, state: *LspState) !InitResult {
-    if (params.workspaceFolders == null) return .{ .fail_message = try alloc.dupe(u8, "No workspace folder") };
+    if (params.workspaceFolders == null) return .{
+        .fail_message = try alloc.dupe(u8, "No workspace folder"),
+    };
     const workspace_folders = params.workspaceFolders.?;
-    if (workspace_folders.len != 1) return .{ .fail_message = try alloc.dupe(u8, "Expected one workspace folder") };
+    if (workspace_folders.len != 1) return .{
+        .fail_message = try alloc.dupe(u8, "Expected one workspace folder"),
+    };
     const root = workspace_folders[0].name;
 
     const config = Config.load_from_dir(alloc, root) catch |err| switch (err) {
-        error.FileNotFound => return .{ .fail_message = try alloc.dupe(u8, "No config found. Make sure to put a `zigcount.config` file in the workspace folder") },
-        error.InvalidConfig => return .{ .fail_message = try alloc.dupe(u8, "Invalid config. The config should contain a line like `root = file.bean` where file.bean is relative to the workspace root") },
-        else => return .{ .fail_message = try std.fmt.allocPrint(alloc, "Error: {s}", .{@errorName(err)}) },
+        error.FileNotFound => return .{
+            .fail_message = try alloc.dupe(u8, "No config found. Make sure to put a `zigcount.config` file in the workspace folder"),
+        },
+        error.InvalidConfig => return .{
+            .fail_message = try alloc.dupe(u8, "Invalid config. The config should contain a line like `root = file.bean` where file.bean is relative to the workspace root"),
+        },
+        else => return .{
+            .fail_message = try std.fmt.allocPrint(alloc, "Error: {s}", .{@errorName(err)}),
+        },
     };
     defer config.deinit(alloc);
 
     std.log.debug("Loaded config: {any}", .{config});
     state.initialize(alloc, config.root) catch |err| switch (err) {
-        error.FileNotFound => return .{ .fail_message = try std.fmt.allocPrint(alloc, "Could not open `{s}` defined in your `zigcount.config` file", .{config.root}) },
-        else => return .{ .fail_message = try std.fmt.allocPrint(alloc, "Error: {s}", .{@errorName(err)}) },
+        error.FileNotFound => return .{
+            .fail_message = try std.fmt.allocPrint(alloc, "Could not open `{s}` defined in your `zigcount.config` file", .{config.root}),
+        },
+        else => return .{
+            .fail_message = try std.fmt.allocPrint(alloc, "Error: {s}", .{@errorName(err)}),
+        },
     };
 
     return .{ .success = {} };

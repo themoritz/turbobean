@@ -1,0 +1,30 @@
+debug: received 'initialize' request from client
+debug: Loaded config: Config{ .root = "test.bean" }
+debug: Done processing request in 1 ms
+
+debug: received 'initialized' notification from client
+debug: Done processing request in 0 ms
+
+debug: received 'textDocument/documentHighlight' request from client
+debug: received 'textDocument/documentHighlight' request from client
+debug: Done processing request in 1 ms
+
+debug: received 'textDocument/documentHighlight' request from client
+debug: Done processing request in 1 ms
+
+debug: received 'textDocument/documentHighlight' request from client
+debug: Done processing request in 1 ms
+
+debug: received 'textDocument/documentHighlight' request from client
+debug: Done processing request in 0 ms
+
+debug: received 'textDocument/documentHighlight' request from client
+debug: Done processing request in 1 ms
+
+debug: received 'textDocument/documentHighlight' request from client
+debug: Done processing request in 1 ms
+
+debug: received 'shutdown' request from client
+debug: Done processing request in 0 ms
+
+debug: received 'exit' notification from client

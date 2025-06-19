@@ -1,0 +1,21 @@
+2023-01-01 open Assets:A
+2023-01-01 open Assets:B
+2023-01-01 open Assets:C
+
+2024-01-01 txn
+  Assets:A   10 USD
+  Assets:C      USD
+
+2024-01-01 txn
+  Assets:A   USD @ 2 EUR
+  Assets:B   4 EUR
+
+2024-01-01 txn
+  Assets:A   -2 USD @ NZD
+  Assets:A   -2 USD @ 2
+  Assets:B   4 EUR
+  Assets:B   4 NZD
+
+2024-01-01 txn
+  Assets:A   10 USD
+  Assets:C  -10  USD

@@ -1,0 +1,29 @@
+2025-01-01 open Assets:Stocks AAPL,SHORT "FIFO"
+
+2025-01-01 pnl Assets:Stocks Income:PnL
+
+2025-01-01 txn "Buy"
+    Assets:Stocks     10 AAPL @ 10 USD   ; weight = 100 USD, cost {10 USD}
+    Assets:Cash     -100 USD
+
+; 10 AAPL {10 USD}
+; 10 AAPL {15 USD}
+
+2025-01-01 txn "Sell"
+    Assets:Stocks    -15 AAPL @ 30 USD   ; weight = -450; cost-weight = -10 * 10 - 5 * 15 = -175
+    Assets:Cash      450 USD  ; can be inferred
+    Income:PnL      -275 USD  ; automatically added (= proceeds - cost = -450 + 175 )
+
+2025-02-01 txn "Open short"
+    Assets:Stocks    -1 SHORT @ 10 USD  ; weight = -10, cost {10 USD}
+    Assets:Cash      10 USD
+    ; No PnL since there was no position at cost
+
+; -1 SHORT {10 USD}
+
+2025-02-01 txn "Close short, cross line"
+    Assets:Stocks     2 SHORT @ 20 USD  ; weight = 40 = 20 + 20, cost-weight = 1 * 10 = 10
+    Assets:Cash      -40 USD 
+    Income:PnL        10 USD       ; = proceeds - cost = 20 - 10 = 30
+
+; 1 SHORT {20 USD}
