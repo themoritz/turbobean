@@ -5,6 +5,7 @@ const lsp = @import("lsp");
 const Project = @import("project.zig");
 const Config = @import("Config.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
+const Token = @import("lexer.zig").Lexer.Token;
 
 const LspState = struct {
     project: Project = undefined,
@@ -50,6 +51,15 @@ const LspState = struct {
                 .{},
             );
         }
+    }
+
+    pub fn findAccount(self: *const LspState, uri: []const u8, position: lsp.types.Position) ?Token {
+        var iter = self.project.accountIterator(uri);
+        return while (iter.next()) |next| {
+            const same_line = next.token.line == position.line;
+            const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
+            if (same_line and within_token) break next.token;
+        } else null;
     }
 };
 
@@ -104,7 +114,9 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                         .name = "zigcount language server",
                                     },
                                     .capabilities = .{
-                                        .renameProvider = .{ .bool = true },
+                                        .renameProvider = .{
+                                            .RenameOptions = .{ .prepareProvider = true },
+                                        },
                                         .documentHighlightProvider = .{ .bool = true },
                                         .definitionProvider = .{ .bool = true },
                                         .hoverProvider = .{ .bool = true },
@@ -189,18 +201,11 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     }
                 },
                 .@"textDocument/definition" => |params| {
-                    const uri = params.textDocument.uri;
-                    const position = params.position;
-                    var iter = state.project.accountIterator(uri);
-                    const account = while (iter.next()) |next| {
-                        const same_line = next.token.line == position.line;
-                        const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
-                        if (same_line and within_token) break next.token.slice;
-                    } else {
+                    const account = state.findAccount(params.textDocument.uri, params.position) orelse {
                         try transport.any().writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
-                    const result_uri, const result_line = state.project.get_account_open_pos(account) orelse {
+                    const result_uri, const result_line = state.project.get_account_open_pos(account.slice) orelse {
                         try transport.any().writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
@@ -221,21 +226,15 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                 },
                 .@"textDocument/documentHighlight" => |params| {
                     const uri = params.textDocument.uri;
-                    const position = params.position;
-                    var iter = state.project.accountIterator(uri);
-                    const account = while (iter.next()) |next| {
-                        const same_line = next.token.line == position.line;
-                        const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
-                        if (same_line and within_token) break next.token.slice;
-                    } else {
+                    const account = state.findAccount(uri, params.position) orelse {
                         try transport.any().writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
                     var highlights = std.ArrayList(lsp.types.DocumentHighlight).init(alloc);
                     defer highlights.deinit();
-                    var iter2 = state.project.accountIterator(uri);
-                    while (iter2.next()) |next| {
-                        if (std.mem.eql(u8, next.token.slice, account)) {
+                    var iter = state.project.accountIterator(uri);
+                    while (iter.next()) |next| {
+                        if (std.mem.eql(u8, next.token.slice, account.slice)) {
                             try highlights.append(.{
                                 .range = .{
                                     .start = .{
@@ -252,6 +251,74 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         }
                     }
                     try transport.any().writeResponse(alloc, request.id, []lsp.types.DocumentHighlight, highlights.items, .{});
+                },
+                .@"textDocument/prepareRename" => |params| {
+                    const account = state.findAccount(params.textDocument.uri, params.position) orelse {
+                        try transport.any().writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
+                    try transport.any().writeResponse(alloc, request.id, lsp.types.PrepareRenameResult, .{
+                        .literal_1 = .{
+                            .range = .{
+                                .start = .{
+                                    .line = @intCast(account.line),
+                                    .character = @intCast(account.start_col),
+                                },
+                                .end = .{
+                                    .line = @intCast(account.line),
+                                    .character = @intCast(account.end_col),
+                                },
+                            },
+                            .placeholder = account.slice,
+                        },
+                    }, .{});
+                },
+                .@"textDocument/rename" => |params| {
+                    const uri = params.textDocument.uri;
+                    const account = state.findAccount(uri, params.position) orelse {
+                        try transport.any().writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
+
+                    var map = std.AutoHashMap(u32, std.ArrayList(lsp.types.TextEdit)).init(alloc);
+                    defer {
+                        var iter = map.valueIterator();
+                        while (iter.next()) |v| v.deinit();
+                        map.deinit();
+                    }
+
+                    var iter = state.project.accountIterator(null);
+                    while (iter.next()) |next| {
+                        const token = next.token;
+                        if (std.mem.eql(u8, token.slice, account.slice)) {
+                            const entry = try map.getOrPut(next.file);
+                            if (!entry.found_existing) entry.value_ptr.* = std.ArrayList(lsp.types.TextEdit).init(alloc);
+                            try entry.value_ptr.append(.{
+                                .range = .{
+                                    .start = .{
+                                        .line = @intCast(token.line),
+                                        .character = @intCast(token.start_col),
+                                    },
+                                    .end = .{
+                                        .line = @intCast(token.line),
+                                        .character = @intCast(token.end_col),
+                                    },
+                                },
+                                .newText = params.newName,
+                            });
+                        }
+                    }
+
+                    var changes = lsp.parser.Map([]const u8, []const lsp.types.TextEdit){};
+                    defer changes.deinit(alloc);
+
+                    var map_iter = map.iterator();
+                    while (map_iter.next()) |kv| {
+                        const file_uri = state.project.uris.items[kv.key_ptr.*];
+                        try changes.map.put(alloc, file_uri.value, kv.value_ptr.items);
+                    }
+
+                    try transport.any().writeResponse(alloc, request.id, lsp.types.WorkspaceEdit, .{ .changes = changes }, .{});
                 },
                 .other => try transport.any().writeResponse(alloc, request.id, void, {}, .{}),
             },
@@ -352,6 +419,8 @@ const RequestMethods = union(enum) {
     @"textDocument/completion": lsp.types.CompletionParams,
     @"textDocument/definition": lsp.types.DefinitionParams,
     @"textDocument/documentHighlight": lsp.types.DocumentHighlightParams,
+    @"textDocument/prepareRename": lsp.types.PrepareRenameParams,
+    @"textDocument/rename": lsp.types.RenameParams,
     other: lsp.MethodWithParams,
 };
 

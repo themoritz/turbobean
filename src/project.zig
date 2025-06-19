@@ -187,14 +187,14 @@ pub fn pipeline(self: *Self) !void {
 }
 
 pub const AccountIterator = struct {
-    self: *Self,
+    self: *const Self,
     file: u32,
     file_max: u32, // exclusive
     entry: u32,
     posting: u32,
     pad_to: bool,
 
-    pub fn init(self: *Self, file: ?u32) AccountIterator {
+    pub fn init(self: *const Self, file: ?u32) AccountIterator {
         const file_max: u32 = if (file) |f| f + 1 else @intCast(self.files.items.len);
         return .{
             .self = self,
@@ -267,7 +267,7 @@ pub const AccountIterator = struct {
     }
 };
 
-pub fn accountIterator(self: *Self, uri: ?[]const u8) AccountIterator {
+pub fn accountIterator(self: *const Self, uri: ?[]const u8) AccountIterator {
     const file: ?u32 = if (uri) |u| if (self.files_by_uri.get(u)) |f| @intCast(f) else null else null;
     return AccountIterator.init(self, file);
 }
