@@ -33,7 +33,12 @@ const LspState = struct {
         var iter = errors.iterator();
         while (iter.next()) |kv| {
             var diagnostics = std.ArrayList(lsp.types.Diagnostic).init(alloc);
-            defer diagnostics.deinit();
+            defer {
+                for (diagnostics.items) |diagnostic| {
+                    alloc.free(diagnostic.message);
+                }
+                diagnostics.deinit();
+            }
             for (kv.value_ptr.items) |err| {
                 try diagnostics.append(try mkDiagnostic(err, alloc));
             }
