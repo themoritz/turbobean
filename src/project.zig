@@ -4,7 +4,6 @@ const Data = @import("data.zig");
 const Tree = @import("tree.zig");
 const Uri = @import("Uri.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
-const lookup = @import("lookup.zig");
 const Token = @import("lexer.zig").Lexer.Token;
 
 const Self = @This();
@@ -18,15 +17,18 @@ sorted_entries: std.ArrayList(SortedEntry),
 errors: std.ArrayList(ErrorDetails),
 
 // LSP specific caches
-accounts: std.StringHashMap(lookup.FileLine),
+accounts: std.StringHashMap(FileLine),
 tags: std.StringHashMap(void),
 links: std.StringHashMap(void),
-accounts_by_line: lookup.AccountsByLine,
-positions_by_account: lookup.PositionsByAccount,
 
 const SortedEntry = struct {
     file: u8,
     entry: u32,
+};
+
+const FileLine = struct {
+    file: u32,
+    line: u32,
 };
 
 /// Load a project from a root file relative to the CWD.
@@ -39,11 +41,9 @@ pub fn load(alloc: Allocator, name: []const u8) !Self {
         .sorted_entries = std.ArrayList(SortedEntry).init(alloc),
         .errors = std.ArrayList(ErrorDetails).init(alloc),
 
-        .accounts = std.StringHashMap(lookup.FileLine).init(alloc),
+        .accounts = std.StringHashMap(FileLine).init(alloc),
         .tags = std.StringHashMap(void).init(alloc),
         .links = std.StringHashMap(void).init(alloc),
-        .accounts_by_line = lookup.AccountsByLine.init(alloc),
-        .positions_by_account = lookup.PositionsByAccount.init(alloc),
     };
     errdefer self.deinit();
     try self.loadFileRec(name, true);
@@ -66,9 +66,6 @@ pub fn deinit(self: *Self) void {
     self.accounts.deinit();
     self.tags.deinit();
     self.links.deinit();
-
-    self.accounts_by_line.deinit();
-    self.positions_by_account.deinit();
 }
 
 fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
@@ -189,17 +186,96 @@ pub fn pipeline(self: *Self) !void {
     try self.refreshLspCache();
 }
 
-fn cacheAccountPos(self: *Self, file: usize, token: Token) !void {
-    try self.accounts_by_line.put(@intCast(file), token);
-    try self.positions_by_account.put(@intCast(file), token);
+pub const AccountIterator = struct {
+    self: *Self,
+    file: u32,
+    file_max: u32, // exclusive
+    entry: u32,
+    posting: u32,
+    pad_to: bool,
+
+    pub fn init(self: *Self, file: ?u32) AccountIterator {
+        const file_max: u32 = if (file) |f| f + 1 else @intCast(self.files.items.len);
+        return .{
+            .self = self,
+            .file = file orelse 0,
+            .file_max = file_max,
+            .entry = 0,
+            .posting = 0,
+            .pad_to = false,
+        };
+    }
+
+    pub fn next(it: *AccountIterator) ?struct { file: u32, token: Token } {
+        const self = it.self;
+        while (it.file < it.file_max) {
+            const data = self.files.items[it.file];
+
+            // Entries
+            while (it.entry < data.entries.items.len) {
+                const entry = data.entries.items[it.entry];
+                switch (entry.payload) {
+                    .open => |open| {
+                        it.entry += 1;
+                        return .{ .file = it.file, .token = open.account };
+                    },
+                    .close => |close| {
+                        it.entry += 1;
+                        return .{ .file = it.file, .token = close.account };
+                    },
+                    .pad => |pad| {
+                        if (!it.pad_to) {
+                            it.pad_to = true;
+                            return .{ .file = it.file, .token = pad.account };
+                        } else {
+                            it.pad_to = false;
+                            it.entry += 1;
+                            return .{ .file = it.file, .token = pad.pad_to };
+                        }
+                    },
+                    .balance => |balance| {
+                        it.entry += 1;
+                        return .{ .file = it.file, .token = balance.account };
+                    },
+                    .note => |note| {
+                        it.entry += 1;
+                        return .{ .file = it.file, .token = note.account };
+                    },
+                    .document => |document| {
+                        it.entry += 1;
+                        return .{ .file = it.file, .token = document.account };
+                    },
+                    else => {
+                        it.entry += 1;
+                    },
+                }
+            }
+
+            // Postings
+            while (it.posting < data.postings.len) {
+                const token = data.postings.items(.account)[it.posting];
+                it.posting += 1;
+                return .{ .file = it.file, .token = token };
+            }
+
+            it.file += 1;
+            it.entry = 0;
+            it.posting = 0;
+        }
+
+        return null;
+    }
+};
+
+pub fn accountIterator(self: *Self, uri: ?[]const u8) AccountIterator {
+    const file: ?u32 = if (uri) |u| if (self.files_by_uri.get(u)) |f| @intCast(f) else null else null;
+    return AccountIterator.init(self, file);
 }
 
 fn refreshLspCache(self: *Self) !void {
     self.accounts.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
     self.links.clearRetainingCapacity();
-    self.accounts_by_line.clear();
-    self.positions_by_account.clear();
 
     for (self.files.items, 0..) |data, f| {
         for (data.entries.items) |entry| {
@@ -214,35 +290,11 @@ fn refreshLspCache(self: *Self) !void {
                 }
             }
             switch (entry.payload) {
-                .transaction => |tx| {
-                    if (tx.postings) |range| {
-                        for (range.start..range.end) |i| {
-                            try self.cacheAccountPos(f, data.postings.items(.account)[i]);
-                        }
-                    }
-                },
                 .open => |open| {
                     try self.accounts.put(open.account.slice, .{
                         .file = @intCast(f),
                         .line = entry.main_token.line,
                     });
-                    try self.cacheAccountPos(f, open.account);
-                },
-                .close => |close| {
-                    try self.cacheAccountPos(f, close.account);
-                },
-                .pad => |pad| {
-                    try self.cacheAccountPos(f, pad.account);
-                    try self.cacheAccountPos(f, pad.pad_to);
-                },
-                .balance => |balance| {
-                    try self.cacheAccountPos(f, balance.account);
-                },
-                .note => |note| {
-                    try self.cacheAccountPos(f, note.account);
-                },
-                .document => |document| {
-                    try self.cacheAccountPos(f, document.account);
                 },
                 else => {},
             }
@@ -250,19 +302,9 @@ fn refreshLspCache(self: *Self) !void {
     }
 }
 
-pub fn get_account_by_pos(self: *Self, uri_value: []const u8, line: u32, col: u16) ?[]const u8 {
-    const file = self.files_by_uri.get(uri_value) orelse return null;
-    return self.accounts_by_line.get_account_by_pos(@intCast(file), line, col);
-}
-
 pub fn get_account_open_pos(self: *Self, account: []const u8) ?struct { Uri, u32 } {
     const entry = self.accounts.get(account) orelse return null;
     return .{ self.uris.items[entry.file], entry.line };
-}
-
-pub fn get_account_positions(self: *Self, uri_value: []const u8, account: []const u8) ?[]const lookup.LineSpan {
-    const file = self.files_by_uri.get(uri_value) orelse return null;
-    return self.positions_by_account.get_positions(@intCast(file), account);
 }
 
 pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !void {

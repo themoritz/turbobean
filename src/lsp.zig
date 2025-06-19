@@ -113,7 +113,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                 },
                 .@"textDocument/completion" => |params| {
                     var completions = std.ArrayList(lsp.types.CompletionItem).init(alloc);
-                    errdefer completions.deinit();
+                    defer completions.deinit();
 
                     if (params.context) |context| {
                         if (context.triggerKind == .TriggerCharacter) {
@@ -158,7 +158,10 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                 },
                 .@"textDocument/definition" => |params| {
                     const uri = params.textDocument.uri;
-                    const account = state.project.get_account_by_pos(uri, @intCast(params.position.line), @intCast(params.position.character)) orelse {
+                    var iter = state.project.accountIterator(uri);
+                    const account = while (iter.next()) |next| {
+                        if (next.token.line == params.position.line and next.token.start_col <= params.position.character and next.token.end_col >= params.position.character) break next.token.slice;
+                    } else {
                         try transport.any().writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
@@ -183,32 +186,34 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                 },
                 .@"textDocument/documentHighlight" => |params| {
                     const uri = params.textDocument.uri;
-                    const account = state.project.get_account_by_pos(uri, @intCast(params.position.line), @intCast(params.position.character)) orelse {
+                    var iter = state.project.accountIterator(uri);
+                    const account = while (iter.next()) |next| {
+                        if (next.token.line == params.position.line and next.token.start_col <= params.position.character and next.token.end_col >= params.position.character) break next.token.slice;
+                    } else {
                         try transport.any().writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
-                    if (state.project.get_account_positions(uri, account)) |positions| {
-                        const highlights = try alloc.alloc(lsp.types.DocumentHighlight, positions.len);
-                        defer alloc.free(highlights);
-                        for (positions, 0..) |pos, i| {
-                            highlights[i] = .{
+                    var highlights = std.ArrayList(lsp.types.DocumentHighlight).init(alloc);
+                    defer highlights.deinit();
+                    var iter2 = state.project.accountIterator(uri);
+                    while (iter2.next()) |next| {
+                        if (std.mem.eql(u8, next.token.slice, account)) {
+                            try highlights.append(.{
                                 .range = .{
                                     .start = .{
-                                        .line = @intCast(pos.line),
-                                        .character = @intCast(pos.start_col),
+                                        .line = @intCast(next.token.line),
+                                        .character = @intCast(next.token.start_col),
                                     },
                                     .end = .{
-                                        .line = @intCast(pos.line),
-                                        .character = @intCast(pos.end_col),
+                                        .line = @intCast(next.token.line),
+                                        .character = @intCast(next.token.end_col),
                                     },
                                 },
                                 .kind = .Text,
-                            };
+                            });
                         }
-                        try transport.any().writeResponse(alloc, request.id, []lsp.types.DocumentHighlight, highlights, .{});
-                    } else {
-                        try transport.any().writeResponse(alloc, request.id, void, {}, .{});
                     }
+                    try transport.any().writeResponse(alloc, request.id, []lsp.types.DocumentHighlight, highlights.items, .{});
                 },
                 .other => try transport.any().writeResponse(alloc, request.id, void, {}, .{}),
             },
