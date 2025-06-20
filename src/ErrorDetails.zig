@@ -5,10 +5,16 @@ const Uri = @import("Uri.zig");
 const Self = @This();
 
 tag: Tag,
+severity: Severity = .err,
 token: Lexer.Token,
 uri: Uri,
 source: [:0]const u8,
 expected: ?Lexer.Token.Tag,
+
+pub const Severity = enum {
+    err,
+    warn,
+};
 
 pub const Tag = enum {
     expected_declaration,
@@ -30,6 +36,8 @@ pub const Tag = enum {
     tx_division_by_zero,
     tx_multiple_solutions,
 
+    account_not_open,
+
     pub fn message(self: Tag) []const u8 {
         return switch (self) {
             .expected_declaration => "Expected declaration",
@@ -49,6 +57,7 @@ pub const Tag = enum {
             .tx_too_many_variables => "Transaction can't be balanced unambiguously",
             .tx_division_by_zero => "Division by zero while balancing transaction",
             .tx_multiple_solutions => "Transaction can't be balanced unambiguously",
+            .account_not_open => "Account is not open or has been closed. Open it with an open entry",
         };
     }
 };

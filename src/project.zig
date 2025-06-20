@@ -117,10 +117,8 @@ pub fn hasErrors(self: *Self) bool {
 pub fn collectErrors(self: *const Self, alloc: Allocator) !std.StringHashMap(std.ArrayList(ErrorDetails)) {
     var errors = std.StringHashMap(std.ArrayList(ErrorDetails)).init(alloc);
     errdefer {
-        var iter = errors.iterator();
-        while (iter.next()) |kv| {
-            kv.value_ptr.deinit();
-        }
+        var iter = errors.valueIterator();
+        while (iter.next()) |v| v.deinit();
         errors.deinit();
     }
     for (self.uris.items) |uri| {
@@ -138,18 +136,27 @@ pub fn collectErrors(self: *const Self, alloc: Allocator) !std.StringHashMap(std
 }
 
 pub fn printErrors(self: *Self) !void {
-    var num_errors: usize = 0;
-    for (self.files.items) |data| {
-        num_errors += data.errors.items.len;
+    var errors = try self.collectErrors(self.alloc);
+    defer {
+        var iter = errors.valueIterator();
+        while (iter.next()) |v| v.deinit();
+        errors.deinit();
     }
-    num_errors += self.errors.items.len;
+
+    var num_errors: usize = 0;
+    {
+        var iter = errors.valueIterator();
+        while (iter.next()) |v| num_errors += v.*.items.len;
+    }
     if (num_errors == 0) return;
 
     std.debug.print("\x1b[31mError:\x1b[0m The following errors were encountered:\n\n", .{});
 
     var num_printed: usize = 0;
-    for (self.files.items) |data| {
-        for (data.errors.items) |err| {
+
+    var iter = errors.valueIterator();
+    while (iter.next()) |v| {
+        for (v.items) |err| {
             if (num_printed == 10) {
                 std.debug.print("... and {d} more errors\n", .{num_errors - 10});
                 return;
@@ -182,8 +189,66 @@ fn lessThanFn(self: *Self, lhs: SortedEntry, rhs: SortedEntry) bool {
 pub fn pipeline(self: *Self) !void {
     self.errors.clearRetainingCapacity();
     try self.sortEntries();
+
     // TODO: Perform all sorts of checks.
+    try self.checkAccountsOpen();
+
     try self.refreshLspCache();
+}
+
+// Assumes sorted entries.
+pub fn checkAccountsOpen(self: *Self) !void {
+    var open_accounts = std.StringHashMap(void).init(self.alloc);
+    defer open_accounts.deinit();
+
+    for (self.sorted_entries.items) |sorted| {
+        const entry = self.files.items[sorted.file].entries.items[sorted.entry];
+        switch (entry.payload) {
+            .open => |open| {
+                try open_accounts.put(open.account.slice, {});
+            },
+            .close => |close| {
+                const removed = open_accounts.remove(close.account.slice);
+                if (!removed) {
+                    try self.addError(close.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                }
+            },
+            .pad => |pad| {
+                if (!open_accounts.contains(pad.account.slice)) {
+                    try self.addError(pad.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                }
+                if (!open_accounts.contains(pad.pad_to.slice)) {
+                    try self.addError(pad.pad_to, sorted.file, ErrorDetails.Tag.account_not_open);
+                }
+            },
+            .balance => |balance| {
+                if (!open_accounts.contains(balance.account.slice)) {
+                    try self.addError(balance.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                }
+            },
+            .transaction => |tx| {
+                if (tx.postings) |postings| {
+                    for (postings.start..postings.end) |i| {
+                        const account = self.files.items[sorted.file].postings.items(.account)[i];
+                        if (!open_accounts.contains(account.slice)) {
+                            try self.addError(account, sorted.file, ErrorDetails.Tag.account_not_open);
+                        }
+                    }
+                }
+            },
+            .note => |note| {
+                if (!open_accounts.contains(note.account.slice)) {
+                    try self.addWarning(note.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                }
+            },
+            .document => |document| {
+                if (!open_accounts.contains(document.account.slice)) {
+                    try self.addWarning(document.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                }
+            },
+            else => {},
+        }
+    }
 }
 
 pub const AccountIterator = struct {
@@ -354,4 +419,25 @@ pub fn printTree(self: *Self) !void {
     }
 
     try tree.print();
+}
+
+fn addErrorDetails(self: *Self, token: Token, file_id: u8, tag: ErrorDetails.Tag, severity: ErrorDetails.Severity) !void {
+    const uri = self.uris.items[@intCast(file_id)];
+    const source = self.files.items[file_id].source;
+    try self.errors.append(ErrorDetails{
+        .tag = tag,
+        .severity = severity,
+        .token = token,
+        .uri = uri,
+        .source = source,
+        .expected = null,
+    });
+}
+
+fn addWarning(self: *Self, token: Token, file_id: u8, tag: ErrorDetails.Tag) !void {
+    try self.addErrorDetails(token, file_id, tag, .warn);
+}
+
+fn addError(self: *Self, token: Token, file_id: u8, tag: ErrorDetails.Tag) !void {
+    try self.addErrorDetails(token, file_id, tag, .err);
 }

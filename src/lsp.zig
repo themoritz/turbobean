@@ -69,7 +69,11 @@ pub fn loop(alloc: std.mem.Allocator) !void {
     var state: LspState = .{};
     defer state.deinit();
 
-    loop: while (true) {
+    loop: while (true) : ({
+        const elapsed_ns = timer.read();
+        const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
+        std.log.debug("Completed in {d} ms\n", .{elapsed_ms});
+    }) {
         const json_message = try transport.readJsonMessage(alloc);
         defer alloc.free(json_message);
 
@@ -81,9 +85,9 @@ pub fn loop(alloc: std.mem.Allocator) !void {
         defer parsed_message.deinit();
 
         switch (parsed_message.value) {
-            .request => |request| std.log.debug("received '{s}' request from client", .{@tagName(request.params)}),
-            .notification => |notification| std.log.debug("received '{s}' notification from client", .{@tagName(notification.params)}),
-            .response => std.log.debug("received response from client", .{}),
+            .request => |request| std.log.debug("Received '{s}' request", .{@tagName(request.params)}),
+            .notification => |notification| std.log.debug("Received '{s}' notification", .{@tagName(notification.params)}),
+            .response => std.log.debug("Received response from client", .{}),
         }
         timer.reset();
 
@@ -370,16 +374,15 @@ pub fn loop(alloc: std.mem.Allocator) !void {
             },
             .response => @panic("Haven't sent any requests to the client"),
         }
-
-        const elapsed_ns = timer.read();
-        const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
-        std.log.debug("Done processing request in {d} ms\n", .{elapsed_ms});
     }
 }
 
 fn mkDiagnostic(err: ErrorDetails, alloc: Allocator) !lsp.types.Diagnostic {
     return .{
-        .severity = .Error,
+        .severity = switch (err.severity) {
+            .err => .Error,
+            .warn => .Warning,
+        },
         .range = .{
             .start = .{ .line = err.token.line, .character = err.token.start_col },
             .end = .{ .line = err.token.line, .character = err.token.end_col },
