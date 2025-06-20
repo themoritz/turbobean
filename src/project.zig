@@ -5,6 +5,7 @@ const Tree = @import("tree.zig");
 const Uri = @import("Uri.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
 const Token = @import("lexer.zig").Lexer.Token;
+const Inventory = @import("inventory.zig").Inventory;
 
 const Self = @This();
 
@@ -190,6 +191,9 @@ pub fn pipeline(self: *Self) !void {
 
     // TODO: Perform all sorts of checks.
     try self.checkAccountsOpen();
+    // Can only post to currencies defined at open
+    // Check balance assertions
+    // Introduce txs for padding
 
     try self.refreshLspCache();
 }
@@ -269,7 +273,9 @@ pub const AccountIterator = struct {
         };
     }
 
-    pub fn next(it: *AccountIterator) ?struct { file: u32, token: Token } {
+    pub const Kind = enum { open, close, pad, pad_to, balance, posting, note, document };
+
+    pub fn next(it: *AccountIterator) ?struct { file: u32, token: Token, kind: Kind } {
         const self = it.self;
         while (it.file < it.file_max) {
             const data = self.files.items[it.file];
@@ -280,33 +286,33 @@ pub const AccountIterator = struct {
                 switch (entry.payload) {
                     .open => |open| {
                         it.entry += 1;
-                        return .{ .file = it.file, .token = open.account };
+                        return .{ .file = it.file, .token = open.account, .kind = .open };
                     },
                     .close => |close| {
                         it.entry += 1;
-                        return .{ .file = it.file, .token = close.account };
+                        return .{ .file = it.file, .token = close.account, .kind = .close };
                     },
                     .pad => |pad| {
                         if (!it.pad_to) {
                             it.pad_to = true;
-                            return .{ .file = it.file, .token = pad.account };
+                            return .{ .file = it.file, .token = pad.account, .kind = .pad };
                         } else {
                             it.pad_to = false;
                             it.entry += 1;
-                            return .{ .file = it.file, .token = pad.pad_to };
+                            return .{ .file = it.file, .token = pad.pad_to, .kind = .pad_to };
                         }
                     },
                     .balance => |balance| {
                         it.entry += 1;
-                        return .{ .file = it.file, .token = balance.account };
+                        return .{ .file = it.file, .token = balance.account, .kind = .balance };
                     },
                     .note => |note| {
                         it.entry += 1;
-                        return .{ .file = it.file, .token = note.account };
+                        return .{ .file = it.file, .token = note.account, .kind = .note };
                     },
                     .document => |document| {
                         it.entry += 1;
-                        return .{ .file = it.file, .token = document.account };
+                        return .{ .file = it.file, .token = document.account, .kind = .document };
                     },
                     else => {
                         it.entry += 1;
@@ -318,7 +324,7 @@ pub const AccountIterator = struct {
             while (it.posting < data.postings.len) {
                 const token = data.postings.items(.account)[it.posting];
                 it.posting += 1;
-                return .{ .file = it.file, .token = token };
+                return .{ .file = it.file, .token = token, .kind = .posting };
             }
 
             it.file += 1;
@@ -363,6 +369,42 @@ fn refreshLspCache(self: *Self) !void {
             }
         }
     }
+}
+
+pub fn accountInventoryUntilLine(
+    self: *Self,
+    account: []const u8,
+    uri: []const u8,
+    line: u32,
+) !?struct { before: Inventory, after: Inventory } {
+    const file = self.files_by_uri.get(uri) orelse return null;
+    var inv = Inventory.init(self.alloc);
+    errdefer inv.deinit();
+    for (self.sorted_entries.items) |sorted_entry| {
+        const entry = self.files.items[sorted_entry.file].entries.items[sorted_entry.entry];
+        switch (entry.payload) {
+            .transaction => |tx| {
+                if (tx.postings) |postings| {
+                    for (postings.start..postings.end) |i| {
+                        const p = self.files.items[sorted_entry.file].postings;
+                        const p_account = p.items(.account)[i];
+                        if (std.mem.eql(u8, p_account.slice, account)) {
+                            if (p_account.line == line and sorted_entry.file == file) {
+                                var after = try inv.clone(self.alloc);
+                                errdefer after.deinit();
+                                try after.add(p.items(.amount)[i].number.?, p.items(.amount)[i].currency.?);
+                                return .{ .before = inv, .after = after };
+                            } else {
+                                try inv.add(p.items(.amount)[i].number.?, p.items(.amount)[i].currency.?);
+                            }
+                        }
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+    return null;
 }
 
 pub fn get_account_open_pos(self: *Self, account: []const u8) ?struct { Uri, u32 } {

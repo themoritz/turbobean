@@ -56,6 +56,16 @@ pub const Inventory = struct {
             try std.fmt.format(writer, "{any} {s}", .{ entry.value_ptr.*, entry.key_ptr.* });
         }
     }
+
+    pub fn clone(self: *const Inventory, alloc: Allocator) !Inventory {
+        var result = Inventory.init(alloc);
+        errdefer result.deinit();
+        var iter = self.by_currency.iterator();
+        while (iter.next()) |entry| {
+            try result.add(entry.value_ptr.*, entry.key_ptr.*);
+        }
+        return result;
+    }
 };
 
 test "combine" {

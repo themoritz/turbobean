@@ -166,12 +166,52 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                 },
                 .shutdown => try transport.any().writeResponse(alloc, request.id, void, {}, .{}),
                 .@"textDocument/hover" => |params| {
-                    _ = params;
-                    const result = lsp.types.Hover{ .contents = .{ .MarkupContent = lsp.types.MarkupContent{
-                        .kind = lsp.types.MarkupKind.plaintext,
-                        .value = "Hello, world!",
-                    } } };
-                    try transport.any().writeResponse(alloc, request.id, lsp.types.Hover, result, .{});
+                    const uri = params.textDocument.uri;
+                    const position = params.position;
+                    var iter = state.project.accountIterator(uri);
+                    const account = while (iter.next()) |next| {
+                        const same_line = next.token.line == position.line;
+                        const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
+                        if (same_line and within_token and next.kind == .posting) break next.token;
+                    } else {
+                        try transport.any().writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
+
+                    if (try state.project.accountInventoryUntilLine(account.slice, uri, position.line)) |inv| {
+                        defer {
+                            var before = inv.before;
+                            var after = inv.after;
+                            before.deinit();
+                            after.deinit();
+                        }
+                        var value = std.ArrayList(u8).init(alloc);
+                        defer value.deinit();
+                        const writer = value.writer();
+                        {
+                            try writer.writeAll("Before:\n");
+                            var currency_iter = inv.before.by_currency.iterator();
+                            while (currency_iter.next()) |kv| {
+                                try writer.print("• {d} {s}\n", .{ kv.value_ptr.*, kv.key_ptr.* });
+                            }
+                        }
+                        {
+                            try writer.writeAll("\nAfter:\n");
+                            var currency_iter = inv.after.by_currency.iterator();
+                            while (currency_iter.next()) |kv| {
+                                try writer.print("• {d} {s}\n", .{ kv.value_ptr.*, kv.key_ptr.* });
+                            }
+                        }
+
+                        const result = lsp.types.Hover{ .contents = .{ .MarkupContent = lsp.types.MarkupContent{
+                            .kind = lsp.types.MarkupKind.plaintext,
+                            .value = value.items,
+                        } } };
+                        try transport.any().writeResponse(alloc, request.id, lsp.types.Hover, result, .{});
+                    } else {
+                        try transport.any().writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    }
                 },
                 .@"textDocument/completion" => |params| {
                     var completions = std.ArrayList(lsp.types.CompletionItem).init(alloc);
