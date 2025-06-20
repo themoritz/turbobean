@@ -90,6 +90,19 @@ pub fn loop(alloc: std.mem.Allocator) !void {
         switch (parsed_message.value) {
             .request => |request| switch (request.params) {
                 .initialize => |params| {
+                    if (params.workDoneToken) |token| {
+                        var map = std.json.ObjectMap.init(alloc);
+                        defer map.deinit();
+                        try map.put("kind", .{ .string = "begin" });
+                        try map.put("title", .{ .string = "Initializing" });
+                        try transport.any().writeNotification(
+                            alloc,
+                            "$/progress",
+                            lsp.types.ProgressParams,
+                            .{ .token = token, .value = std.json.Value{ .object = map } },
+                            .{},
+                        );
+                    }
                     const init_result = try initialize(alloc, params, &state);
                     defer init_result.deinit(alloc);
                     switch (init_result) {
@@ -132,6 +145,18 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                 },
                                 .{},
                             );
+                            if (params.workDoneToken) |token| {
+                                var map = std.json.ObjectMap.init(alloc);
+                                defer map.deinit();
+                                try map.put("kind", .{ .string = "end" });
+                                try transport.any().writeNotification(
+                                    alloc,
+                                    "$/progress",
+                                    lsp.types.ProgressParams,
+                                    .{ .token = token, .value = std.json.Value{ .object = map } },
+                                    .{},
+                                );
+                            }
                         },
                     }
                 },
