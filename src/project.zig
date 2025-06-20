@@ -150,8 +150,6 @@ pub fn printErrors(self: *Self) !void {
     }
     if (num_errors == 0) return;
 
-    std.debug.print("\x1b[31mError:\x1b[0m The following errors were encountered:\n\n", .{});
-
     var num_printed: usize = 0;
 
     var iter = errors.valueIterator();
@@ -161,7 +159,7 @@ pub fn printErrors(self: *Self) !void {
                 std.debug.print("... and {d} more errors\n", .{num_errors - 10});
                 return;
             }
-            try err.print(self.alloc);
+            try err.print(self.alloc, true);
             num_printed += 1;
         }
     }

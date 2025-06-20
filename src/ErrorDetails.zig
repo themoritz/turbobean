@@ -75,13 +75,19 @@ pub fn message(e: Self, alloc: Allocator) ![]const u8 {
     return buffer.toOwnedSlice();
 }
 
-pub fn print(e: Self, alloc: Allocator) !void {
-    const rendered = try dump(e, alloc);
+pub fn print(e: Self, alloc: Allocator, colors: bool) !void {
+    const rendered = try dump(e, alloc, colors);
     defer alloc.free(rendered);
     std.debug.print("{s}\n", .{rendered});
 }
 
-pub fn dump(e: Self, alloc: Allocator) ![]const u8 {
+pub fn dump(e: Self, alloc: Allocator, colors: bool) ![]const u8 {
+    const color_on = if (colors) switch (e.severity) {
+        .err => "\x1b[31m",
+        .warn => "\x1b[33m",
+    } else "";
+    const color_off = if (colors) "\x1b[0m" else "";
+
     var buffer = std.ArrayList(u8).init(alloc);
     defer buffer.deinit();
 
@@ -113,7 +119,7 @@ pub fn dump(e: Self, alloc: Allocator) ![]const u8 {
     }
 
     std.debug.assert(line_start == line_end);
-    std.debug.assert(col_start <= col_end);
+    std.debug.assert(col_start < col_end);
 
     var line_pos_end = e.source.len;
     for (end..e.source.len) |i| {
@@ -123,56 +129,52 @@ pub fn dump(e: Self, alloc: Allocator) ![]const u8 {
         }
     }
 
+    const msg = try e.message(alloc);
+    defer alloc.free(msg);
+
+    const severity = switch (e.severity) {
+        .err => "Error",
+        .warn => "Warning",
+    };
+
     const relative = try e.uri.relative(alloc);
     defer alloc.free(relative);
-    try std.fmt.format(buffer.writer(), "{s}:\n", .{relative});
+
+    try std.fmt.format(
+        buffer.writer(),
+        "{s}: [{s}{s}{s}] {s}\n",
+        .{ relative, color_on, severity, color_off, msg },
+    );
 
     try std.fmt.format(buffer.writer(), "{d:>5} | {s}\n", .{ line_start + 1, e.source[line_pos..line_pos_end] });
     for (0..col_start + 8) |_| try buffer.append(' ');
-    if (col_start == col_end) {
-        try buffer.append('\\');
-    } else {
-        for (col_start..col_end) |_| try buffer.append('^');
-    }
+    try buffer.appendSlice(color_on);
+    try buffer.appendNTimes('^', col_end - col_start);
+    try buffer.appendSlice(color_off);
 
     try buffer.append('\n');
-
-    for (0..col_start + 8) |_| try buffer.append(' ');
-    const msg = try e.message(alloc);
-    defer alloc.free(msg);
-    try buffer.appendSlice(msg);
 
     return buffer.toOwnedSlice();
 }
 
 test "render" {
-    try testLoc(2, 0,
-        \\Hello Foo
-    ,
-        \\test.bean:
-        \\    1 | Hello Foo
-        \\          \
-        \\          Expected string, found number
-        \\
-    );
-
     try testLoc(0, 1,
         \\Hello Foo
     ,
-        \\test.bean:
+        \\test.bean: Error: Expected string, found number
+        \\
         \\    1 | Hello Foo
         \\        ^
-        \\        Expected string, found number
         \\
     );
 
     try testLoc(6, 3,
         \\Hello Foo
     ,
-        \\test.bean:
+        \\test.bean: Error: Expected string, found number
+        \\
         \\    1 | Hello Foo
         \\              ^^^
-        \\              Expected string, found number
         \\
     );
 }
@@ -188,7 +190,7 @@ fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !vo
         .source = source,
         .expected = .string,
     };
-    const rendered = try e.dump(alloc);
+    const rendered = try e.dump(alloc, false);
     defer alloc.free(rendered);
 
     try std.testing.expectEqualSlices(u8, expected, rendered);
