@@ -66,7 +66,11 @@ pub fn message(e: Self, alloc: Allocator) ![]const u8 {
     var buffer = std.ArrayList(u8).init(alloc);
     switch (e.tag) {
         .expected_token => {
-            try std.fmt.format(buffer.writer(), "Expected {s}, found {s}\n", .{ @tagName(e.expected.?), @tagName(e.token.tag) });
+            try std.fmt.format(
+                buffer.writer(),
+                "Expected {s}, found {s}\n",
+                .{ @tagName(e.expected.?), @tagName(e.token.tag) },
+            );
         },
         else => {
             try std.fmt.format(buffer.writer(), "{s}\n", .{e.tag.message()});
@@ -146,7 +150,11 @@ pub fn dump(e: Self, alloc: Allocator, colors: bool) ![]const u8 {
         .{ relative, color_on, severity, color_off, msg },
     );
 
-    try std.fmt.format(buffer.writer(), "{d:>5} | {s}\n", .{ line_start + 1, e.source[line_pos..line_pos_end] });
+    try std.fmt.format(
+        buffer.writer(),
+        "{d:>5} | {s}\n",
+        .{ line_start + 1, e.source[line_pos..line_pos_end] },
+    );
     for (0..col_start + 8) |_| try buffer.append(' ');
     try buffer.appendSlice(color_on);
     try buffer.appendNTimes('^', col_end - col_start);
@@ -161,7 +169,7 @@ test "render" {
     try testLoc(0, 1,
         \\Hello Foo
     ,
-        \\test.bean: Error: Expected string, found number
+        \\test.bean: [Error] Expected string, found number
         \\
         \\    1 | Hello Foo
         \\        ^
@@ -171,7 +179,7 @@ test "render" {
     try testLoc(6, 3,
         \\Hello Foo
     ,
-        \\test.bean: Error: Expected string, found number
+        \\test.bean: [Error] Expected string, found number
         \\
         \\    1 | Hello Foo
         \\              ^^^
@@ -185,7 +193,13 @@ fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !vo
     defer uri.deinit(alloc);
     const e = Self{
         .tag = .expected_token,
-        .token = Lexer.Token{ .tag = .number, .slice = source[start .. start + len], .line = 0, .start_col = @intCast(start), .end_col = @intCast(start + len) },
+        .token = Lexer.Token{
+            .tag = .number,
+            .slice = source[start .. start + len],
+            .line = 0,
+            .start_col = @intCast(start),
+            .end_col = @intCast(start + len),
+        },
         .uri = uri,
         .source = source,
         .expected = .string,

@@ -178,6 +178,7 @@ fn parseDeclarationRecoverable(p: *Self) !?void {
                         _ = p.advanceToken();
                         break;
                     },
+                    .eof => return null,
                     else => _ = p.advanceToken(),
                 }
             }
@@ -965,6 +966,10 @@ test "comments" {
         \\
         \\2021-01-01 open Assets:Cash
     , &.{ .open, .open, .open });
+}
+
+test "recover without final newline" {
+    try testEntries("2015-01-01", &.{});
 }
 
 const EntryTag = @typeInfo(Data.Entry.Payload).@"union".tag_type.?;
