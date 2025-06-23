@@ -220,7 +220,7 @@ pub const KeyValue = struct {
 
 pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
     const owned_source = try alloc.dupeZ(u8, source);
-    var uri = try Uri.from_relative_to_cwd(alloc, "test.bean");
+    var uri = try Uri.from_relative_to_cwd(alloc, "dummy.bean");
     defer uri.deinit(alloc);
     const self, const imports = try loadSource(alloc, uri, owned_source, true);
     defer self.alloc.free(imports);

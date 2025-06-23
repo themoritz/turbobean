@@ -169,7 +169,7 @@ test "render" {
     try testLoc(0, 1,
         \\Hello Foo
     ,
-        \\test.bean: [Error] Expected string, found number
+        \\dummy.bean: [Error] Expected string, found number
         \\
         \\    1 | Hello Foo
         \\        ^
@@ -179,7 +179,7 @@ test "render" {
     try testLoc(6, 3,
         \\Hello Foo
     ,
-        \\test.bean: [Error] Expected string, found number
+        \\dummy.bean: [Error] Expected string, found number
         \\
         \\    1 | Hello Foo
         \\              ^^^
@@ -189,7 +189,7 @@ test "render" {
 
 fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !void {
     const alloc = std.testing.allocator;
-    var uri = try Uri.from_relative_to_cwd(alloc, "test.bean");
+    var uri = try Uri.from_relative_to_cwd(alloc, "dummy.bean");
     defer uri.deinit(alloc);
     const e = Self{
         .tag = .expected_token,

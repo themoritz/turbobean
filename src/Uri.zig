@@ -33,9 +33,9 @@ pub fn relative(self: *const Self, alloc: Allocator) ![]const u8 {
 
 test relative {
     const alloc = std.testing.allocator;
-    var uri = try Self.from_relative_to_cwd(alloc, "test.bean");
+    var uri = try Self.from_relative_to_cwd(alloc, "dummy.bean");
     defer uri.deinit(alloc);
     const result = try uri.relative(alloc);
     defer alloc.free(result);
-    try std.testing.expectEqualStrings("test.bean", result);
+    try std.testing.expectEqualStrings("dummy.bean", result);
 }
