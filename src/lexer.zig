@@ -6,10 +6,11 @@ pub const Lexer = struct {
     cursor: Cursor,
 
     pub const Cursor = struct {
+        /// Byte offset
         pos: usize,
         line: u32,
-        /// Number of character columns from the start of the line (takes
-        /// unicode into account, so not bytes!).
+        /// Number of UTF-16 code points (not bytes), so that we can communicate with LSPs
+        /// who only support UTF-16 position encoding.
         col: u16,
     };
 
@@ -167,6 +168,7 @@ pub const Lexer = struct {
         if (self.cursor.pos + length > self.buffer.len) {
             return null;
         }
+        var codepoint: u21 = undefined;
         switch (length) {
             1 => {
                 if (self.current() < 0x80) {
@@ -176,28 +178,32 @@ pub const Lexer = struct {
             2 => {
                 // Decode and consume
                 const bytes = .{ self.buffer[self.cursor.pos], self.buffer[self.cursor.pos + 1] };
-                _ = unicode.utf8Decode2(bytes) catch {
+                codepoint = unicode.utf8Decode2(bytes) catch {
                     return null;
                 };
             },
             3 => {
                 // Decode and consume
                 const bytes = .{ self.buffer[self.cursor.pos], self.buffer[self.cursor.pos + 1], self.buffer[self.cursor.pos + 2] };
-                _ = unicode.utf8Decode3(bytes) catch {
+                codepoint = unicode.utf8Decode3(bytes) catch {
                     return null;
                 };
             },
             4 => {
                 // Decode and consume
                 const bytes = .{ self.buffer[self.cursor.pos], self.buffer[self.cursor.pos + 1], self.buffer[self.cursor.pos + 2], self.buffer[self.cursor.pos + 3] };
-                _ = unicode.utf8Decode4(bytes) catch {
+                codepoint = unicode.utf8Decode4(bytes) catch {
                     return null;
                 };
             },
             else => unreachable,
         }
         self.cursor.pos += length;
-        self.cursor.col += 1; // Since we only consumed one unicode char.
+        if (codepoint < 0x10000) {
+            self.cursor.col += 1;
+        } else {
+            self.cursor.col += 2;
+        }
         return length;
     }
 
