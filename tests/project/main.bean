@@ -1,9 +1,11 @@
-include "foo.bean"
+include "open.bean"
 
-2021-01-01 pad Expenses:Food Assets:Checking
-2021-01-01 pad Equity:Opening Expenses:Food
-2021-01-01 pad Equity:Opening Expenses:Food
-2021-01-01 pad Equity:Opening  Expenses:Food
+2025-01-01 open Equity:Ope𝄞ning-Balances
+
+2026-01-01 pad Expenses:Food Assets:Checking
+2026-01-01 pad Equity:Ope𝄞ning-Balances Expenses:Food
+2026-01-01 pad Equity:Opening-Balances Expenses:Food
+2026-01-01 pad Equity:Opening-Balances  Expenses:Food
 
 2025-01-01 balance Assets:Checking    100.1 USD
 2025-01-01 note Assets:Checking    "Hello"
@@ -17,10 +19,14 @@ include "foo.bean"
     Assets:Checking    100.10 USD
     Expenses:Food
 
-2010-01-01 txn "Open" ^link1 #tag
+2028-01-01 txn "Open" ^link1 #tag
     Assets:Checking    100.1 USD
-    Assets:Checking
+    Expenses:Food
 
 2025-01-22 * "Buy coffee" ^link ^li ^li
+    Assets:Checking    100.10 USD
+    Expenses:Food
+
+2026-01-01 * "Bytd"
     Assets:Checking    100.10 USD
     Expenses:Food
