@@ -31,6 +31,5 @@
             "start": ";#region",
             "end": ";#endregion"
         }
-    },
-    "wordPattern": "[A-Za-z:]+\\S+|\"([^\\\\\"]|\\\\\")*\""
+    }
 }

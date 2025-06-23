@@ -40,8 +40,9 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 // This method is called when your extension is deactivated
-export function deactivate() {
-	if (client) {
-		client.stop();
+export function deactivate(): Thenable<void> | undefined {
+	if (!client) {
+		return undefined;
 	}
+	return client.stop();
 }

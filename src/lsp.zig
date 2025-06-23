@@ -148,7 +148,10 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                         } },
                                     },
                                 },
-                                .{},
+                                .{
+                                    // VSCode doesn't understand that null means no capability.
+                                    .emit_null_optional_fields = false,
+                                },
                             );
                             if (params.workDoneToken) |token| {
                                 var map = std.json.ObjectMap.init(alloc);
@@ -204,10 +207,24 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                             }
                         }
 
-                        const result = lsp.types.Hover{ .contents = .{ .MarkupContent = lsp.types.MarkupContent{
-                            .kind = lsp.types.MarkupKind.plaintext,
-                            .value = value.items,
-                        } } };
+                        const result = lsp.types.Hover{
+                            .contents = .{
+                                .MarkupContent = lsp.types.MarkupContent{
+                                    .kind = lsp.types.MarkupKind.plaintext,
+                                    .value = value.items,
+                                },
+                            },
+                            .range = .{
+                                .start = .{
+                                    .line = account.line,
+                                    .character = account.start_col,
+                                },
+                                .end = .{
+                                    .line = account.line,
+                                    .character = account.end_col,
+                                },
+                            },
+                        };
                         try transport.any().writeResponse(alloc, request.id, lsp.types.Hover, result, .{});
                     } else {
                         try transport.any().writeResponse(alloc, request.id, void, {}, .{});
