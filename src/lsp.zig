@@ -131,6 +131,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                         .name = "zigcount language server",
                                     },
                                     .capabilities = .{
+                                        .positionEncoding = .@"utf-16",
                                         .renameProvider = .{
                                             .RenameOptions = .{ .prepareProvider = true },
                                         },
@@ -450,7 +451,18 @@ fn initialize(alloc: std.mem.Allocator, params: lsp.types.InitializeParams, stat
     if (workspace_folders.len != 1) return .{
         .fail_message = try alloc.dupe(u8, "Expected one workspace folder"),
     };
-    const root = workspace_folders[0].name;
+    var root = workspace_folders[0].name;
+    std.log.debug("Workspace root: {s}", .{root});
+
+    const cwd = try std.process.getCwdAlloc(alloc);
+    defer alloc.free(cwd);
+    std.log.debug("Current working dir: {s}", .{cwd});
+
+    if (!std.fs.path.isAbsolute(root)) {
+        root = cwd;
+    }
+
+    std.log.debug("Looking for config in {s}", .{root});
 
     const config = Config.load_from_dir(alloc, root) catch |err| switch (err) {
         error.FileNotFound => return .{

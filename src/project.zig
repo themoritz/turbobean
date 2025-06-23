@@ -15,6 +15,11 @@ uris: std.ArrayList(Uri),
 /// Keys are URI values, values are index into files and uris.
 files_by_uri: std.StringHashMap(usize),
 sorted_entries: std.ArrayList(SortedEntry),
+
+// processed_entries: std.ArrayList(ProcessedEntry),
+// synthetic_entries: std.ArrayList(Data.Entry),
+// synthetic_postings: std.MultiArrayList(Data.Posting),
+
 errors: std.ArrayList(ErrorDetails),
 
 // LSP specific caches
@@ -25,6 +30,14 @@ links: std.StringHashMap(void),
 const SortedEntry = struct {
     file: u8,
     entry: u32,
+};
+
+const ProcessedEntry = union(enum) {
+    from_file: struct {
+        file: u32,
+        entry: u32,
+    },
+    synthetic: u32,
 };
 
 const FileLine = struct {
