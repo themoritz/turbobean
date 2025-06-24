@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
     });
 
     exe.root_module.addImport("lsp", b.dependency("lsp_codegen", .{}).module("lsp"));
+    exe.root_module.addImport("zts", b.dependency("zts", .{}).module("zts"));
 
     b.installArtifact(exe);
 

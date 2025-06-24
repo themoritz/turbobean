@@ -9,6 +9,7 @@ const parser = @import("parser.zig");
 const Project = @import("project.zig");
 
 const lsp = @import("lsp.zig");
+const server = @import("server.zig");
 
 pub const std_options: std.Options = .{
     .log_level = std.log.default_level,
@@ -34,6 +35,9 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, filename, "--lsp")) {
         try lsp.loop(alloc);
+        return;
+    } else if (std.mem.eql(u8, filename, "--server")) {
+        try server.loop(alloc);
         return;
     }
 
