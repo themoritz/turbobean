@@ -3,8 +3,7 @@ const log = std.log.scoped(.watch);
 
 const fzwatch = @import("fzwatch");
 
-const tardy = @import("zzz").tardy;
-const Runtime = tardy.Runtime;
+const Runtime = @import("zzz").tardy.Runtime;
 
 const Self = @This();
 
@@ -56,7 +55,7 @@ fn callback(context: ?*anyopaque, event: fzwatch.Event) void {
 }
 
 fn watcherThread(watcher: *fzwatch.Watcher) !void {
-    try watcher.start(.{});
+    try watcher.start(.{ .latency = 0.1 });
 }
 
 pub fn init(alloc: std.mem.Allocator, path: []const u8) !Self {
@@ -76,7 +75,12 @@ pub fn deinit(self: *Self) void {
 
 pub fn start(self: *Self) !std.Thread {
     self.watcher.setCallback(callback, self);
-    return try std.Thread.spawn(.{}, watcherThread, .{&self.watcher});
+    return std.Thread.spawn(.{}, watcherThread, .{&self.watcher});
+}
+
+pub fn stop(self: *Self) void {
+    log.debug("Stopping watcher", .{});
+    self.watcher.stop();
 }
 
 pub fn task(self: *Self, runtime: *Runtime) Task {

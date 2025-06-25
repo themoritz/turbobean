@@ -1,29 +1,103 @@
 const std = @import("std");
 const zts = @import("zts");
-const Tardy = @import("zzz").tardy.Tardy(.auto);
+const tardy = @import("zzz").tardy;
+const Tardy = tardy.Tardy(.auto);
 const Runtime = @import("zzz").tardy.Runtime;
+
 const Watch = @import("Watch.zig");
 
-const tmpl = @embedFile("./templates/foo.html");
+const http = @import("zzz").HTTP;
 
-pub fn tst(alloc: std.mem.Allocator) !void {
+const tmpl = @embedFile("templates/foo.html");
+
+pub fn loop(alloc: std.mem.Allocator) !void {
     var t = try Tardy.init(alloc, .{
         .threading = .single,
     });
     defer t.deinit();
 
-    var watch = try Watch.init(alloc, "README.md");
+    var router = try http.Router.init(alloc, &.{
+        http.Route.init("/").get({}, index_handler).layer(),
+        http.Route.init("/bar").get({}, bar_handler).layer(),
+        http.Route.init("/sse").get({}, sse_handler).layer(),
+    }, .{});
+    defer router.deinit(alloc);
+
+    var socket = try tardy.Socket.init(.{ .tcp = .{ .host = "0.0.0.0", .port = 8080 } });
+    defer socket.close_blocking();
+    try socket.bind();
+    try socket.listen(256);
+
+    const EntryParams = struct {
+        router: *const http.Router,
+        socket: tardy.Socket,
+    };
+
+    try t.entry(
+        EntryParams{
+            .router = &router,
+            .socket = socket,
+        },
+        struct {
+            fn init(rt: *Runtime, p: EntryParams) !void {
+                var server = http.Server.init(.{
+                    .stack_size = 1024 * 1024 * 4,
+                    .socket_buffer_bytes = 1024 * 2,
+                });
+                try server.serve(rt, p.router, .{ .normal = p.socket });
+            }
+        }.init,
+    );
+}
+
+fn index_handler(ctx: *const http.Context, _: void) !http.Respond {
+    var body = std.ArrayList(u8).init(ctx.allocator);
+    try zts.print(tmpl, "site", .{"from Zig"}, body.writer());
+
+    return ctx.response.apply(.{
+        .status = .OK,
+        .body = body.items,
+        .mime = http.Mime.HTML,
+    });
+}
+
+fn sse_handler(ctx: *const http.Context, _: void) !http.Respond {
+    var sse = try http.SSE.init(ctx);
+
+    var data = std.ArrayList(u8).init(ctx.allocator);
+    var i: usize = 0;
+
+    var watch = try Watch.init(ctx.allocator, "README.md");
     defer watch.deinit();
 
     const thread = try watch.start();
+    defer thread.join();
+    defer watch.stop();
 
-    try t.entry(&watch, struct {
-        fn init(rt: *Runtime, w: *Watch) !void {
-            try rt.spawn(.{ rt, w.task(rt) }, frame, 1024 * 16);
-        }
-    }.init);
+    var task = watch.task(ctx.runtime);
 
-    thread.join();
+    while (true) {
+        task.await_changed();
+        // try tardy.Timer.delay(ctx.runtime, .{ .seconds = 10 });
+
+        data.clearRetainingCapacity();
+        try zts.print(tmpl, "sse", .{ .count = i }, data.writer());
+        sse.send(.{ .data = data.items }) catch break;
+        i += 1;
+    }
+
+    return .responded;
+}
+
+fn bar_handler(ctx: *const http.Context, _: void) !http.Respond {
+    var body = std.ArrayList(u8).init(ctx.allocator);
+    try zts.print(tmpl, "bar", .{}, body.writer());
+
+    return ctx.response.apply(.{
+        .status = .OK,
+        .body = body.items,
+        .mime = http.Mime.HTML,
+    });
 }
 
 fn frame(rt: *Runtime, task: Watch.Task) !void {
@@ -32,52 +106,5 @@ fn frame(rt: *Runtime, task: Watch.Task) !void {
         std.log.debug("Waiting...", .{});
         task.await_changed();
         std.log.debug("Changed!", .{});
-    }
-}
-
-pub fn loop(alloc: std.mem.Allocator) !void {
-    try tst(alloc);
-    var read_buffer: [8096]u8 = undefined;
-    var send_buffer: [8096]u8 = undefined;
-    const address = try std.net.Address.parseIp("0.0.0.0", 8080);
-    var net_server = try address.listen(.{ .reuse_address = true });
-    defer net_server.deinit();
-
-    std.debug.print("Listening on {any}\n", .{address});
-
-    while (true) {
-        const conn = try net_server.accept();
-        var server = std.http.Server.init(conn, &read_buffer);
-
-        var req = try server.receiveHead();
-
-        const header = read_buffer[0..req.head_end];
-        std.debug.print("Header: {s}\n", .{header});
-
-        var iter = std.mem.splitScalar(u8, header, ' ');
-
-        if (iter.next()) |method| {
-            if (std.mem.eql(u8, method, "GET")) {
-                if (iter.next()) |path| {
-                    if (std.mem.eql(u8, path, "/")) {
-                        var response = req.respondStreaming(.{
-                            .send_buffer = &send_buffer,
-                        });
-                        try zts.print(tmpl, "site", .{"from Zig"}, response.writer());
-                        try response.end();
-                    } else if (std.mem.eql(u8, path, "/bar")) {
-                        var response = req.respondStreaming(.{
-                            .send_buffer = &send_buffer,
-                        });
-                        try zts.print(tmpl, "bar", .{"Bar"}, response.writer());
-                        try response.end();
-                    }
-                }
-            } else {
-                try req.respond("Bad request", .{ .status = .method_not_allowed });
-            }
-        } else {
-            try req.respond("Bad request", .{ .status = .bad_request });
-        }
     }
 }
