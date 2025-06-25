@@ -37,7 +37,7 @@ pub fn main() !void {
         try lsp.loop(alloc);
         return;
     } else if (std.mem.eql(u8, filename, "--server")) {
-        try server.loop(alloc);
+        try server.run(alloc);
         return;
     }
 

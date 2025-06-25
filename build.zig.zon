@@ -13,8 +13,8 @@
             .hash = "zts-0.14.1-AAAAABazAgAWx8_iVDidfnwfB9M4EtnVzUfqgdmw6qjU",
         },
         .fzwatch = .{
-            .url = "git+https://github.com/freref/fzwatch?ref=v0.2.1#6d5b49ed5a8ee3ed08f0e80b8f340cc3c8c8ac6e",
-            .hash = "fzwatch-0.1.0-AAAAAFwxAACmGB7IN0835JkUIEuY_0zDJr_KGkZZQ2SI",
+            .url = "git+https://github.com/themoritz/fzwatch?ref=fix-macos-spin#f3b368f7f0e3187196e950df48bdb24235434073",
+            .hash = "fzwatch-0.1.0-AAAAAGcxAACOfH5OrOlsgp5-OaZ5Xcra9qsFcKB7C4St",
         },
         .zzz = .{
             .url = "git+https://github.com/tardy-org/zzz?ref=main#18ec7f1129ce4d0573b7c67f011b4d05c7b195d4",

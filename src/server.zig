@@ -10,16 +10,23 @@ const http = @import("zzz").HTTP;
 
 const tmpl = @embedFile("templates/foo.html");
 
-pub fn loop(alloc: std.mem.Allocator) !void {
+pub fn run(alloc: std.mem.Allocator) !void {
     var t = try Tardy.init(alloc, .{
         .threading = .single,
     });
     defer t.deinit();
 
+    var watch = try Watch.init(alloc, ".");
+    defer watch.deinit();
+
+    const thread = try watch.start(0.2);
+    defer thread.join();
+    defer watch.stop();
+
     var router = try http.Router.init(alloc, &.{
         http.Route.init("/").get({}, index_handler).layer(),
         http.Route.init("/bar").get({}, bar_handler).layer(),
-        http.Route.init("/sse").get({}, sse_handler).layer(),
+        http.Route.init("/sse").get(&watch, sse_handler).layer(),
     }, .{});
     defer router.deinit(alloc);
 
@@ -61,28 +68,27 @@ fn index_handler(ctx: *const http.Context, _: void) !http.Respond {
     });
 }
 
-fn sse_handler(ctx: *const http.Context, _: void) !http.Respond {
+fn sse_handler(ctx: *const http.Context, watch: *Watch) !http.Respond {
     var sse = try http.SSE.init(ctx);
 
     var data = std.ArrayList(u8).init(ctx.allocator);
     var i: usize = 0;
 
-    var watch = try Watch.init(ctx.allocator, "README.md");
-    defer watch.deinit();
-
-    const thread = try watch.start();
-    defer thread.join();
-    defer watch.stop();
-
-    var task = watch.task(ctx.runtime);
+    var listener = try watch.newListener(ctx.runtime);
+    defer listener.deinit();
 
     while (true) {
-        task.await_changed();
-        // try tardy.Timer.delay(ctx.runtime, .{ .seconds = 10 });
+        listener.awaitChanged();
 
         data.clearRetainingCapacity();
         try zts.print(tmpl, "sse", .{ .count = i }, data.writer());
-        sse.send(.{ .data = data.items }) catch break;
+        sse.send(.{ .data = data.items }) catch |err| switch (err) {
+            error.Closed => {
+                std.log.debug("Client closed.", .{});
+                break;
+            },
+            else => return err,
+        };
         i += 1;
     }
 
@@ -98,13 +104,4 @@ fn bar_handler(ctx: *const http.Context, _: void) !http.Respond {
         .body = body.items,
         .mime = http.Mime.HTML,
     });
-}
-
-fn frame(rt: *Runtime, task: Watch.Task) !void {
-    _ = rt;
-    while (true) {
-        std.log.debug("Waiting...", .{});
-        task.await_changed();
-        std.log.debug("Changed!", .{});
-    }
 }
