@@ -14,6 +14,8 @@ pub fn build(b: *std.Build) void {
 
     exe.root_module.addImport("lsp", b.dependency("lsp_codegen", .{}).module("lsp"));
     exe.root_module.addImport("zts", b.dependency("zts", .{}).module("zts"));
+    exe.root_module.addImport("fzwatch", b.dependency("fzwatch", .{}).module("fzwatch"));
+    exe.root_module.addImport("zzz", b.dependency("zzz", .{}).module("zzz"));
 
     b.installArtifact(exe);
 
