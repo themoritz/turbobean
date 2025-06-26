@@ -1,14 +1,13 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as path from 'path';
+// import * as zigcount from '../extension';
 
 suite('LSP', () => {
-    let projectDir: string;
     let doc: vscode.TextDocument;
 
     setup(async function() {
-        projectDir = await openTestProject();
-        doc = await openDoc(projectDir, 'main.bean');
+        doc = await openDoc('main.bean');
     });
 
     test('Hover', async function() {
@@ -21,7 +20,7 @@ suite('LSP', () => {
             position
         );
 
-        assert.ok(hovers && hovers.length == 1, 'Expected one hover result');
+        assert.ok(hovers && hovers.length === 1, 'Expected one hover result');
         const contents = hovers[0].contents
             .map(c => (typeof c === 'string' ? c : c.value))
             .join('\n');
@@ -53,21 +52,14 @@ async function sleep(ms: number = 10) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function openTestProject(): Promise<string> {
-    const projectDir = path.resolve(__dirname, '../../../tests/project');
-    const projectUri = vscode.Uri.file(projectDir);
-    vscode.workspace.updateWorkspaceFolders(0, 0, { uri: projectUri });
-    await sleep();
-    return projectDir;
-}
-
-async function openDoc(projectDir: string, file: string): Promise<vscode.TextDocument> {
-    const mainBeanPath = path.join(projectDir, file);
-    const doc = await vscode.workspace.openTextDocument(mainBeanPath);
+async function openDoc(file: string): Promise<vscode.TextDocument> {
+    const root = vscode.workspace.workspaceFolders![0].uri;
+    const uri = vscode.Uri.joinPath(root, file);
+    const doc = await vscode.workspace.openTextDocument(uri);
     await sleep();
     await vscode.window.showTextDocument(doc);
     await sleep();
-    return doc
+    return doc;
 }
 
 async function moveTo(doc: vscode.TextDocument, position: vscode.Position) {

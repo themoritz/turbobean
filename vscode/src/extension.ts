@@ -5,7 +5,7 @@ let client: LanguageClient;
 
 export function activate(_: vscode.ExtensionContext) {
     const exe: Executable = {
-        command: '/Users/moritz/code/zigcount/zig-out/bin/zigcount',
+        command: 'zigcount',
         args: ['--lsp'],
         transport: TransportKind.stdio,
     };

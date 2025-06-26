@@ -40,3 +40,18 @@ Put this into your nvim-lspconfig's `config` function:
 ## VSCode
 
 Use extension in this repo.
+
+```bash
+cd vscode
+npm i
+code .
+```
+
+Then press `F5`, or go to debugging and click "Run Extension".
+
+### Testing
+
+```bash
+npm i
+npm run test
+```
