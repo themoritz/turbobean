@@ -1,18 +1,18 @@
 .site
 <html>
-	<head>
-		<title>Foo</title>
-		<script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.5/dist/htmx.js"></script>
-		<script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.2"></script>
-		<script>
-			htmx.logAll();
-		</script>
-	</head>
-	<body hx-ext="sse">
-		<h1>Hello {s}</h1>
-		<button hx-get="/bar">Bar</button>
-		<div hx-ext="sse" sse-connect="/sse" sse-swap="message" hx-swap="beforeend">SSE</div>
-	</body>
+    <head>
+        <title>Foo</title>
+        <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.5/dist/htmx.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.2"></script>
+        <script>
+            htmx.logAll();
+        </script>
+    </head>
+    <body hx-ext="sse">
+        <h1>Hello {s}</h1>
+        <button hx-get="/bar">Bar</button>
+        <div hx-ext="sse" sse-connect="/sse" sse-swap="message" hx-swap="beforeend">SSE</div>
+    </body>
 </html>
 
 .bar
