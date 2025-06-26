@@ -1,17 +1,13 @@
 include "open.bean"
 
-2025-01-01 open Equity:Ope𝄞ning-Balances
+2020-01-01 pad Equity:Ope𝄞ning-Balances Expenses:Food
+2026-01-01 note Equity:Opening-Balances ""
 
-2026-01-01 pad Expenses:Food Assets:Checking
-2026-01-01 pad Equity:Ope𝄞ning-Balances Expenses:Food
-2026-01-01 pad Equity:Opening-Balances Expenses:Food
-2026-01-01 pad Equity:Opening-Balances  Expenses:Food
+2025-01-01 balance Expenses:Food    100.1 USD
 
-2025-01-01 balance Assets:Checking    100.1 USD
-2025-01-01 note Assets:Checking    "Hello"
 2025-01-01 note Assets:Checking    "Hello"
 
-2025-04-22 * "Buy coffee" ^ls ^mylink #tag
+2025-04-22 * "Buy coffee" ^mylink #tag
     Assets:Checking    100.10 USD
     Expenses:Food
 
@@ -19,14 +15,16 @@ include "open.bean"
     Assets:Checking    100.10 USD
     Expenses:Food
 
-2028-01-01 txn "Open" ^link1 #tag
+2028-01-01 txn "Open" ^link1 #tag2
     Assets:Checking    100.1 USD
     Expenses:Food
 
-2025-01-22 * "Buy coffee" ^link ^li ^li
+2025-01-22 * "Buy coffee" ^link
     Assets:Checking    100.10 USD
     Expenses:Food
 
 2026-01-01 * "Bytd"
     Assets:Checking    100.10 USD
     Expenses:Food
+
+2025-01-00 note Assets:Checking    "Hello"
