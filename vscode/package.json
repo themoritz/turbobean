@@ -32,6 +32,12 @@
         "scopeName": "text.beancount",
         "path": "./syntaxes/beancount.tmLanguage"
       }
+    ],
+    "commands": [
+      {
+        "command": "zigcount.restartServer",
+        "title": "Restart Zigcount Language Server"
+      }
     ]
   },
   "scripts": {

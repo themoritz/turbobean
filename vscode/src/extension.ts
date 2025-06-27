@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import { LanguageClientOptions, ServerOptions, LanguageClient, Executable, TransportKind } from 'vscode-languageclient/node';
 
-let client: LanguageClient;
+let client: LanguageClient | undefined;
 
-export function activate(_: vscode.ExtensionContext) {
+export function activate(context: vscode.ExtensionContext) {
     const exe: Executable = {
         command: 'zigcount',
         args: ['--lsp'],
@@ -31,6 +31,23 @@ export function activate(_: vscode.ExtensionContext) {
     );
 
     client.start();
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('zigcount.restartServer', async () => {
+            if (client) {
+                await client.stop();
+                client = undefined;
+            }
+            client = new LanguageClient(
+                'zigcount',
+                'zigcount VSCode extension',
+                serverOptions,
+                clientOptions
+            );
+            client.start();
+            vscode.window.showInformationMessage('Zigcount language server restarted.');
+        })
+    );
 }
 
 export function deactivate(): Thenable<void> | undefined {
