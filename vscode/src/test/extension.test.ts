@@ -47,7 +47,37 @@ suite('LSP', () => {
                 range: toRange(3, 16, 39),
                 severity: DiagnosticSeverity.Warning
             },
-        ])
+        ]);
+    });
+
+    test('Jump to definition', async function() {
+        await testJumpToDefinition(doc, new Position(10, 4), 'open.bean', 0, 0);
+    });
+
+    test('Autocomplete', async function() {
+        // Links
+        await testAutocomplete(doc, new Position(0, 1), "^", 0, 1, [
+            '^link',
+            '^link1',
+            '^link2',
+            '^mylink'
+        ]);
+        // Tags
+        await testAutocomplete(doc, new Position(0, 1), "#", 0, 1, [
+            '#tag',
+            '#tag2'
+        ]);
+        // Accounts
+        await testAutocomplete(doc, new Position(1, 1), null, 0, 0, [
+            'Assets:Checking',
+            'Equity:Ope𝄞ning-Balances',
+            'Expenses:Food'
+        ]);
+        await testAutocomplete(doc, new Position(7, 20), null, 16, 31, [
+            'Assets:Checking',
+            'Equity:Ope𝄞ning-Balances',
+            'Expenses:Food'
+        ]);
     });
 });
 
@@ -87,6 +117,38 @@ function testDiagnostics(doc: TextDocument, expected: any[]) {
         assert.ok(a.message.startsWith(e.prefix), `"${a.message}" should start with "${e.prefix}"`);
         assert.deepEqual(e.range, a.range);
         assert.equal(e.severity, a.severity);
+    });
+}
+
+async function testJumpToDefinition(doc: TextDocument, pos: Position, file: string, line: number, char: number) {
+    const result = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        doc.uri,
+        pos
+    );
+    assert.equal(result.length, 1);
+    const path = result[0].uri.fsPath;
+    assert.ok(path.endsWith(file), `"${path}" should end with "${file}"`);
+    assert.equal(result[0].range.start.line, line);
+    assert.equal(result[0].range.start.character, char);
+}
+
+async function testAutocomplete(doc: TextDocument, pos: Position, trigger: string | null, exp_start: number, exp_end: number, expected: string[]) {
+    const result = await vscode.commands.executeCommand<vscode.CompletionList>(
+        'vscode.executeCompletionItemProvider',
+        doc.uri,
+        pos,
+        trigger,
+    );
+    if (!result) {
+        throw new Error('No result');
+    }
+    assert.equal(result.items.length, expected.length, JSON.stringify(result));
+    result.items.forEach((item, i) => {
+        const range = 'start' in item.range! ? item.range! : item.range!.inserting;
+        assert.equal(range.start.character, exp_start);
+        assert.equal(range.end.character, exp_end);
+        assert.equal(item.label, expected[i])
     });
 }
 

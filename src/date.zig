@@ -44,6 +44,18 @@ pub const Date = struct {
         return Date{ .year = year, .month = month, .day = day };
     }
 
+    pub fn today() Date {
+        const epochSeconds = std.time.epoch.EpochSeconds{ .secs = @intCast(std.time.timestamp()) };
+        const epochDay = epochSeconds.getEpochDay();
+        const yearDay = epochDay.calculateYearDay();
+        const monthDay = yearDay.calculateMonthDay();
+        return Date{
+            .year = @intCast(yearDay.year),
+            .month = @intFromEnum(monthDay.month),
+            .day = monthDay.day_index + 1,
+        };
+    }
+
     pub fn format(self: Date, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;

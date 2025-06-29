@@ -6,10 +6,13 @@ const Project = @import("project.zig");
 const Config = @import("Config.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
 const Token = @import("lexer.zig").Lexer.Token;
+const completion = @import("lsp/completion.zig");
+const Date = @import("date.zig").Date;
 
 const LspState = struct {
     project: Project = undefined,
     initialized: bool = false,
+    clientCapabilities: ClientCapabilities = .{},
 
     pub fn initialize(self: *LspState, alloc: Allocator, root: []const u8) !void {
         self.project = try Project.load(alloc, root);
@@ -61,6 +64,10 @@ const LspState = struct {
             if (same_line and within_token) break next.token;
         } else null;
     }
+};
+
+const ClientCapabilities = struct {
+    utf16_position_encoding: bool = false,
 };
 
 pub fn loop(alloc: std.mem.Allocator) !void {
@@ -140,7 +147,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                         .hoverProvider = .{ .bool = true },
                                         .completionProvider = .{
                                             .resolveProvider = false,
-                                            .triggerCharacters = &.{ "#", "^" },
+                                            .triggerCharacters = &.{ "#", "^", "2", "\"" },
                                         },
                                         .textDocumentSync = .{ .TextDocumentSyncOptions = .{
                                             .openClose = false,
@@ -232,59 +239,108 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     }
                 },
                 .@"textDocument/completion" => |params| {
-                    var completions = std.ArrayList(lsp.types.CompletionItem).init(alloc);
-                    defer completions.deinit();
+                    var arena = std.heap.ArenaAllocator.init(alloc);
+                    defer arena.deinit();
+                    const arena_alloc = arena.allocator();
 
-                    if (params.context) |context| {
-                        if (context.triggerKind == .TriggerCharacter) {
-                            if (context.triggerCharacter) |char| {
-                                std.log.debug("trigger char: {s}", .{char});
-                                switch (char[0]) {
-                                    '#' => {
-                                        var iter = state.project.tags.keyIterator();
-                                        while (iter.next()) |k| {
-                                            try completions.append(lsp.types.CompletionItem{
-                                                .label = k.*,
-                                                .kind = .Variable,
-                                            });
-                                        }
-                                    },
-                                    '^' => {
-                                        var iter = state.project.links.keyIterator();
-                                        while (iter.next()) |k| {
-                                            try completions.append(lsp.types.CompletionItem{
-                                                .label = k.*,
-                                                .kind = .Variable,
-                                            });
-                                        }
-                                    },
-                                    else => try transport.any().writeErrorResponse(
-                                        alloc,
-                                        request.id,
-                                        .{ .code = .invalid_params, .message = "Unknown trigger character" },
-                                        .{},
-                                    ),
-                                }
+                    const Completion = struct { []const u8, lsp.types.CompletionItemKind };
+                    var completions = std.ArrayList(Completion).init(arena_alloc);
+
+                    var start: u32 = params.position.character;
+                    var end: u32 = params.position.character;
+
+                    blk: {
+                        const file = state.project.files_by_uri.get(params.textDocument.uri) orelse break :blk;
+                        const src = state.project.files.items[file].source;
+                        const line = completion.getLine(src, params.position.line) orelse break :blk;
+                        const before = completion.getTextBefore(line, params.position.character);
+
+                        // No completion inside comments
+                        if (completion.countOccurrences(before, ";") > 0) break :blk;
+
+                        const triggerChar = if (params.context) |context|
+                            if (context.triggerKind == .TriggerCharacter)
+                                if (context.triggerCharacter) |char|
+                                    char[0]
+                                else
+                                    null
+                            else
+                                null
+                        else
+                            break :blk;
+
+                        if (triggerChar) |t| {
+                            switch (t) {
+                                '#' => {
+                                    var iter = state.project.tags.keyIterator();
+                                    while (iter.next()) |k| try completions.append(.{ k.*, .Variable });
+                                    start = start - 1;
+                                },
+                                '^' => {
+                                    var iter = state.project.links.keyIterator();
+                                    while (iter.next()) |k| try completions.append(.{ k.*, .Reference });
+                                    start = start - 1;
+                                },
+                                '2' => {
+                                    const today = Date.today();
+                                    const item = try std.fmt.allocPrint(arena_alloc, "{any}", .{today});
+                                    try completions.append(.{ item, .Event });
+                                    start = start - 1;
+                                },
+                                '"' => {
+                                    // TODO: Payee/narration
+                                },
+                                else => try transport.any().writeErrorResponse(
+                                    alloc,
+                                    request.id,
+                                    .{ .code = .invalid_params, .message = "Unknown trigger character" },
+                                    .{},
+                                ),
                             }
                         } else {
-                            var iter = state.project.accounts.keyIterator();
-                            while (iter.next()) |k| {
-                                try completions.append(lsp.types.CompletionItem{
-                                    .label = k.*,
-                                    .kind = .Variable,
-                                });
+                            const numQuotes =
+                                completion.countOccurrences(before, "\"") -
+                                completion.countOccurrences(before, "\\\"");
+                            if (numQuotes % 2 == 0) {
+                                var iter = state.project.accounts.keyIterator();
+                                while (iter.next()) |k| try completions.append(.{ k.*, .EnumMember });
+                                const word_start, const word_end = completion.getWordAround(line, params.position.character) orelse break :blk;
+                                start = word_start;
+                                end = word_end;
                             }
                         }
                     }
 
                     if (completions.items.len > 0) {
+                        var completionItems = std.ArrayList(lsp.types.CompletionItem).init(alloc);
+                        defer completionItems.deinit();
+
+                        for (completions.items) |item| {
+                            try completionItems.append(lsp.types.CompletionItem{
+                                .label = item.@"0",
+                                .kind = item.@"1",
+                                .textEdit = .{ .TextEdit = .{ .range = .{
+                                    .start = .{
+                                        .line = params.position.line,
+                                        .character = @max(start, 0),
+                                    },
+                                    .end = .{
+                                        .line = params.position.line,
+                                        .character = @max(end, 0),
+                                    },
+                                }, .newText = item.@"0" } },
+                            });
+                        }
+
                         try transport.any().writeResponse(
                             alloc,
                             request.id,
                             lsp.types.CompletionList,
-                            .{ .isIncomplete = false, .items = completions.items },
+                            .{ .isIncomplete = false, .items = completionItems.items },
                             .{},
                         );
+                    } else {
+                        try transport.any().writeResponse(alloc, request.id, void, {}, .{});
                     }
                 },
                 .@"textDocument/definition" => |params| {
@@ -461,6 +517,21 @@ const InitResult = union(enum) {
 };
 
 fn initialize(alloc: std.mem.Allocator, params: lsp.types.InitializeParams, state: *LspState) !InitResult {
+    // Check and store client capabilities
+    if (params.capabilities.general) |general| {
+        if (general.positionEncodings) |encodings| {
+            for (encodings) |encoding| {
+                if (encoding == .@"utf-16") state.clientCapabilities.utf16_position_encoding = true;
+            }
+        }
+        if (!state.clientCapabilities.utf16_position_encoding) return .{
+            .fail_message = try alloc.dupe(u8, "Client doesn't support utf-16 position encoding"),
+        };
+    } else return .{
+        .fail_message = try alloc.dupe(u8, "Client doesn't have general capabilities defined"),
+    };
+
+    // Load config
     if (params.workspaceFolders == null) return .{
         .fail_message = try alloc.dupe(u8, "No workspace folder"),
     };

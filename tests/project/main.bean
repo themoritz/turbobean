@@ -1,4 +1,4 @@
-include "open.bean"
+include "open.bean" ; this is a comment
 
 2020-01-01 pad Equity:Ope𝄞ning-Balances Expenses:Food
 2026-01-01 note Equity:Opening-Balances ""
