@@ -37,6 +37,8 @@ pub const Tag = enum {
     tx_multiple_solutions,
 
     account_not_open,
+    multiple_pads,
+    balance_assertion_failed,
 
     pub fn message(self: Tag) []const u8 {
         return switch (self) {
@@ -58,6 +60,8 @@ pub const Tag = enum {
             .tx_division_by_zero => "Division by zero while balancing transaction",
             .tx_multiple_solutions => "Transaction can't be balanced unambiguously",
             .account_not_open => "Account is not open or has been closed. Open it with an open entry",
+            .multiple_pads => "Multiple pads of the same account. You need to have a balance assertion between pads",
+            .balance_assertion_failed => "Balance assertion failed",
         };
     }
 };

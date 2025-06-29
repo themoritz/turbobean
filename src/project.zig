@@ -6,6 +6,7 @@ const Uri = @import("Uri.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
 const Token = @import("lexer.zig").Lexer.Token;
 const Inventory = @import("inventory.zig").Inventory;
+const Date = @import("date.zig").Date;
 
 const Self = @This();
 
@@ -16,9 +17,8 @@ uris: std.ArrayList(Uri),
 files_by_uri: std.StringHashMap(usize),
 sorted_entries: std.ArrayList(SortedEntry),
 
-// processed_entries: std.ArrayList(ProcessedEntry),
-// synthetic_entries: std.ArrayList(Data.Entry),
-// synthetic_postings: std.MultiArrayList(Data.Posting),
+synthetic_entries: std.ArrayList(Data.Entry),
+synthetic_postings: std.MultiArrayList(Data.Posting),
 
 errors: std.ArrayList(ErrorDetails),
 
@@ -33,10 +33,7 @@ const SortedEntry = struct {
 };
 
 const ProcessedEntry = union(enum) {
-    from_file: struct {
-        file: u32,
-        entry: u32,
-    },
+    from_file: SortedEntry,
     synthetic: u32,
 };
 
@@ -53,6 +50,10 @@ pub fn load(alloc: Allocator, name: []const u8) !Self {
         .uris = std.ArrayList(Uri).init(alloc),
         .files_by_uri = std.StringHashMap(usize).init(alloc),
         .sorted_entries = std.ArrayList(SortedEntry).init(alloc),
+
+        .synthetic_entries = std.ArrayList(Data.Entry).init(alloc),
+        .synthetic_postings = .{},
+
         .errors = std.ArrayList(ErrorDetails).init(alloc),
 
         .accounts = std.StringHashMap(FileLine).init(alloc),
@@ -75,6 +76,10 @@ pub fn deinit(self: *Self) void {
     self.files_by_uri.deinit();
 
     self.sorted_entries.deinit();
+
+    self.synthetic_entries.deinit();
+    self.synthetic_postings.deinit(self.alloc);
+
     self.errors.deinit();
 
     self.accounts.deinit();
@@ -205,10 +210,146 @@ pub fn pipeline(self: *Self) !void {
     // TODO: Perform all sorts of checks.
     try self.checkAccountsOpen();
     // Can only post to currencies defined at open
+    //
     // Check balance assertions
     // Introduce txs for padding
+    try self.processPads();
 
     try self.refreshLspCache();
+}
+
+pub fn processPads(self: *Self) !void {
+    const LastPad = struct {
+        date: Date,
+        pad_to: []const u8,
+        synthetic_index_ptr: *?usize,
+    };
+
+    // Padded account -> Pad to + index in processed entries
+    var lastPads: std.StringHashMap(LastPad) = std.StringHashMap(LastPad).init(self.alloc);
+    defer lastPads.deinit();
+
+    var tree = try Tree.init(self.alloc);
+    defer tree.deinit();
+
+    for (self.sorted_entries.items) |sorted| {
+        const data = self.files.items[sorted.file];
+        var entry = data.entries.items[sorted.entry];
+        switch (entry.payload) {
+            .open => |open| {
+                _ = try tree.open(open.account.slice);
+            },
+            .pad => |*pad| {
+                if (lastPads.get(pad.account.slice)) |_| {
+                    try self.addError(entry.main_token, sorted.file, .multiple_pads);
+                } else {
+                    try lastPads.put(pad.account.slice, .{
+                        .date = entry.date,
+                        .pad_to = pad.pad_to.slice,
+                        .synthetic_index_ptr = &pad.synthetic_index,
+                    });
+                }
+            },
+            .balance => |balance| {
+                var inv = tree.inventoryAggregatedByAccount(self.alloc, balance.account.slice) catch {
+                    try self.addError(entry.main_token, sorted.file, .account_not_open);
+                    continue;
+                };
+                defer inv.deinit();
+                const number = inv.balance(balance.amount.currency.?);
+                const missing = balance.amount.number.?.add(number.negate());
+                if (lastPads.get(balance.account.slice)) |last_pad| {
+                    // Build tx
+                    const postings_top = self.synthetic_postings.len;
+                    try self.synthetic_postings.append(self.alloc, Data.Posting{
+                        .flag = null,
+                        .account = .{
+                            .slice = balance.account.slice,
+                            .tag = .account,
+                            .line = 0,
+                            .start_col = 0,
+                            .end_col = 0,
+                        },
+                        .amount = .{
+                            .number = missing,
+                            .currency = balance.amount.currency,
+                        },
+                        .cost = null,
+                        .price = null,
+                        .meta = null,
+                    });
+                    try self.synthetic_postings.append(self.alloc, Data.Posting{
+                        .flag = null,
+                        .account = .{
+                            .slice = last_pad.pad_to,
+                            .tag = .account,
+                            .line = 0,
+                            .start_col = 0,
+                            .end_col = 0,
+                        },
+                        .amount = .{
+                            .number = missing.negate(),
+                            .currency = balance.amount.currency,
+                        },
+                        .cost = null,
+                        .price = null,
+                        .meta = null,
+                    });
+                    const postings = Data.Range.create(postings_top, self.synthetic_postings.len);
+                    const payload = Data.Entry.Payload{
+                        .transaction = .{
+                            .flag = .{
+                                .slice = entry.main_token.slice,
+                                .tag = .flag,
+                                .line = 0,
+                                .start_col = 0,
+                                .end_col = 0,
+                            },
+                            .payee = null,
+                            .narration = null,
+                            .postings = postings,
+                        },
+                    };
+                    const synthetic_entry = Data.Entry{
+                        .date = last_pad.date,
+                        .main_token = entry.main_token,
+                        .payload = payload,
+                        .tagslinks = null,
+                        .meta = null,
+                    };
+                    const tx_index: u32 = @intCast(self.synthetic_entries.items.len);
+                    try self.synthetic_entries.append(synthetic_entry);
+                    last_pad.synthetic_index_ptr.* = tx_index;
+
+                    // Remove last pad
+                    _ = lastPads.remove(balance.account.slice);
+                } else {
+                    // Balance check in case of no padding
+                    if (!missing.is_zero()) {
+                        try self.addError(entry.main_token, sorted.file, .balance_assertion_failed);
+                    }
+                }
+            },
+            .transaction => |tx| {
+                if (tx.postings) |postings| {
+                    for (postings.start..postings.end) |i| {
+                        tree.addPosition(
+                            data.postings.items(.account)[i].slice,
+                            data.postings.items(.amount)[i].number.?,
+                            data.postings.items(.amount)[i].currency.?,
+                        ) catch |err| switch (err) {
+                            error.AccountNotOpen => {
+                                try self.addError(entry.main_token, sorted.file, .account_not_open);
+                                continue;
+                            },
+                            else => return err,
+                        };
+                    }
+                }
+            },
+            else => {},
+        }
+    }
 }
 
 // Assumes sorted entries.

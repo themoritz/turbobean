@@ -146,6 +146,9 @@ pub const Commodity = struct {
 pub const Pad = struct {
     account: Lexer.Token,
     pad_to: Lexer.Token,
+    /// Index into synthetic transactions that Project generates when
+    /// processing pads.
+    synthetic_index: ?usize = null,
 };
 
 pub const Balance = struct {
