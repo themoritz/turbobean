@@ -127,7 +127,7 @@ pub fn render(self: *Self) ![]const u8 {
     var buf = std.ArrayList(u8).init(self.alloc);
     defer buf.deinit();
 
-    const max_width = self.maxWidth();
+    const max_width = try self.maxWidth();
 
     for (self.nodes.items[0].children.items) |child| {
         try self.renderRec(&buf, child, max_width, 0);
@@ -149,7 +149,7 @@ fn renderRec(self: *Self, buf: *std.ArrayList(u8), node_index: u32, max_width: u
     var inv = try self.inventoryAggregatedByNode(self.alloc, node_index);
     defer inv.deinit();
     if (!inv.isEmpty()) {
-        const name_width: u32 = @intCast(self.nodes.items[node_index].name.len);
+        const name_width: u32 = try unicodeLen(self.nodes.items[node_index].name);
         const width: u32 = depth * 2 + name_width;
         try buf.appendNTimes(' ', max_width - width + 3);
         try std.fmt.format(buf.writer(), "{any}", .{inv});
@@ -160,17 +160,21 @@ fn renderRec(self: *Self, buf: *std.ArrayList(u8), node_index: u32, max_width: u
     }
 }
 
-fn maxWidth(self: *Self) u32 {
-    return self.maxWidthRec(0, 0) - 2;
+fn maxWidth(self: *Self) !u32 {
+    return try self.maxWidthRec(0, 0) - 2;
 }
 
-fn maxWidthRec(self: *Self, node_index: u32, depth: u32) u32 {
-    const name_width: u32 = @intCast(self.nodes.items[node_index].name.len);
+fn maxWidthRec(self: *Self, node_index: u32, depth: u32) !u32 {
+    const name_width: u32 = try unicodeLen(self.nodes.items[node_index].name);
     var width: u32 = depth * 2 + name_width;
     for (self.nodes.items[node_index].children.items) |child| {
-        width = @max(width, self.maxWidthRec(child, depth + 1));
+        width = @max(width, try self.maxWidthRec(child, depth + 1));
     }
     return width;
+}
+
+fn unicodeLen(name: []const u8) !u32 {
+    return @intCast(try std.unicode.utf8CountCodepoints(name));
 }
 
 test "tree" {
@@ -202,11 +206,11 @@ test "aggregated" {
     var tree = try Self.init(std.testing.allocator);
     defer tree.deinit();
 
-    _ = try tree.open("Assets:Currency:Chase");
+    _ = try tree.open("Assets:Currency:Chas𝄞");
     _ = try tree.open("Assets:Currency:BoA");
     _ = try tree.open("Income:Dividends");
 
-    try tree.addPosition("Assets:Currency:Chase", Number.fromInt(1), "USD");
+    try tree.addPosition("Assets:Currency:Chas𝄞", Number.fromInt(1), "USD");
     try tree.addPosition("Assets:Currency:BoA", Number.fromInt(1), "EUR");
     try tree.addPosition("Assets:Currency:BoA", Number.fromInt(1), "USD");
     try tree.addPosition("Income:Dividends", Number.fromInt(1), "USD");
@@ -217,7 +221,7 @@ test "aggregated" {
     const expected =
         \\Assets        1 EUR, 2 USD
         \\  Currency    1 EUR, 2 USD
-        \\    Chase     1 USD
+        \\    Chas𝄞     1 USD
         \\    BoA       1 EUR, 1 USD
         \\Income        1 USD
         \\  Dividends   1 USD

@@ -44,10 +44,13 @@ pub fn main() !void {
     var project = try Project.load(alloc, filename);
     defer project.deinit();
 
-    if (project.hasErrors()) {
+    if (project.hasSevereErrors()) {
         try project.printErrors();
         std.process.exit(1);
     } else {
+        if (project.hasErrors()) {
+            try project.printErrors();
+        }
         try project.printTree();
     }
 }

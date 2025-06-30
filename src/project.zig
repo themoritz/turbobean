@@ -214,15 +214,13 @@ pub fn pipeline(self: *Self) !void {
     self.errors.clearRetainingCapacity();
     try self.sortEntries();
 
-    // TODO: Perform all sorts of checks.
-    try self.checkAccountsOpen();
-    // Can only post to currencies defined at open
-    //
-    // Check balance assertions
-    // Introduce txs for padding
-    try self.processPads();
-
     try self.refreshLspCache();
+
+    try self.checkAccountsOpen();
+    // TODO: Can only post to currencies defined at open
+    if (self.hasSevereErrors()) return;
+
+    try self.processPads();
 }
 
 pub fn processPads(self: *Self) !void {
@@ -258,10 +256,7 @@ pub fn processPads(self: *Self) !void {
                 }
             },
             .balance => |balance| {
-                var inv = tree.inventoryAggregatedByAccount(self.alloc, balance.account.slice) catch {
-                    try self.addError(entry.main_token, sorted.file, .account_not_open);
-                    continue;
-                };
+                var inv = try tree.inventoryAggregatedByAccount(self.alloc, balance.account.slice);
                 defer inv.deinit();
                 const number = inv.balance(balance.amount.currency.?);
                 const missing = balance.amount.number.?.add(number.negate());
@@ -285,10 +280,7 @@ pub fn processPads(self: *Self) !void {
                         .price = null,
                         .meta = null,
                     });
-                    tree.addPosition(balance.account.slice, missing, balance.amount.currency.?) catch |err| switch (err) {
-                        error.AccountNotOpen => continue,
-                        else => return err,
-                    };
+                    try tree.addPosition(balance.account.slice, missing, balance.amount.currency.?);
                     try self.synthetic_postings.append(self.alloc, Data.Posting{
                         .flag = null,
                         .account = .{
@@ -306,10 +298,7 @@ pub fn processPads(self: *Self) !void {
                         .price = null,
                         .meta = null,
                     });
-                    tree.addPosition(last_pad.pad_to, missing.negate(), balance.amount.currency.?) catch |err| switch (err) {
-                        error.AccountNotOpen => continue,
-                        else => return err,
-                    };
+                    try tree.addPosition(last_pad.pad_to, missing.negate(), balance.amount.currency.?);
                     const postings = Data.Range.create(postings_top, self.synthetic_postings.len);
                     const payload = Data.Entry.Payload{
                         .transaction = .{
@@ -348,17 +337,11 @@ pub fn processPads(self: *Self) !void {
             .transaction => |tx| {
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
-                        tree.addPosition(
+                        try tree.addPosition(
                             data.postings.items(.account)[i].slice,
                             data.postings.items(.amount)[i].number.?,
                             data.postings.items(.amount)[i].currency.?,
-                        ) catch |err| switch (err) {
-                            error.AccountNotOpen => {
-                                try self.addError(entry.main_token, sorted.file, .account_not_open);
-                                continue;
-                            },
-                            else => return err,
-                        };
+                        );
                     }
                 }
             },
@@ -572,31 +555,30 @@ pub fn accountInventoryUntilLine(
                 }
             },
             .pad => |pad| {
-                if (pad.synthetic_index) |index| {
-                    const synthetic_entry = self.synthetic_entries.items[index];
-                    const tx = synthetic_entry.payload.transaction;
-                    const postings = tx.postings.?;
-                    if (std.mem.eql(u8, pad.account.slice, account)) {
-                        const amount = self.synthetic_postings.items(.amount)[postings.start];
-                        if (pad.account.line == line and sorted_entry.file == file) {
-                            var after = try inv.clone(self.alloc);
-                            errdefer after.deinit();
-                            try after.add(amount.number.?, amount.currency.?);
-                            return .{ .before = inv, .after = after };
-                        } else {
-                            try inv.add(amount.number.?, amount.currency.?);
-                        }
+                const index = pad.synthetic_index.?;
+                const synthetic_entry = self.synthetic_entries.items[index];
+                const tx = synthetic_entry.payload.transaction;
+                const postings = tx.postings.?;
+                if (std.mem.eql(u8, pad.account.slice, account)) {
+                    const amount = self.synthetic_postings.items(.amount)[postings.start];
+                    if (pad.account.line == line and sorted_entry.file == file) {
+                        var after = try inv.clone(self.alloc);
+                        errdefer after.deinit();
+                        try after.add(amount.number.?, amount.currency.?);
+                        return .{ .before = inv, .after = after };
+                    } else {
+                        try inv.add(amount.number.?, amount.currency.?);
                     }
-                    if (std.mem.eql(u8, pad.pad_to.slice, account)) {
-                        const amount = self.synthetic_postings.items(.amount)[postings.end - 1];
-                        if (pad.pad_to.line == line and sorted_entry.file == file) {
-                            var after = try inv.clone(self.alloc);
-                            errdefer after.deinit();
-                            try after.add(amount.number.?, amount.currency.?);
-                            return .{ .before = inv, .after = after };
-                        } else {
-                            try inv.add(amount.number.?, amount.currency.?);
-                        }
+                }
+                if (std.mem.eql(u8, pad.pad_to.slice, account)) {
+                    const amount = self.synthetic_postings.items(.amount)[postings.end - 1];
+                    if (pad.pad_to.line == line and sorted_entry.file == file) {
+                        var after = try inv.clone(self.alloc);
+                        errdefer after.deinit();
+                        try after.add(amount.number.?, amount.currency.?);
+                        return .{ .before = inv, .after = after };
+                    } else {
+                        try inv.add(amount.number.?, amount.currency.?);
                     }
                 }
             },
@@ -637,10 +619,7 @@ pub fn printTree(self: *Self) !void {
         const entry = data.entries.items[sorted_entry.entry];
         switch (entry.payload) {
             .open => |open| {
-                _ = tree.open(open.account.slice) catch |err| switch (err) {
-                    error.AccountExists => {},
-                    else => return err,
-                };
+                _ = try tree.open(open.account.slice);
             },
             .transaction => |tx| {
                 if (tx.postings) |postings| {
@@ -651,6 +630,19 @@ pub fn printTree(self: *Self) !void {
                             data.postings.items(.amount)[i].currency.?,
                         );
                     }
+                }
+            },
+            .pad => |pad| {
+                const index = pad.synthetic_index.?;
+                const synthetic_entry = self.synthetic_entries.items[index];
+                const tx = synthetic_entry.payload.transaction;
+                const postings = tx.postings.?;
+                for (postings.start..postings.end) |i| {
+                    try tree.addPosition(
+                        self.synthetic_postings.items(.account)[i].slice,
+                        self.synthetic_postings.items(.amount)[i].number.?,
+                        self.synthetic_postings.items(.amount)[i].currency.?,
+                    );
                 }
             },
             else => {},
