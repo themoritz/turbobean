@@ -10,6 +10,7 @@ const Project = @import("project.zig");
 
 const lsp = @import("lsp.zig");
 const server = @import("server.zig");
+const semantic_tokens = @import("lsp/semantic_tokens.zig");
 
 pub const std_options: std.Options = .{
     .log_level = std.log.default_level,
@@ -62,4 +63,5 @@ test {
     _ = Data;
     _ = parser;
     _ = Project;
+    _ = semantic_tokens;
 }

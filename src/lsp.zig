@@ -7,6 +7,7 @@ const Config = @import("Config.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
 const Token = @import("lexer.zig").Lexer.Token;
 const completion = @import("lsp/completion.zig");
+const semantic_tokens = @import("lsp/semantic_tokens.zig");
 const Date = @import("date.zig").Date;
 
 const LspState = struct {
@@ -152,6 +153,13 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                         .textDocumentSync = .{ .TextDocumentSyncOptions = .{
                                             .openClose = false,
                                             .change = lsp.types.TextDocumentSyncKind.Full,
+                                        } },
+                                        .semanticTokensProvider = .{ .SemanticTokensOptions = .{
+                                            .legend = .{
+                                                .tokenTypes = std.meta.fieldNames(semantic_tokens.TokenType),
+                                                .tokenModifiers = &.{},
+                                            },
+                                            .full = .{ .bool = true },
                                         } },
                                     },
                                 },
@@ -441,6 +449,9 @@ pub fn loop(alloc: std.mem.Allocator) !void {
 
                     try transport.any().writeResponse(alloc, request.id, lsp.types.WorkspaceEdit, .{ .changes = changes }, .{});
                 },
+                .@"textDocument/semanticTokens/full" => |params| {
+                    _ = params;
+                },
                 .other => try transport.any().writeResponse(alloc, request.id, void, {}, .{}),
             },
             .notification => |notification| switch (notification.params) {
@@ -564,6 +575,7 @@ const RequestMethods = union(enum) {
     @"textDocument/documentHighlight": lsp.types.DocumentHighlightParams,
     @"textDocument/prepareRename": lsp.types.PrepareRenameParams,
     @"textDocument/rename": lsp.types.RenameParams,
+    @"textDocument/semanticTokens/full": lsp.types.SemanticTokensParams,
     other: lsp.MethodWithParams,
 };
 
