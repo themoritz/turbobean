@@ -10,6 +10,7 @@ suite('LSP', () => {
     });
 
     test('Hover', async function() {
+        // Assets:Checking
         await testHover(doc, new Position(10, 4), (contents) => {
             assertContains('100.10', contents);
             assertContains('200.20', contents);
@@ -17,6 +18,7 @@ suite('LSP', () => {
     });
 
     test('Highlight', async function() {
+        // Assets:Checking
         await testHighlight(doc, new Position(10, 4), [
             toRange(7, 16, 31),
             toRange(10, 4, 19),
@@ -26,10 +28,14 @@ suite('LSP', () => {
             toRange(26, 4, 19),
         ]);
 
-        await testHighlight(doc, new Position(2, 17), [
-            toRange(2, 15, 40),
+        // Equity:Ope𝄞ning-Balances
+        await testHighlight(doc, new Position(2, 30), [
+            toRange(2, 29, 54),
+            toRange(30, 26, 51),
+            toRange(34, 26, 51),
         ]);
 
+        // Equity:Opening-Balances
         await testHighlight(doc, new Position(3, 17), [
             toRange(3, 16, 39),
         ]);
@@ -37,11 +43,6 @@ suite('LSP', () => {
 
     test('Diagnostics', async function() {
         testDiagnostics(doc, [
-            {
-                prefix: "Invalid date",
-                range: toRange(29, 0, 10),
-                severity: DiagnosticSeverity.Error
-            },
             {
                 prefix: "Account is not open",
                 range: toRange(3, 16, 39),
@@ -70,11 +71,13 @@ suite('LSP', () => {
         // Accounts
         await testAutocomplete(doc, new Position(1, 1), null, 0, 0, [
             'Assets:Checking',
+            'Assets:Foo',
             'Equity:Ope𝄞ning-Balances',
             'Expenses:Food'
         ]);
         await testAutocomplete(doc, new Position(7, 20), null, 16, 31, [
             'Assets:Checking',
+            'Assets:Foo',
             'Equity:Ope𝄞ning-Balances',
             'Expenses:Food'
         ]);
@@ -148,7 +151,7 @@ async function testAutocomplete(doc: TextDocument, pos: Position, trigger: strin
         const range = 'start' in item.range! ? item.range! : item.range!.inserting;
         assert.equal(range.start.character, exp_start);
         assert.equal(range.end.character, exp_end);
-        assert.equal(item.label, expected[i])
+        assert.equal(item.label, expected[i]);
     });
 }
 

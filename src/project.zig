@@ -32,11 +32,6 @@ const SortedEntry = struct {
     entry: u32,
 };
 
-const ProcessedEntry = union(enum) {
-    from_file: SortedEntry,
-    synthetic: u32,
-};
-
 const FileLine = struct {
     file: u32,
     line: u32,
@@ -130,6 +125,18 @@ pub fn hasErrors(self: *Self) bool {
         if (data.errors.items.len > 0) return true;
     }
     if (self.errors.items.len > 0) return true;
+    return false;
+}
+
+pub fn hasSevereErrors(self: *Self) bool {
+    for (self.files.items) |data| {
+        for (data.errors.items) |err| {
+            if (err.severity == .err) return true;
+        }
+    }
+    for (self.errors.items) |err| {
+        if (err.severity == .err) return true;
+    }
     return false;
 }
 
@@ -233,8 +240,8 @@ pub fn processPads(self: *Self) !void {
     defer tree.deinit();
 
     for (self.sorted_entries.items) |sorted| {
-        const data = self.files.items[sorted.file];
-        var entry = data.entries.items[sorted.entry];
+        const data = &self.files.items[sorted.file];
+        var entry = &data.entries.items[sorted.entry];
         switch (entry.payload) {
             .open => |open| {
                 _ = try tree.open(open.account.slice);
@@ -278,6 +285,10 @@ pub fn processPads(self: *Self) !void {
                         .price = null,
                         .meta = null,
                     });
+                    tree.addPosition(balance.account.slice, missing, balance.amount.currency.?) catch |err| switch (err) {
+                        error.AccountNotOpen => continue,
+                        else => return err,
+                    };
                     try self.synthetic_postings.append(self.alloc, Data.Posting{
                         .flag = null,
                         .account = .{
@@ -295,6 +306,10 @@ pub fn processPads(self: *Self) !void {
                         .price = null,
                         .meta = null,
                     });
+                    tree.addPosition(last_pad.pad_to, missing.negate(), balance.amount.currency.?) catch |err| switch (err) {
+                        error.AccountNotOpen => continue,
+                        else => return err,
+                    };
                     const postings = Data.Range.create(postings_top, self.synthetic_postings.len);
                     const payload = Data.Entry.Payload{
                         .transaction = .{
@@ -543,14 +558,44 @@ pub fn accountInventoryUntilLine(
                         const p = self.files.items[sorted_entry.file].postings;
                         const p_account = p.items(.account)[i];
                         if (std.mem.eql(u8, p_account.slice, account)) {
+                            const amount = p.items(.amount)[i];
                             if (p_account.line == line and sorted_entry.file == file) {
                                 var after = try inv.clone(self.alloc);
                                 errdefer after.deinit();
-                                try after.add(p.items(.amount)[i].number.?, p.items(.amount)[i].currency.?);
+                                try after.add(amount.number.?, amount.currency.?);
                                 return .{ .before = inv, .after = after };
                             } else {
-                                try inv.add(p.items(.amount)[i].number.?, p.items(.amount)[i].currency.?);
+                                try inv.add(amount.number.?, amount.currency.?);
                             }
+                        }
+                    }
+                }
+            },
+            .pad => |pad| {
+                if (pad.synthetic_index) |index| {
+                    const synthetic_entry = self.synthetic_entries.items[index];
+                    const tx = synthetic_entry.payload.transaction;
+                    const postings = tx.postings.?;
+                    if (std.mem.eql(u8, pad.account.slice, account)) {
+                        const amount = self.synthetic_postings.items(.amount)[postings.start];
+                        if (pad.account.line == line and sorted_entry.file == file) {
+                            var after = try inv.clone(self.alloc);
+                            errdefer after.deinit();
+                            try after.add(amount.number.?, amount.currency.?);
+                            return .{ .before = inv, .after = after };
+                        } else {
+                            try inv.add(amount.number.?, amount.currency.?);
+                        }
+                    }
+                    if (std.mem.eql(u8, pad.pad_to.slice, account)) {
+                        const amount = self.synthetic_postings.items(.amount)[postings.end - 1];
+                        if (pad.pad_to.line == line and sorted_entry.file == file) {
+                            var after = try inv.clone(self.alloc);
+                            errdefer after.deinit();
+                            try after.add(amount.number.?, amount.currency.?);
+                            return .{ .before = inv, .after = after };
+                        } else {
+                            try inv.add(amount.number.?, amount.currency.?);
                         }
                     }
                 }

@@ -1,6 +1,6 @@
 include "open.bean" ; this is a comment
 
-2020-01-01 pad Equity:Ope𝄞ning-Balances Expenses:Food
+2020-01-01 pad Expenses:Food Equity:Ope𝄞ning-Balances
 2026-01-01 note Equity:Opening-Balances ""
 
 2025-01-01 balance Expenses:Food    100.1 USD
@@ -27,4 +27,15 @@ include "open.bean" ; this is a comment
     Assets:Checking    100.10 USD
     Expenses:Food
 
-2025-01-00 note Assets:Checking    "Hello"
+2020-01-01 open Assets:Foo
+2020-01-02 pad Assets:Foo Equity:Ope𝄞ning-Balances
+
+2020-01-02 balance Assets:Foo    1 EUR
+
+2020-01-02 pad Assets:Foo Equity:Ope𝄞ning-Balances
+
+2020-01-02 balance Assets:Foo    4 EUR
+
+2020-01-03 txn ""
+    Assets:Foo    1 EUR
+    Expenses:Food

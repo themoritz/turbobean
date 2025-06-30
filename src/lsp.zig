@@ -183,11 +183,25 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     const account = while (iter.next()) |next| {
                         const same_line = next.token.line == position.line;
                         const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
-                        if (same_line and within_token and next.kind == .posting) break next.token;
+                        if (same_line and within_token and (next.kind == .posting or next.kind == .pad or next.kind == .pad_to)) break next.token;
                     } else {
                         try transport.any().writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
+
+                    if (state.project.hasSevereErrors()) {
+                        const result = lsp.types.Hover{
+                            .contents = .{
+                                .MarkupContent = lsp.types.MarkupContent{
+                                    .kind = lsp.types.MarkupKind.plaintext,
+                                    .value = "Please fix errors first",
+                                },
+                            },
+                            .range = tokenRange(account),
+                        };
+                        try transport.any().writeResponse(alloc, request.id, lsp.types.Hover, result, .{});
+                        continue :loop;
+                    }
 
                     if (try state.project.accountInventoryUntilLine(account.slice, uri, position.line)) |inv| {
                         defer {
@@ -221,16 +235,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                     .value = value.items,
                                 },
                             },
-                            .range = .{
-                                .start = .{
-                                    .line = account.line,
-                                    .character = account.start_col,
-                                },
-                                .end = .{
-                                    .line = account.line,
-                                    .character = account.end_col,
-                                },
-                            },
+                            .range = tokenRange(account),
                         };
                         try transport.any().writeResponse(alloc, request.id, lsp.types.Hover, result, .{});
                     } else {
@@ -379,16 +384,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     while (iter.next()) |next| {
                         if (std.mem.eql(u8, next.token.slice, account.slice)) {
                             try highlights.append(.{
-                                .range = .{
-                                    .start = .{
-                                        .line = @intCast(next.token.line),
-                                        .character = @intCast(next.token.start_col),
-                                    },
-                                    .end = .{
-                                        .line = @intCast(next.token.line),
-                                        .character = @intCast(next.token.end_col),
-                                    },
-                                },
+                                .range = tokenRange(next.token),
                                 .kind = .Text,
                             });
                         }
@@ -402,16 +398,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     };
                     try transport.any().writeResponse(alloc, request.id, lsp.types.PrepareRenameResult, .{
                         .literal_1 = .{
-                            .range = .{
-                                .start = .{
-                                    .line = @intCast(account.line),
-                                    .character = @intCast(account.start_col),
-                                },
-                                .end = .{
-                                    .line = @intCast(account.line),
-                                    .character = @intCast(account.end_col),
-                                },
-                            },
+                            .range = tokenRange(account),
                             .placeholder = account.slice,
                         },
                     }, .{});
@@ -437,16 +424,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                             const entry = try map.getOrPut(next.file);
                             if (!entry.found_existing) entry.value_ptr.* = std.ArrayList(lsp.types.TextEdit).init(alloc);
                             try entry.value_ptr.append(.{
-                                .range = .{
-                                    .start = .{
-                                        .line = @intCast(token.line),
-                                        .character = @intCast(token.start_col),
-                                    },
-                                    .end = .{
-                                        .line = @intCast(token.line),
-                                        .character = @intCast(token.end_col),
-                                    },
-                                },
+                                .range = tokenRange(token),
                                 .newText = params.newName,
                             });
                         }
@@ -497,10 +475,7 @@ fn mkDiagnostic(err: ErrorDetails, alloc: Allocator) !lsp.types.Diagnostic {
             .err => .Error,
             .warn => .Warning,
         },
-        .range = .{
-            .start = .{ .line = err.token.line, .character = err.token.start_col },
-            .end = .{ .line = err.token.line, .character = err.token.end_col },
-        },
+        .range = tokenRange(err.token),
         .message = try err.message(alloc),
     };
 }
@@ -600,3 +575,10 @@ const NotificationMethods = union(enum) {
     // @"textDocument/didClose": lsp.types.DidCloseTextDocumentParams,
     other: lsp.MethodWithParams,
 };
+
+fn tokenRange(token: Token) lsp.types.Range {
+    return .{
+        .start = .{ .line = token.line, .character = token.start_col },
+        .end = .{ .line = token.line, .character = token.end_col },
+    };
+}
