@@ -6,41 +6,41 @@ const Token = Lexer.Token;
 pub const TokenType = enum(u32) {
     namespace,
     type,
-    class,
-    @"enum",
-    interface,
-    @"struct",
-    typeParameter,
-    parameter,
+    // class,
+    // @"enum",
+    // interface,
+    // @"struct",
+    // typeParameter,
+    // parameter,
     variable,
     property,
     enumMember,
-    event,
+    // event,
     function,
-    method,
-    macro,
+    // method,
+    // macro,
     keyword,
     modifier,
     comment,
     string,
-    escapeSequence,
+    // escapeSequence,
     number,
     regexp,
     operator,
-    decorator,
+    // decorator,
 };
 
-fn goTag(token: Token.Tag) ?TokenType {
+fn tagToTokenType(token: Token.Tag) ?TokenType {
     return switch (token) {
-        .date => .number,
+        .date => .regexp,
         .number => .number,
         .string => .string,
         .account => .variable,
-        .currency => .number,
+        .currency => .type,
         .flag => .modifier,
         .key => .enumMember,
-        .link => .comment,
-        .tag => .comment,
+        .link => .property,
+        .tag => .namespace,
 
         .eol,
         .indent,
@@ -77,6 +77,8 @@ fn goTag(token: Token.Tag) ?TokenType {
         .keyword_price,
         .keyword_note,
         .keyword_document,
+        => .function,
+
         .keyword_pushtag,
         .keyword_poptag,
         .keyword_pushmeta,
@@ -97,7 +99,7 @@ fn goTag(token: Token.Tag) ?TokenType {
     };
 }
 
-fn goToken(alloc: std.mem.Allocator, tokens: []Token) !std.ArrayList(u32) {
+pub fn tokensToData(alloc: std.mem.Allocator, tokens: []Token) !std.ArrayList(u32) {
     var result = std.ArrayList(u32).init(alloc);
     errdefer result.deinit();
 
@@ -107,7 +109,7 @@ fn goToken(alloc: std.mem.Allocator, tokens: []Token) !std.ArrayList(u32) {
     var buf: [5]u32 = undefined;
 
     for (tokens) |token| {
-        if (goTag(token.tag)) |tag| {
+        if (tagToTokenType(token.tag)) |tag| {
             buf[0] = token.line - last_line;
             last_line = token.line;
             if (buf[0] > 0) last_char = 0;
@@ -122,11 +124,11 @@ fn goToken(alloc: std.mem.Allocator, tokens: []Token) !std.ArrayList(u32) {
     return result;
 }
 
-test goToken {
+test tokensToData {
     try testGoTokens(
         \\2022-01-01 open
         \\  Assets:Foo
-    , &.{ 0, 0, 10, 20, 0, 0, 11, 4, 15, 0, 1, 2, 10, 8, 0 });
+    , &.{ 0, 0, 10, 11, 0, 0, 11, 4, 5, 0, 1, 2, 10, 2, 0 });
 }
 
 fn testGoTokens(source: [:0]const u8, expected: []const u32) !void {
@@ -142,7 +144,7 @@ fn testGoTokens(source: [:0]const u8, expected: []const u32) !void {
         if (token.tag == .eof) break;
     }
 
-    var actual = try goToken(alloc, tokens.items);
+    var actual = try tokensToData(alloc, tokens.items);
     defer actual.deinit();
 
     try std.testing.expectEqualSlices(u32, expected, actual.items);

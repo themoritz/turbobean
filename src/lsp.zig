@@ -450,7 +450,15 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     try transport.any().writeResponse(alloc, request.id, lsp.types.WorkspaceEdit, .{ .changes = changes }, .{});
                 },
                 .@"textDocument/semanticTokens/full" => |params| {
-                    _ = params;
+                    const uri = params.textDocument.uri;
+                    const file = state.project.files_by_uri.get(uri) orelse {
+                        try transport.any().writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
+                    const tokens = state.project.files.items[file].tokens;
+                    const data = try semantic_tokens.tokensToData(alloc, tokens.items);
+                    defer data.deinit();
+                    try transport.any().writeResponse(alloc, request.id, lsp.types.SemanticTokens, .{ .data = data.items }, .{});
                 },
                 .other => try transport.any().writeResponse(alloc, request.id, void, {}, .{}),
             },

@@ -14,6 +14,7 @@ const Self = @This();
 alloc: Allocator,
 source: [:0]const u8,
 uri: Uri,
+tokens: Tokens,
 entries: Entries,
 config: Config,
 postings: Postings,
@@ -239,6 +240,7 @@ pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: boo
         .meta = .{},
         .costcomps = CostComps.init(alloc),
         .currencies = Currencies.init(alloc),
+        .tokens = Tokens.init(alloc),
         .entries = Entries.init(alloc),
         .source = source,
         .uri = uri,
@@ -248,18 +250,16 @@ pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: boo
     errdefer self.deinit();
 
     var lexer = Lexer.init(source);
-    var tokens = Tokens.init(self.alloc);
-    defer tokens.deinit();
 
     while (true) {
         const token = lexer.next();
-        try tokens.append(token);
+        try self.tokens.append(token);
         if (token.tag == .eof) break;
     }
 
     var parser: Parser = .{
         .alloc = self.alloc,
-        .tokens = tokens,
+        .tokens = self.tokens,
         .tok_i = 0,
         .is_root = is_root,
         .uri = uri,
@@ -342,6 +342,7 @@ fn addError(self: *Self, token: Lexer.Token, uri: Uri, tag: ErrorDetails.Tag) !v
 pub fn deinit(self: *Self) void {
     self.alloc.free(self.source);
 
+    self.tokens.deinit();
     self.entries.deinit();
     self.costcomps.deinit();
     self.currencies.deinit();

@@ -26,13 +26,6 @@
         "configuration": "./language-configuration.json"
       }
     ],
-    "grammars": [
-      {
-        "language": "beancount",
-        "scopeName": "text.beancount",
-        "path": "./syntaxes/beancount.tmLanguage"
-      }
-    ],
     "commands": [
       {
         "command": "zigcount.restartServer",

@@ -14,6 +14,18 @@
 
 ## Renderer
 
+## LSP
+
+### Highlight
+
+- Tags
+- Links
+
+### Sem Tokens
+
+- Comments
+- Range
+
 # Editors
 
 ## neovim
