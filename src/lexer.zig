@@ -70,6 +70,7 @@ pub const Lexer = struct {
 
             eol,
             indent,
+            comment,
 
             pipe,
             atat,
@@ -247,6 +248,7 @@ pub const Lexer = struct {
                 if (self.atLineStart()) {
                     switch (self.current()) {
                         '*', ':', '#', '!', '&', '?', '%', 'P', 'S', 'T', 'C', 'U', 'R', 'M' => {
+                            result.tag = .comment;
                             continue :state .comment;
                         },
                         else => {},
@@ -368,6 +370,7 @@ pub const Lexer = struct {
                     },
                     ';' => {
                         self.consume();
+                        result.tag = .comment;
                         continue :state .comment;
                     },
                     '^' => {
@@ -685,14 +688,9 @@ pub const Lexer = struct {
             },
 
             .comment => switch (self.current()) {
-                0 => continue :state .start,
-                '\n' => {
-                    start = self.cursor;
-                    continue :state .start;
-                },
+                0, '\n' => {},
                 else => {
                     self.consume();
-                    start = self.cursor;
                     continue :state .comment;
                 },
             },
@@ -749,7 +747,7 @@ test "account" {
     try testLex("😊:😊", &.{.account});
     try testLex("😊:`", &.{.invalid});
     try testLex("😊:Fð", &.{.account});
-    try testLex("𠁑𠁑:𠁑𠁑; 1", &.{.account});
+    try testLex("𠁑𠁑:𠁑𠁑; 1", &.{ .account, .comment });
 }
 
 test "date" {
@@ -776,12 +774,12 @@ test "keywords" {
 }
 
 test "comments" {
-    try testLex("10 ; number", &.{.number});
+    try testLex("10 ; number", &.{ .number, .comment });
     try testLex(
         \\; Blah
         \\2015-01-01
-    , &.{ .eol, .date });
-    try testLex("Assets:Foo; comment", &.{.account});
+    , &.{ .comment, .eol, .date });
+    try testLex("Assets:Foo; comment", &.{ .account, .comment });
 }
 
 test "indent" {
@@ -814,7 +812,7 @@ test "org mode" {
         \\** June
         \\
         \\2024-06-01
-    , &.{ .eol, .eol, .eol, .eol, .date });
+    , &.{ .comment, .eol, .eol, .comment, .eol, .eol, .date });
 }
 
 test "indented line" {
@@ -822,7 +820,7 @@ test "indented line" {
         \\2021-06-23 * "SATURN ONLINE INGOLSTADT 000"
         \\  ; Waschmachine?
         \\  Assets:Currency
-    , &.{ .date, .asterisk, .string, .eol, .indent, .eol, .indent, .account });
+    , &.{ .date, .asterisk, .string, .eol, .indent, .comment, .eol, .indent, .account });
 }
 
 test "invalid link" {
@@ -1000,18 +998,18 @@ test "beancount null true false" {
 }
 
 test "beancount ignored long comment" {
-    try testLex(";; Long comment line about something something.", &.{});
+    try testLex(";; Long comment line about something something.", &.{.comment});
 }
 
 test "beancount ignored indented comment" {
     try testLex(
         \\option "title" "The Title"
         \\  ;; Something something.
-    , &.{ .keyword_option, .string, .string, .eol, .indent });
+    , &.{ .keyword_option, .string, .string, .eol, .indent, .comment });
 }
 
 test "beancount ignored something else" {
-    try testLex("Regular prose appearing mid-file which starts with a flag character.", &.{});
+    try testLex("Regular prose appearing mid-file which starts with a flag character.", &.{.comment});
 }
 
 test "beancount ignored something else non flag" {
@@ -1019,7 +1017,7 @@ test "beancount ignored something else non flag" {
 }
 
 test "beancount ignored org mode title" {
-    try testLex("* This sentence is an org-mode title.", &.{});
+    try testLex("* This sentence is an org-mode title.", &.{.comment});
 }
 
 test "beancount ignored org mode drawer" {
@@ -1027,7 +1025,7 @@ test "beancount ignored org mode drawer" {
         \\:PROPERTIES:
         \\:this: is an org-mode property drawer
         \\:END:
-    , &.{ .eol, .eol });
+    , &.{ .comment, .eol, .comment, .eol, .comment });
 }
 
 test "beancount invalid token" {

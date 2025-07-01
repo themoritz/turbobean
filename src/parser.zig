@@ -160,10 +160,10 @@ fn tryTokenSlice(p: *Self, tag: Lexer.Token.Tag) ?[]const u8 {
 }
 
 pub fn parse(p: *Self) !void {
-    p.eatWhitespace();
+    try p.eatWhitespace();
     while (true) {
         _ = try p.parseDeclarationRecoverable() orelse break;
-        p.eatWhitespace();
+        try p.eatWhitespace();
     }
 }
 
@@ -355,7 +355,7 @@ fn expectTransactionBody(p: *Self, date: Date, date_token: Lexer.Token) !void {
 
     const postings_top = p.postings.len;
     while (true) {
-        if (try p.parsePosting()) |_| {} else if (p.parseIndentedLine()) |_| {} else break;
+        if (try p.parsePosting()) |_| {} else if (try p.parseIndentedLine()) |_| {} else break;
     }
     const postings = Data.Range.create(postings_top, p.postings.len);
 
@@ -375,10 +375,11 @@ fn expectTransactionBody(p: *Self, date: Date, date_token: Lexer.Token) !void {
     });
 }
 
-fn parseIndentedLine(p: *Self) ?void {
-    if (p.currentToken().tag == .indent and p.nextToken() != null and p.nextToken().?.tag == .eol) {
-        _ = p.advanceToken();
-        _ = p.advanceToken();
+fn parseIndentedLine(p: *Self) !?void {
+    if (p.currentToken().tag == .indent and p.nextToken() != null and (p.nextToken().?.tag == .eol or p.nextToken().?.tag == .comment)) {
+        _ = try p.expectToken(.indent);
+        _ = p.tryToken(.comment);
+        _ = try p.expectToken(.eol);
     } else return null;
 }
 
@@ -446,7 +447,7 @@ fn parseDirective(p: *Self) !?void {
 fn parseMeta(p: *Self, add_from_stack: bool) !?Data.Range {
     const meta_top = p.meta.len;
     while (true) {
-        if (try p.parseKeyValueLine()) |_| {} else if (p.parseIndentedLine()) |_| {} else break;
+        if (try p.parseKeyValueLine()) |_| {} else if (try p.parseIndentedLine()) |_| {} else break;
     }
 
     // Add meta that's on the pushmeta stack
@@ -477,6 +478,7 @@ fn parsePosting(p: *Self) !?usize {
     const amount = try p.parseIncomleteAmount();
     const cost = try p.parseCost();
     const price = try p.parsePriceAnnotation();
+    _ = p.tryToken(.comment);
     _ = p.tryToken(.eol);
 
     const meta = try p.parseMeta(false);
@@ -626,6 +628,7 @@ fn parseTagsLinks(p: *Self) !?Data.Range {
 }
 
 fn expectEolOrEof(p: *Self) !void {
+    _ = p.tryToken(.comment);
     switch (p.currentToken().tag) {
         .eol => _ = p.advanceToken(),
         .eof => {},
@@ -633,13 +636,15 @@ fn expectEolOrEof(p: *Self) !void {
     }
 }
 
-fn eatWhitespace(p: *Self) void {
+fn eatWhitespace(p: *Self) !void {
     while (true) {
-        if (p.currentToken().tag == .indent and p.nextToken() != null and p.nextToken().?.tag == .eol) {
-            _ = p.advanceToken();
-            _ = p.advanceToken();
+        if (try p.parseIndentedLine()) |_| {
+            //
         } else if (p.currentToken().tag == .eol) {
             _ = p.advanceToken();
+        } else if (p.currentToken().tag == .comment) {
+            _ = try p.expectToken(.comment);
+            _ = try p.expectEolOrEof();
         } else {
             break;
         }
@@ -972,6 +977,17 @@ test "recover without final newline" {
     try testEntries("2015-01-01", &.{});
 }
 
+test "eol comments" {
+    try testEntries(
+        \\2021-01-01 open Assets:Cash ; Cash
+        \\
+        \\; Tx
+        \\2021-06-23 * "SATURN" ; Saturn
+        \\  Assets:Currency -442.89 EUR ; EUR
+        \\  Expenses:Foo
+    , &.{ .open, .transaction });
+}
+
 const EntryTag = @typeInfo(Data.Entry.Payload).@"union".tag_type.?;
 
 fn testEntries(source: [:0]const u8, expected: []const EntryTag) !void {
@@ -987,6 +1003,7 @@ fn testEntries(source: [:0]const u8, expected: []const EntryTag) !void {
 fn testParse(source: [:0]const u8) !void {
     var data = try Data.parse(std.testing.allocator, source);
     defer data.deinit();
+    if (data.errors.items.len > 0) return error.ParseError;
 }
 
 fn testRoundtrip(source: [:0]const u8) !void {

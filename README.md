@@ -49,6 +49,20 @@ Put this into your nvim-lspconfig's `config` function:
 
 ```
 
+Disable treesitter:
+
+```lua
+return {
+  'nvim-treesitter/nvim-treesitter',
+  opts = {
+    highlight = {
+      enable = true,
+      disable = { 'beancount' },
+    },
+  },
+}
+```
+
 ## VSCode
 
 Use extension in this repo.

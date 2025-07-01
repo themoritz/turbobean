@@ -11,7 +11,7 @@ pub const TokenType = enum(u32) {
     // interface,
     // @"struct",
     // typeParameter,
-    // parameter,
+    parameter,
     variable,
     property,
     enumMember,
@@ -23,16 +23,16 @@ pub const TokenType = enum(u32) {
     modifier,
     comment,
     string,
-    // escapeSequence,
+    escapeSequence,
     number,
-    regexp,
+    // regexp,
     operator,
     // decorator,
 };
 
 fn tagToTokenType(token: Token.Tag) ?TokenType {
     return switch (token) {
-        .date => .regexp,
+        .date => .parameter,
         .number => .number,
         .string => .string,
         .account => .variable,
@@ -45,6 +45,7 @@ fn tagToTokenType(token: Token.Tag) ?TokenType {
         .eol,
         .indent,
         => null,
+        .comment => .comment,
 
         .pipe,
         .atat,
@@ -60,8 +61,10 @@ fn tagToTokenType(token: Token.Tag) ?TokenType {
         .slash,
         .lparen,
         .rparen,
+        => .operator,
         .hash,
         .asterisk,
+        => .modifier,
         .colon,
         => .operator,
 
@@ -106,29 +109,68 @@ pub fn tokensToData(alloc: std.mem.Allocator, tokens: []Token) !std.ArrayList(u3
     var last_line: u32 = 0;
     var last_char: u32 = 0;
 
-    var buf: [5]u32 = undefined;
-
     for (tokens) |token| {
-        if (tagToTokenType(token.tag)) |tag| {
-            buf[0] = token.line - last_line;
-            last_line = token.line;
-            if (buf[0] > 0) last_char = 0;
-            buf[1] = token.start_col - last_char;
-            last_char = token.start_col;
-            buf[2] = token.end_col - token.start_col;
-            buf[3] = @intFromEnum(tag);
-            buf[4] = 0;
-            try result.appendSlice(&buf);
+        if (token.tag == .account) {
+            var iter = std.mem.splitScalar(u8, token.slice, ':');
+            var i: u32 = 0;
+            var char = token.start_col;
+            while (iter.next()) |piece| : (i += 1) {
+                if (i > 0) {
+                    const tok = Token{
+                        .slice = ":",
+                        .tag = .account,
+                        .line = token.line,
+                        .start_col = char,
+                        .end_col = char + 1,
+                    };
+                    char += 1;
+                    try addToken(tok, .operator, &last_line, &last_char, &result);
+                }
+
+                const width: u16 = @intCast(try std.unicode.calcUtf16LeLen(piece));
+                const tok = Token{
+                    .slice = piece,
+                    .tag = .account,
+                    .line = token.line,
+                    .start_col = char,
+                    .end_col = char + width,
+                };
+                char += width;
+                try addToken(tok, if (i == 0) .escapeSequence else null, &last_line, &last_char, &result);
+            }
+        } else {
+            try addToken(token, null, &last_line, &last_char, &result);
         }
     }
     return result;
 }
 
+fn addToken(
+    token: Token,
+    overwrite_type: ?TokenType,
+    last_line: *u32,
+    last_char: *u32,
+    result: *std.ArrayList(u32),
+) !void {
+    var buf: [5]u32 = undefined;
+    if (tagToTokenType(token.tag)) |tag| {
+        buf[0] = token.line - last_line.*;
+        last_line.* = token.line;
+        if (buf[0] > 0) last_char.* = 0;
+        buf[1] = token.start_col - last_char.*;
+        last_char.* = token.start_col;
+        buf[2] = token.end_col - token.start_col;
+        buf[3] = @intFromEnum(overwrite_type orelse tag);
+        buf[4] = 0;
+        try result.appendSlice(&buf);
+    }
+}
+
 test tokensToData {
     try testGoTokens(
         \\2022-01-01 open
-        \\  Assets:Foo
-    , &.{ 0, 0, 10, 11, 0, 0, 11, 4, 5, 0, 1, 2, 10, 2, 0 });
+        \\  include
+    , &.{ 0, 0, 10, 2, 0, 0, 11, 4, 6, 0, 1, 2, 7, 7, 0 });
 }
 
 fn testGoTokens(source: [:0]const u8, expected: []const u32) !void {
