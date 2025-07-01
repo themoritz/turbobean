@@ -110,6 +110,17 @@ fn failMsg(p: *Self, err: ErrorDetails) Error {
     return error.ParseError;
 }
 
+fn warnAt(p: *Self, token: Lexer.Token, msg: ErrorDetails.Tag) !void {
+    try p.errors.append(.{
+        .tag = msg,
+        .token = token,
+        .uri = p.uri,
+        .source = p.source,
+        .expected = null,
+        .severity = .warn,
+    });
+}
+
 /// Advances the lexer and stores the next token in `current_token`.
 /// Returns the previous token.
 fn advanceToken(p: *Self) Lexer.Token {
@@ -337,6 +348,7 @@ fn parseEntry(p: *Self) !?void {
 
 fn expectTransactionBody(p: *Self, date: Date, date_token: Lexer.Token) !void {
     const flag = p.advanceToken();
+    if (std.mem.eql(u8, flag.slice, "!")) try p.warnAt(flag, .flagged);
 
     const s1 = p.tryTokenSlice(.string);
     const s2 = p.tryTokenSlice(.string);
@@ -480,6 +492,10 @@ fn parsePosting(p: *Self) !?usize {
     const price = try p.parsePriceAnnotation();
     _ = p.tryToken(.comment);
     _ = p.tryToken(.eol);
+
+    if (flag) |f| {
+        if (std.mem.eql(u8, f.slice, "!")) try p.warnAt(f, .flagged);
+    }
 
     const meta = try p.parseMeta(false);
 
