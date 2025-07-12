@@ -1,29 +1,106 @@
 2025-01-01 open Assets:Stocks AAPL,SHORT "FIFO"
+2025-01-01 open Assets:Cash
+2025-01-01 open Income:PnL
+2025-01-01 open Income:FxGain
 
+; This new keyword means that for the Assets:Stocks account,
+; profit should be calculated automatically when closing a position
+; and the profit should be posted to Income:PnL
 2025-01-01 pnl Assets:Stocks Income:PnL
 
+;;; Example 1: Buy two positions at different prices and selling.
+
 2025-01-01 txn "Buy"
-    Assets:Stocks     10 AAPL @ 10 USD   ; weight = 100 USD, cost {10 USD}
+    Assets:Stocks     10 AAPL @ 10 USD   ; weight = 10 * 10 = 100 USD, cost basis {10 USD}
     Assets:Cash     -100 USD
 
-; 10 AAPL {10 USD}
-; 10 AAPL {15 USD}
+2025-01-02 txn "Buy"
+    Assets:Stocks     10 AAPL @ 15 USD   ; weight = 10 * 15 = 150 USD, cost {15 USD}
+    Assets:Cash     -150 USD
 
-2025-01-01 txn "Sell"
-    Assets:Stocks    -15 AAPL @ 30 USD   ; weight = -450; cost-weight = -10 * 10 - 5 * 15 = -175
-    Assets:Cash      450 USD  ; can be inferred
-    Income:PnL      -275 USD  ; automatically added (= proceeds - cost = -450 + 175 )
+; Current inventory with cost basis:
+; * 10 AAPL {10 USD}
+; * 10 AAPL {15 USD}
+
+2025-01-03 txn "Sell"
+    Assets:Stocks    -15 AAPL @ 30 USD   ; weight = -15 * 30 = -450
+    Assets:Cash      450 USD  ; could be inferred from the weight
+    Income:PnL      -275 USD  ; This posting is automatically added
+                              ; We can calculate the profit as 10 * (30 - 10) + 5 * (30 - 15) = 275
+                              ; This is the same as weighting the Assets:Stocks posting at cost basis, and then balancing the transaction.
+
+;;; Example 2: Open and close a short position, with line crossing
 
 2025-02-01 txn "Open short"
-    Assets:Stocks    -1 SHORT @ 10 USD  ; weight = -10, cost {10 USD}
+    Assets:Stocks    -1 SHORT @ 10 USD  ; weight = -1 * 10 = -10, cost basis {10 USD}
     Assets:Cash      10 USD
-    ; No PnL since there was no position at cost
+    ; No PnL since there was no position that could be cancelled.
 
+; Current inventory with cost basis:
 ; -1 SHORT {10 USD}
 
-2025-02-01 txn "Close short, cross line"
-    Assets:Stocks     2 SHORT @ 20 USD  ; weight = 40 = 20 + 20, cost-weight = 1 * 10 = 10
+2025-02-02 txn "Close short, cross line"
+    Assets:Stocks     2 SHORT @ 20 USD  ; weight = 2 * 20 = 40
     Assets:Cash      -40 USD 
-    Income:PnL        10 USD       ; = proceeds - cost = 20 - 10 = 30
+    Income:PnL        10 USD    ; Automatically added
+                                ; Profit is 1 * (10 - 20) = -10
+                                ; This is equivalent to weighting the Assets:Stocks posting at cost basis and then balancing the transaction.
 
+; Current inventory with cost basis:
 ; 1 SHORT {20 USD}
+
+
+
+; Buy (establishes cost in USD)
+2025-07-01 txn "Buy AAPL"
+  Assets:Stocks      10 AAPL @ 150 USD  ; Implies cost {150 USD}
+  Assets:Cash     -1500 USD
+
+; Sell in GBP (user handles conversion)
+2025-07-10 txn "Sell AAPL"
+  Assets:Stocks     -10 AAPL @ 120 GBP ; Weight = -10 * 120 = -1200 GBP
+                                       ; Cost weight = -10 * 150 = -1500 USD
+  Assets:Cash      1200 GBP            ; Proceeds in GBP
+   ; Explicit conversion leg to balance in USD (using current rate, e.g., from price directive)
+  Assets:Cash     -1200 GBP @ 1.30 USD ; Weight = -1200 * 1.30 = -1560 USD
+  Assets:Cash      1560 USD            ; Optional separate leg for FX gain/loss if needed
+  ; Income:PnL      -60 USD            ; Auto-inserted based on USD cost (e.g., if converted sale price in USD yields a gain/loss)
+
+
+
+; Open accounts with booking method (e.g., FIFO)
+2023-01-01 open Assets:Crypto:BTC BTC "FIFO"
+2023-01-01 open Assets:Crypto:ETH ETH "FIFO"
+2023-01-01 open Assets:Cash:EUR
+2023-01-01 open Income:PnL EUR  ; P/L in EUR
+
+; Associate auto P/L insertion for crypto accounts
+2023-01-01 pnl Assets:Crypto:BTC Income:PnL
+2023-01-01 pnl Assets:Crypto:ETH Income:PnL
+
+; Step 1: Buy Bitcoin with Euros
+; (Opens position; cost basis inferred as {16000 EUR})
+2023-01-01 txn "Buy Bitcoin with Euros"
+  Assets:Crypto:BTC      1 BTC @ 16000 EUR  ; weight 16000 EUR
+  Assets:Cash:EUR   -16000 EUR
+
+; Step 2: Exchange Bitcoin for Ethereum
+; (Closes BTC position at market price, auto-calculates P/L as (40000 - 16000) * 1 = 24000 EUR gain;
+;  Income:PnL auto-inserted as -24000 EUR since gains credit income;
+;  Opens ETH position with cost basis {2000 EUR};
+;  No cash leg needed—balances via P/L as weights: -16000 (BTC at cost) + 40000 (ETH at cost) -24000 (P/L) = 0)
+2024-01-01 txn "Exchange Bitcoin for Ethereum"
+  Assets:Crypto:BTC    -1 BTC @ 40000 EUR  ; weight -40000 EUR
+                                           ; cost weight -16000 EUR
+  Assets:Crypto:ETH    20 ETH @ 2000 EUR   ; weight 20 * 2000 = 40000 EUR
+  ; Income:PnL      24000 EUR
+
+; Step 3: Sell Ethereum for Euros
+; (Closes ETH position at market price, auto-calculates P/L as (3000 - 2000) * 20 = 20000 EUR gain;
+;  Income:PnL auto-inserted as -20000 EUR;
+;  Balances as weights: -40000 (ETH at cost) + 60000 (cash) -20000 (P/L) = 0)
+2024-07-01 txn "Sell Ethereum for Euros"
+  Assets:Crypto:ETH   -20 ETH @ 3000 EUR  ; weight -20 * 3000 = -60000 EUR
+                                          ; cost weight -20 * 2000 = -40000 EUR
+  Assets:Cash:EUR    60000 EUR
+  ; Income:PnL      -20000 EUR
