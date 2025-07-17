@@ -223,17 +223,15 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         const writer = value.writer();
                         {
                             try writer.writeAll("Before:\n");
-                            var currency_iter = inv.before.by_currency.iterator();
-                            while (currency_iter.next()) |kv| {
-                                try writer.print("• {d} {s}\n", .{ kv.value_ptr.*, kv.key_ptr.* });
-                            }
+                            var summary = try inv.before.summary(alloc);
+                            defer summary.deinit();
+                            try summary.hoverDisplay(writer.any());
                         }
                         {
                             try writer.writeAll("\nAfter:\n");
-                            var currency_iter = inv.after.by_currency.iterator();
-                            while (currency_iter.next()) |kv| {
-                                try writer.print("• {d} {s}\n", .{ kv.value_ptr.*, kv.key_ptr.* });
-                            }
+                            var summary = try inv.after.summary(alloc);
+                            defer summary.deinit();
+                            try summary.hoverDisplay(writer.any());
                         }
 
                         const result = lsp.types.Hover{

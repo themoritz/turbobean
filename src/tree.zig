@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Inventory = @import("inventory.zig").Inventory;
+const BookingMethod = @import("inventory.zig").BookingMethod;
+const Summary = @import("inventory.zig").Summary;
 const Number = @import("number.zig").Number;
 const Self = @This();
 
@@ -14,10 +16,10 @@ pub const Node = struct {
     parent: ?u32,
     children: std.ArrayList(u32),
 
-    pub fn init(alloc: Allocator, name: []const u8, parent: ?u32) Node {
+    pub fn init(alloc: Allocator, name: []const u8, parent: ?u32, inv: Inventory) Node {
         return Node{
             .name = name,
-            .inventory = Inventory.init(alloc),
+            .inventory = inv,
             .parent = parent,
             .children = std.ArrayList(u32).init(alloc),
         };
@@ -31,7 +33,12 @@ pub const Node = struct {
 
 pub fn init(alloc: Allocator) !Self {
     var nodes = std.ArrayList(Node).init(alloc);
-    try nodes.append(Node.init(alloc, "", null));
+    try nodes.append(Node.init(
+        alloc,
+        "",
+        null,
+        try Inventory.init(alloc, null, null),
+    ));
     return Self{
         .alloc = alloc,
         .node_by_name = std.StringHashMap(u32).init(alloc),
@@ -47,7 +54,12 @@ pub fn deinit(self: *Self) void {
     self.nodes.deinit();
 }
 
-pub fn open(self: *Self, name: []const u8) !u32 {
+pub fn open(
+    self: *Self,
+    name: []const u8,
+    currencies: ?[][]const u8,
+    booking_method: ?BookingMethod,
+) !u32 {
     if (self.node_by_name.contains(name)) {
         return error.AccountExists;
     }
@@ -64,7 +76,12 @@ pub fn open(self: *Self, name: []const u8) !u32 {
         }
 
         const new_index: u32 = @intCast(self.nodes.items.len);
-        const new_node = Node.init(self.alloc, part, current_index);
+        const new_node = Node.init(
+            self.alloc,
+            part,
+            current_index,
+            try Inventory.init(self.alloc, booking_method, currencies),
+        );
         try self.nodes.append(new_node);
         try self.nodes.items[current_index].children.append(new_index);
         current_index = new_index;
@@ -75,9 +92,23 @@ pub fn open(self: *Self, name: []const u8) !u32 {
     return current_index;
 }
 
-pub fn addPosition(self: *Self, account: []const u8, number: Number, currency: []const u8) !void {
+pub fn close(self: *Self, name: []const u8) !void {
+    const removed = self.node_by_name.remove(name);
+    if (!removed) return error.AccountNotOpen;
+}
+
+pub fn accountOpen(self: *Self, name: []const u8) bool {
+    return self.node_by_name.contains(name);
+}
+
+pub fn addPosition(self: *Self, account: []const u8, currency: []const u8, number: Number) !void {
     const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
-    try self.nodes.items[index].inventory.add(number, currency);
+    try self.nodes.items[index].inventory.add(currency, number);
+}
+
+pub fn bookPosition(self: *Self, account: []const u8, currency: []const u8, lot: Inventory.Lot) !void {
+    const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
+    _ = try self.nodes.items[index].inventory.book(currency, lot);
 }
 
 /// Caller doesn't own returned inventory.
@@ -98,15 +129,15 @@ pub fn findNode(self: *Self, account: []const u8) ?u32 {
 }
 
 /// Caller owns returned inventory.
-pub fn inventoryAggregatedByAccount(self: *Self, alloc: Allocator, account: []const u8) !Inventory {
+pub fn inventoryAggregatedByAccount(self: *Self, alloc: Allocator, account: []const u8) !Summary {
     const node = self.node_by_name.get(account) orelse self.findNode(account) orelse return error.AccountDoesNotExist;
     return self.inventoryAggregatedByNode(alloc, node);
 }
 
 /// Caller owns returned inventory.
-pub fn inventoryAggregatedByNode(self: *Self, alloc: Allocator, node: u32) !Inventory {
-    var inv = Inventory.init(alloc);
-    errdefer inv.deinit();
+pub fn inventoryAggregatedByNode(self: *Self, alloc: Allocator, node: u32) !Summary {
+    var summary = Summary.init(alloc);
+    errdefer summary.deinit();
 
     var stack = std.ArrayList(usize).init(alloc);
     defer stack.deinit();
@@ -115,12 +146,14 @@ pub fn inventoryAggregatedByNode(self: *Self, alloc: Allocator, node: u32) !Inve
     while (stack.items.len > 0) {
         const index = stack.pop().?;
         var n = self.nodes.items[index];
-        try inv.combine(&n.inventory);
+        var n_summary = try n.inventory.summary(alloc);
+        defer n_summary.deinit();
+        try summary.combine(n_summary);
         for (n.children.items) |child| {
             try stack.append(child);
         }
     }
-    return inv;
+    return summary;
 }
 
 pub fn render(self: *Self) ![]const u8 {
@@ -180,10 +213,10 @@ fn unicodeLen(name: []const u8) !u32 {
 test "tree" {
     var tree = try Self.init(std.testing.allocator);
     defer tree.deinit();
-    _ = try tree.open("Assets:Currency:Chase");
-    _ = try tree.open("Assets:Currency:BoA");
-    _ = try tree.open("Income:Dividends");
-    _ = try tree.open("Assets:Stocks");
+    _ = try tree.open("Assets:Currency:Chase", null, null);
+    _ = try tree.open("Assets:Currency:BoA", null, null);
+    _ = try tree.open("Income:Dividends", null, null);
+    _ = try tree.open("Assets:Stocks", null, null);
 
     const rendered = try tree.render();
     defer std.testing.allocator.free(rendered);
@@ -206,9 +239,9 @@ test "aggregated" {
     var tree = try Self.init(std.testing.allocator);
     defer tree.deinit();
 
-    _ = try tree.open("Assets:Currency:Chas𝄞");
-    _ = try tree.open("Assets:Currency:BoA");
-    _ = try tree.open("Income:Dividends");
+    _ = try tree.open("Assets:Currency:Chas𝄞", null, null);
+    _ = try tree.open("Assets:Currency:BoA", null, null);
+    _ = try tree.open("Income:Dividends", null, null);
 
     try tree.addPosition("Assets:Currency:Chas𝄞", Number.fromInt(1), "USD");
     try tree.addPosition("Assets:Currency:BoA", Number.fromInt(1), "EUR");

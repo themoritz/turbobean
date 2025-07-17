@@ -20,6 +20,7 @@ const Self = @This();
 const Lexer = @import("lexer.zig").Lexer;
 const Number = @import("number.zig").Number;
 const ErrorDetails = @import("ErrorDetails.zig");
+const Inventory = @import("inventory.zig");
 const Uri = @import("Uri.zig");
 
 pub const Error = error{ParseError} || Allocator.Error;
@@ -234,7 +235,19 @@ fn parseEntry(p: *Self) !?void {
                 }
             }
             const currencies = Data.Range.create(currency_top, p.currencies.items.len);
-            const booking = if (p.tryToken(.string)) |b| b.slice else null;
+            const booking: ?Inventory.BookingMethod = if (p.tryToken(.string)) |b|
+                if (std.mem.eql(u8, b.slice, "\"FIFO\""))
+                    .fifo
+                else if (std.mem.eql(u8, b.slice, "\"LIFO\""))
+                    .lifo
+                else if (std.mem.eql(u8, b.slice, "\"AVERAGE\""))
+                    .average
+                else if (std.mem.eql(u8, b.slice, "\"STRICT\""))
+                    .strict
+                else
+                    return p.failAt(b, .invalid_booking_method)
+            else
+                null;
 
             payload = .{ .open = .{
                 .account = account,
@@ -836,12 +849,12 @@ test "cost spec" {
 
 test "open" {
     try testRoundtrip(
-        \\1985-08-17 open Assets:Foo USD,EUR "strict"
+        \\1985-08-17 open Assets:Foo USD,EUR "STRICT"
         \\  a: "Yes"
         \\
         \\1985-09-24 open Assets:Bar NZD
         \\
-        \\1985-09-24 open Assets:Bar "lax"
+        \\1985-09-24 open Assets:Bar "FIFO"
         \\
     );
 }

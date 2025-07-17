@@ -4,20 +4,30 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Create the executable
-    const exe = b.addExecutable(.{
-        .name = "zigcount",
+    const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
+    exe_mod.addImport("lsp", b.dependency("lsp_codegen", .{}).module("lsp"));
+    exe_mod.addImport("zts", b.dependency("zts", .{}).module("zts"));
+    exe_mod.addImport("fzwatch", b.dependency("fzwatch", .{}).module("fzwatch"));
+    exe_mod.addImport("zzz", b.dependency("zzz", .{}).module("zzz"));
 
-    exe.root_module.addImport("lsp", b.dependency("lsp_codegen", .{}).module("lsp"));
-    exe.root_module.addImport("zts", b.dependency("zts", .{}).module("zts"));
-    exe.root_module.addImport("fzwatch", b.dependency("fzwatch", .{}).module("fzwatch"));
-    exe.root_module.addImport("zzz", b.dependency("zzz", .{}).module("zzz"));
-
+    // Create the executable
+    const exe = b.addExecutable(.{
+        .name = "zigcount",
+        .root_module = exe_mod,
+    });
     b.installArtifact(exe);
+
+    const exe_check = b.addExecutable(.{
+        .name = "zigcount",
+        .root_module = exe_mod,
+    });
+
+    const check = b.step("check", "Check if zigcount compiles");
+    check.dependOn(&exe_check.step);
 
     // Add a unit test step
     const unit_tests = b.addTest(.{

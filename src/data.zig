@@ -6,6 +6,7 @@ const Parser = @import("parser.zig");
 const Number = @import("number.zig").Number;
 const Lexer = @import("lexer.zig").Lexer;
 const Solver = @import("solver.zig").Solver;
+const Inventory = @import("inventory.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
 const Uri = @import("Uri.zig");
 
@@ -133,7 +134,7 @@ pub const Config = struct {
 pub const Open = struct {
     account: Lexer.Token,
     currencies: ?Range,
-    booking: ?[]const u8,
+    booking: ?Inventory.BookingMethod,
 };
 
 pub const Close = struct {

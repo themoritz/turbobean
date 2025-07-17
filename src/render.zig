@@ -87,7 +87,12 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
             }
             if (open.booking) |booking| {
                 try r.space();
-                try r.slice(booking);
+                try r.slice(switch (booking) {
+                    .fifo => "\"FIFO\"",
+                    .lifo => "\"LIFO\"",
+                    .average => "\"AVERAGE\"",
+                    .strict => "\"STRICT\"",
+                });
             }
         },
         .close => |close| {

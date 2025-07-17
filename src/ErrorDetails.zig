@@ -20,6 +20,7 @@ pub const Tag = enum {
     expected_declaration,
     invalid_number,
     invalid_date,
+    invalid_booking_method,
     expected_token,
     expected_entry,
     expected_key_value,
@@ -40,6 +41,10 @@ pub const Tag = enum {
     multiple_pads,
     balance_assertion_failed,
 
+    account_does_not_hold_currency,
+    account_is_booked,
+    account_is_not_booked,
+
     flagged,
 
     pub fn message(self: Tag) []const u8 {
@@ -47,6 +52,7 @@ pub const Tag = enum {
             .expected_declaration => "Expected declaration",
             .invalid_number => "Invalid number",
             .invalid_date => "Invalid date",
+            .invalid_booking_method => "Invalid booking method. Choose from FIFO, LIFO, AVERAGE, STRICT",
             .expected_token => unreachable,
             .expected_entry => "Expected entry",
             .expected_key_value => "Expected key: value",
@@ -64,6 +70,9 @@ pub const Tag = enum {
             .account_not_open => "Account is not open or has been closed. Open it with an open entry",
             .multiple_pads => "Multiple pads of the same account. You need to have a balance assertion between pads",
             .balance_assertion_failed => "Balance assertion failed",
+            .account_does_not_hold_currency => "Cannot post this currency to this account. Check open declaration.",
+            .account_is_booked => "Booked account. Can only buy or sell.",
+            .account_is_not_booked => "Unbooked account. Can't buy or sell",
             .flagged => "Flagged",
         };
     }

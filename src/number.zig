@@ -136,6 +136,28 @@ pub const Number = struct {
     pub fn is_zero(self: Number) bool {
         return self.value == 0;
     }
+
+    pub fn is_positive(self: Number) bool {
+        return self.value > 0;
+    }
+
+    pub fn is_negative(self: Number) bool {
+        return self.value < 0;
+    }
+
+    pub fn min(self: Number, other: Number) Number {
+        const p = @max(self.precision, other.precision);
+        const self_factor = pow10(p - self.precision);
+        const other_factor = pow10(p - other.precision);
+        const self_scaled = self.value * self_factor;
+        const other_scaled = other.value * other_factor;
+
+        if (self_scaled <= other_scaled) {
+            return self;
+        } else {
+            return other;
+        }
+    }
 };
 
 fn pow10(n: u32) i64 {
@@ -169,4 +191,6 @@ test Number {
     try std.testing.expectEqual(Number.fromFloat(0.142857143), Number.fromInt(1).div(Number.fromInt(7)));
 
     try std.testing.expectEqual(Number.fromFloat(123456.4), try Number.fromSlice("123,456.4"));
+
+    try std.testing.expectEqual(Number.fromFloat(1.1111).min(Number.fromFloat(2.222)), Number.fromFloat(1.1111));
 }

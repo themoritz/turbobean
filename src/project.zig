@@ -216,21 +216,18 @@ pub fn pipeline(self: *Self) !void {
 
     try self.refreshLspCache();
 
-    try self.checkAccountsOpen();
-    // TODO: Can only post to currencies defined at open
-    if (self.hasSevereErrors()) return;
-
-    try self.processPads();
+    try self.check();
 }
 
-pub fn processPads(self: *Self) !void {
+pub fn check(self: *Self) !void {
     const LastPad = struct {
         date: Date,
-        pad_to: []const u8,
+        pad: Token,
+        pad_to: Token,
         synthetic_index_ptr: *?usize,
     };
 
-    // Padded account -> Pad to + index in processed entries
+    // Padded account -> LastPad
     var lastPads: std.StringHashMap(LastPad) = std.StringHashMap(LastPad).init(self.alloc);
     defer lastPads.deinit();
 
@@ -242,22 +239,47 @@ pub fn processPads(self: *Self) !void {
         var entry = &data.entries.items[sorted.entry];
         switch (entry.payload) {
             .open => |open| {
-                _ = try tree.open(open.account.slice);
+                const currencies = if (open.currencies) |c|
+                    data.currencies.items[c.start..c.end]
+                else
+                    null;
+                _ = try tree.open(open.account.slice, currencies, open.booking);
+            },
+            .close => |close| {
+                tree.close(close.account.slice) catch |err| switch (err) {
+                    error.AccountNotOpen => try self.addError(close.account, sorted.file, ErrorDetails.Tag.account_not_open),
+                    else => return err,
+                };
             },
             .pad => |*pad| {
+                if (!tree.accountOpen(pad.account.slice)) {
+                    try self.addError(pad.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                }
+                if (!tree.accountOpen(pad.pad_to.slice)) {
+                    try self.addError(pad.pad_to, sorted.file, ErrorDetails.Tag.account_not_open);
+                }
+
                 if (lastPads.get(pad.account.slice)) |_| {
                     try self.addError(entry.main_token, sorted.file, .multiple_pads);
                 } else {
                     try lastPads.put(pad.account.slice, .{
                         .date = entry.date,
-                        .pad_to = pad.pad_to.slice,
+                        .pad = pad.account,
+                        .pad_to = pad.pad_to,
                         .synthetic_index_ptr = &pad.synthetic_index,
                     });
                 }
             },
             .balance => |balance| {
-                var inv = try tree.inventoryAggregatedByAccount(self.alloc, balance.account.slice);
+                var inv = tree.inventoryAggregatedByAccount(self.alloc, balance.account.slice) catch |err| switch (err) {
+                    error.AccountDoesNotExist => {
+                        try self.addError(balance.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                        continue;
+                    },
+                    else => return err,
+                };
                 defer inv.deinit();
+
                 const number = inv.balance(balance.amount.currency.?);
                 const missing = balance.amount.number.?.add(number.negate());
                 if (lastPads.get(balance.account.slice)) |last_pad| {
@@ -265,13 +287,7 @@ pub fn processPads(self: *Self) !void {
                     const postings_top = self.synthetic_postings.len;
                     try self.synthetic_postings.append(self.alloc, Data.Posting{
                         .flag = null,
-                        .account = .{
-                            .slice = balance.account.slice,
-                            .tag = .account,
-                            .line = 0,
-                            .start_col = 0,
-                            .end_col = 0,
-                        },
+                        .account = balance.account,
                         .amount = .{
                             .number = missing,
                             .currency = balance.amount.currency,
@@ -280,16 +296,15 @@ pub fn processPads(self: *Self) !void {
                         .price = null,
                         .meta = null,
                     });
-                    try tree.addPosition(balance.account.slice, missing, balance.amount.currency.?);
+                    tree.addPosition(balance.account.slice, balance.amount.currency.?, missing) catch |err| switch (err) {
+                        error.DoesNotHoldCurrency => try self.addError(last_pad.pad, sorted.file, .account_does_not_hold_currency),
+                        error.CannotAddToLotsInventory => try self.addError(last_pad.pad, sorted.file, .account_is_booked),
+                        error.AccountNotOpen => try self.addError(last_pad.pad, sorted.file, .account_not_open),
+                        else => return err,
+                    };
                     try self.synthetic_postings.append(self.alloc, Data.Posting{
                         .flag = null,
-                        .account = .{
-                            .slice = last_pad.pad_to,
-                            .tag = .account,
-                            .line = 0,
-                            .start_col = 0,
-                            .end_col = 0,
-                        },
+                        .account = last_pad.pad_to,
                         .amount = .{
                             .number = missing.negate(),
                             .currency = balance.amount.currency,
@@ -298,7 +313,12 @@ pub fn processPads(self: *Self) !void {
                         .price = null,
                         .meta = null,
                     });
-                    try tree.addPosition(last_pad.pad_to, missing.negate(), balance.amount.currency.?);
+                    tree.addPosition(last_pad.pad_to.slice, balance.amount.currency.?, missing.negate()) catch |err| switch (err) {
+                        error.DoesNotHoldCurrency => try self.addError(last_pad.pad_to, sorted.file, .account_does_not_hold_currency),
+                        error.CannotAddToLotsInventory => try self.addError(last_pad.pad_to, sorted.file, .account_is_booked),
+                        error.AccountNotOpen => try self.addError(last_pad.pad_to, sorted.file, .account_not_open),
+                        else => return err,
+                    };
                     const postings = Data.Range.create(postings_top, self.synthetic_postings.len);
                     const payload = Data.Entry.Payload{
                         .transaction = .{
@@ -330,6 +350,7 @@ pub fn processPads(self: *Self) !void {
                 } else {
                     // Balance check in case of no padding
                     if (!missing.is_zero()) {
+                        std.debug.print("Balance assertion failed: {any}\n", .{missing});
                         try self.addError(entry.main_token, sorted.file, .balance_assertion_failed);
                     }
                 }
@@ -337,67 +358,28 @@ pub fn processPads(self: *Self) !void {
             .transaction => |tx| {
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
-                        try tree.addPosition(
-                            data.postings.items(.account)[i].slice,
-                            data.postings.items(.amount)[i].number.?,
+                        const account = data.postings.items(.account)[i];
+                        tree.addPosition(
+                            account.slice,
                             data.postings.items(.amount)[i].currency.?,
-                        );
-                    }
-                }
-            },
-            else => {},
-        }
-    }
-}
-
-// Assumes sorted entries.
-pub fn checkAccountsOpen(self: *Self) !void {
-    var open_accounts = std.StringHashMap(void).init(self.alloc);
-    defer open_accounts.deinit();
-
-    for (self.sorted_entries.items) |sorted| {
-        const entry = self.files.items[sorted.file].entries.items[sorted.entry];
-        switch (entry.payload) {
-            .open => |open| {
-                try open_accounts.put(open.account.slice, {});
-            },
-            .close => |close| {
-                const removed = open_accounts.remove(close.account.slice);
-                if (!removed) {
-                    try self.addError(close.account, sorted.file, ErrorDetails.Tag.account_not_open);
-                }
-            },
-            .pad => |pad| {
-                if (!open_accounts.contains(pad.account.slice)) {
-                    try self.addError(pad.account, sorted.file, ErrorDetails.Tag.account_not_open);
-                }
-                if (!open_accounts.contains(pad.pad_to.slice)) {
-                    try self.addError(pad.pad_to, sorted.file, ErrorDetails.Tag.account_not_open);
-                }
-            },
-            .balance => |balance| {
-                if (!open_accounts.contains(balance.account.slice)) {
-                    try self.addError(balance.account, sorted.file, ErrorDetails.Tag.account_not_open);
-                }
-            },
-            .transaction => |tx| {
-                if (tx.postings) |postings| {
-                    for (postings.start..postings.end) |i| {
-                        const account = self.files.items[sorted.file].postings.items(.account)[i];
-                        if (!open_accounts.contains(account.slice)) {
-                            try self.addError(account, sorted.file, ErrorDetails.Tag.account_not_open);
-                        }
+                            data.postings.items(.amount)[i].number.?,
+                        ) catch |err| switch (err) {
+                            error.DoesNotHoldCurrency => try self.addError(account, sorted.file, .account_does_not_hold_currency),
+                            error.CannotAddToLotsInventory => try self.addError(account, sorted.file, .account_is_booked),
+                            error.AccountNotOpen => try self.addError(account, sorted.file, .account_not_open),
+                            else => return err,
+                        };
                     }
                 }
             },
             .note => |note| {
-                if (!open_accounts.contains(note.account.slice)) {
-                    try self.addWarning(note.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                if (!tree.accountOpen(note.account.slice)) {
+                    try self.addError(note.account, sorted.file, .account_not_open);
                 }
             },
             .document => |document| {
-                if (!open_accounts.contains(document.account.slice)) {
-                    try self.addWarning(document.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                if (!tree.accountOpen(document.account.slice)) {
+                    try self.addError(document.account, sorted.file, .account_not_open);
                 }
             },
             else => {},
@@ -523,6 +505,7 @@ fn refreshLspCache(self: *Self) !void {
     }
 }
 
+/// Assumes checkAccountsOpen has been called.
 pub fn accountInventoryUntilLine(
     self: *Self,
     account: []const u8,
@@ -530,11 +513,20 @@ pub fn accountInventoryUntilLine(
     line: u32,
 ) !?struct { before: Inventory, after: Inventory } {
     const file = self.files_by_uri.get(uri) orelse return null;
-    var inv = Inventory.init(self.alloc);
+    var inv: Inventory = undefined;
     errdefer inv.deinit();
     for (self.sorted_entries.items) |sorted_entry| {
         const entry = self.files.items[sorted_entry.file].entries.items[sorted_entry.entry];
         switch (entry.payload) {
+            .open => |open| {
+                if (std.mem.eql(u8, open.account.slice, account)) {
+                    const currencies = if (open.currencies) |cs|
+                        self.files.items[sorted_entry.file].currencies.items[cs.start..cs.end]
+                    else
+                        null;
+                    inv = try Inventory.init(self.alloc, open.booking, currencies);
+                }
+            },
             .transaction => |tx| {
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
@@ -545,10 +537,10 @@ pub fn accountInventoryUntilLine(
                             if (p_account.line == line and sorted_entry.file == file) {
                                 var after = try inv.clone(self.alloc);
                                 errdefer after.deinit();
-                                try after.add(amount.number.?, amount.currency.?);
+                                try after.add(amount.currency.?, amount.number.?);
                                 return .{ .before = inv, .after = after };
                             } else {
-                                try inv.add(amount.number.?, amount.currency.?);
+                                try inv.add(amount.currency.?, amount.number.?);
                             }
                         }
                     }
@@ -564,10 +556,10 @@ pub fn accountInventoryUntilLine(
                     if (pad.account.line == line and sorted_entry.file == file) {
                         var after = try inv.clone(self.alloc);
                         errdefer after.deinit();
-                        try after.add(amount.number.?, amount.currency.?);
+                        try after.add(amount.currency.?, amount.number.?);
                         return .{ .before = inv, .after = after };
                     } else {
-                        try inv.add(amount.number.?, amount.currency.?);
+                        try inv.add(amount.currency.?, amount.number.?);
                     }
                 }
                 if (std.mem.eql(u8, pad.pad_to.slice, account)) {
@@ -575,10 +567,10 @@ pub fn accountInventoryUntilLine(
                     if (pad.pad_to.line == line and sorted_entry.file == file) {
                         var after = try inv.clone(self.alloc);
                         errdefer after.deinit();
-                        try after.add(amount.number.?, amount.currency.?);
+                        try after.add(amount.currency.?, amount.number.?);
                         return .{ .before = inv, .after = after };
                     } else {
-                        try inv.add(amount.number.?, amount.currency.?);
+                        try inv.add(amount.currency.?, amount.number.?);
                     }
                 }
             },
@@ -610,47 +602,47 @@ pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !vo
 }
 
 /// Assumes balanced transactions
-pub fn printTree(self: *Self) !void {
-    var tree = try Tree.init(self.alloc);
-    defer tree.deinit();
-
-    for (self.sorted_entries.items) |sorted_entry| {
-        const data = self.files.items[sorted_entry.file];
-        const entry = data.entries.items[sorted_entry.entry];
-        switch (entry.payload) {
-            .open => |open| {
-                _ = try tree.open(open.account.slice);
-            },
-            .transaction => |tx| {
-                if (tx.postings) |postings| {
-                    for (postings.start..postings.end) |i| {
-                        try tree.addPosition(
-                            data.postings.items(.account)[i].slice,
-                            data.postings.items(.amount)[i].number.?,
-                            data.postings.items(.amount)[i].currency.?,
-                        );
-                    }
-                }
-            },
-            .pad => |pad| {
-                const index = pad.synthetic_index.?;
-                const synthetic_entry = self.synthetic_entries.items[index];
-                const tx = synthetic_entry.payload.transaction;
-                const postings = tx.postings.?;
-                for (postings.start..postings.end) |i| {
-                    try tree.addPosition(
-                        self.synthetic_postings.items(.account)[i].slice,
-                        self.synthetic_postings.items(.amount)[i].number.?,
-                        self.synthetic_postings.items(.amount)[i].currency.?,
-                    );
-                }
-            },
-            else => {},
-        }
-    }
-
-    try tree.print();
-}
+// pub fn printTree(self: *Self) !void {
+//     var tree = try Tree.init(self.alloc);
+//     defer tree.deinit();
+//
+//     for (self.sorted_entries.items) |sorted_entry| {
+//         const data = self.files.items[sorted_entry.file];
+//         const entry = data.entries.items[sorted_entry.entry];
+//         switch (entry.payload) {
+//             .open => |open| {
+//                 _ = try tree.open(open.account.slice);
+//             },
+//             .transaction => |tx| {
+//                 if (tx.postings) |postings| {
+//                     for (postings.start..postings.end) |i| {
+//                         try tree.addPosition(
+//                             data.postings.items(.account)[i].slice,
+//                             data.postings.items(.amount)[i].number.?,
+//                             data.postings.items(.amount)[i].currency.?,
+//                         );
+//                     }
+//                 }
+//             },
+//             .pad => |pad| {
+//                 const index = pad.synthetic_index.?;
+//                 const synthetic_entry = self.synthetic_entries.items[index];
+//                 const tx = synthetic_entry.payload.transaction;
+//                 const postings = tx.postings.?;
+//                 for (postings.start..postings.end) |i| {
+//                     try tree.addPosition(
+//                         self.synthetic_postings.items(.account)[i].slice,
+//                         self.synthetic_postings.items(.amount)[i].number.?,
+//                         self.synthetic_postings.items(.amount)[i].currency.?,
+//                     );
+//                 }
+//             },
+//             else => {},
+//         }
+//     }
+//
+//     try tree.print();
+// }
 
 fn addErrorDetails(self: *Self, token: Token, file_id: u8, tag: ErrorDetails.Tag, severity: ErrorDetails.Severity) !void {
     const uri = self.uris.items[@intCast(file_id)];

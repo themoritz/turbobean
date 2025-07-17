@@ -12,6 +12,8 @@
 
 - Custom
 
+- Commodity directive
+
 ## Renderer
 
 ## LSP
@@ -23,10 +25,15 @@
 
 ### Sem Tokens
 
-- Comments
 - Range
 
-# Editors
+## Beancount
+
+- New Booking System
+- Check account commodities
+- Balance Tolerances
+
+# Editor Setup
 
 ## neovim
 
