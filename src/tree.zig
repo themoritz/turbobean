@@ -1,7 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Inventory = @import("inventory.zig").Inventory;
-const BookingMethod = @import("inventory.zig").BookingMethod;
+const Booking = @import("inventory.zig").Booking;
+const Lot = @import("inventory.zig").Lot;
 const Summary = @import("inventory.zig").Summary;
 const Number = @import("number.zig").Number;
 const Self = @This();
@@ -58,7 +59,7 @@ pub fn open(
     self: *Self,
     name: []const u8,
     currencies: ?[][]const u8,
-    booking_method: ?BookingMethod,
+    booking: ?Booking,
 ) !u32 {
     if (self.node_by_name.contains(name)) {
         return error.AccountExists;
@@ -80,7 +81,7 @@ pub fn open(
             self.alloc,
             part,
             current_index,
-            try Inventory.init(self.alloc, booking_method, currencies),
+            try Inventory.init(self.alloc, booking, currencies),
         );
         try self.nodes.append(new_node);
         try self.nodes.items[current_index].children.append(new_index);
@@ -106,9 +107,15 @@ pub fn addPosition(self: *Self, account: []const u8, currency: []const u8, numbe
     try self.nodes.items[index].inventory.add(currency, number);
 }
 
-pub fn bookPosition(self: *Self, account: []const u8, currency: []const u8, lot: Inventory.Lot) !void {
+pub fn bookPosition(
+    self: *Self,
+    account: []const u8,
+    currency: []const u8,
+    lot: Lot,
+    cost_currency: []const u8,
+) !void {
     const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
-    _ = try self.nodes.items[index].inventory.book(currency, lot);
+    _ = try self.nodes.items[index].inventory.book(currency, lot, cost_currency);
 }
 
 /// Caller doesn't own returned inventory.

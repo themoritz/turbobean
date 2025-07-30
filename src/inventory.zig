@@ -10,6 +10,11 @@ pub const BookingMethod = enum {
     strict,
 };
 
+pub const Booking = struct {
+    method: BookingMethod,
+    cost_currency: []const u8,
+};
+
 pub const Lot = struct {
     units: Number,
     cost: Cost,
@@ -135,25 +140,29 @@ pub const Lots = struct {
 pub const LotsInventory = struct {
     alloc: Allocator,
     restricted: bool,
-    booking_method: BookingMethod,
+    booking: Booking,
     by_currency: std.StringHashMap(Lots),
 
-    pub fn init(alloc: Allocator, booking_method: BookingMethod, currencies: ?[][]const u8) !LotsInventory {
+    pub fn init(
+        alloc: Allocator,
+        booking: Booking,
+        currencies: ?[][]const u8,
+    ) !LotsInventory {
         if (currencies) |cs| {
             var by_currency = std.StringHashMap(Lots).init(alloc);
-            for (cs) |c| try by_currency.put(c, Lots.init(booking_method));
+            for (cs) |c| try by_currency.put(c, Lots.init(booking.method));
 
             return .{
                 .alloc = alloc,
                 .restricted = true,
-                .booking_method = booking_method,
+                .booking = booking,
                 .by_currency = by_currency,
             };
         } else {
             return .{
                 .alloc = alloc,
                 .restricted = false,
-                .booking_method = booking_method,
+                .booking = booking,
                 .by_currency = std.StringHashMap(Lots).init(alloc),
             };
         }
@@ -165,14 +174,22 @@ pub const LotsInventory = struct {
         self.by_currency.deinit();
     }
 
-    pub fn book(self: *LotsInventory, currency: []const u8, lot: Lot) !Number {
+    pub fn book(
+        self: *LotsInventory,
+        currency: []const u8,
+        lot: Lot,
+        cost_currency: []const u8,
+    ) !Number {
+        if (!std.mem.eql(u8, cost_currency, self.booking.cost_currency)) {
+            return error.CostCurrencyDoesNotMatch;
+        }
         if (self.by_currency.getPtr(currency)) |lots| {
             return try lots.book(self.alloc, lot);
         } else {
             if (self.restricted) {
                 return error.DoesNotHoldCurrency;
             } else {
-                var lots = Lots.init(self.booking_method);
+                var lots = Lots.init(self.booking.method);
                 const cost_weight = lots.book(self.alloc, lot);
                 try self.by_currency.put(currency, lots);
                 return cost_weight;
@@ -212,7 +229,7 @@ pub const LotsInventory = struct {
         var result = LotsInventory{
             .alloc = alloc,
             .restricted = self.restricted,
-            .booking_method = self.booking_method,
+            .booking = self.booking,
             .by_currency = std.StringHashMap(Lots).init(alloc),
         };
         errdefer result.deinit();
@@ -299,10 +316,10 @@ pub const Inventory = union(enum) {
     plain: PlainInventory,
     lots: LotsInventory,
 
-    pub fn init(alloc: Allocator, booking_method: ?BookingMethod, currencies: ?[][]const u8) !Inventory {
-        if (booking_method) |bm| {
+    pub fn init(alloc: Allocator, booking: ?Booking, currencies: ?[][]const u8) !Inventory {
+        if (booking) |b| {
             return .{
-                .lots = try LotsInventory.init(alloc, bm, currencies),
+                .lots = try LotsInventory.init(alloc, b, currencies),
             };
         } else {
             return .{
@@ -325,10 +342,15 @@ pub const Inventory = union(enum) {
         }
     }
 
-    pub fn book(self: *Inventory, currency: []const u8, lot: Lot) !Number {
+    pub fn book(
+        self: *Inventory,
+        currency: []const u8,
+        lot: Lot,
+        cost_currency: []const u8,
+    ) !Number {
         switch (self.*) {
             .plain => return error.CannotBookToPlainInventory,
-            .lots => |*inv| return try inv.book(currency, lot),
+            .lots => |*inv| return try inv.book(currency, lot, cost_currency),
         }
     }
 
@@ -502,7 +524,11 @@ test "cross line" {
 test "combine" {
     var plain = try PlainInventory.init(std.testing.allocator, null);
     defer plain.deinit();
-    var lots = try LotsInventory.init(std.testing.allocator, .fifo, null);
+    var lots = try LotsInventory.init(
+        std.testing.allocator,
+        .{ .method = .fifo, .cost_currency = "NZD" },
+        null,
+    );
     defer lots.deinit();
     try plain.add("USD", Number.fromInt(1));
     _ = try lots.book("USD", Lot{
@@ -512,7 +538,7 @@ test "combine" {
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
-    });
+    }, "NZD");
     _ = try lots.book("EUR", Lot{
         .units = Number.fromInt(2),
         .cost = Cost{
@@ -520,7 +546,7 @@ test "combine" {
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
-    });
+    }, "NZD");
     var plain_sum = try plain.summary(std.testing.allocator);
     var lots_sum = try lots.summary(std.testing.allocator);
     defer plain_sum.deinit();
@@ -543,7 +569,11 @@ test "plain empty" {
 }
 
 test "lots empty" {
-    var inv = try LotsInventory.init(std.testing.allocator, .fifo, null);
+    var inv = try LotsInventory.init(
+        std.testing.allocator,
+        .{ .method = .fifo, .cost_currency = "NZD" },
+        null,
+    );
     defer inv.deinit();
 
     try std.testing.expect(inv.isEmpty());
@@ -554,7 +584,7 @@ test "lots empty" {
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
-    });
+    }, "NZD");
     try std.testing.expect(!inv.isEmpty());
     _ = try inv.book("USD", Lot{
         .units = Number.fromInt(-1),
@@ -563,7 +593,7 @@ test "lots empty" {
             .date = try Date.fromSlice("2025-01-02"),
             .label = null,
         },
-    });
+    }, "NZD");
     try std.testing.expect(inv.isEmpty());
 }
 

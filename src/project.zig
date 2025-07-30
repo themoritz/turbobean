@@ -285,7 +285,8 @@ pub fn check(self: *Self) !void {
                 if (lastPads.get(balance.account.slice)) |last_pad| {
                     // Build tx
                     const postings_top = self.synthetic_postings.len;
-                    try self.synthetic_postings.append(self.alloc, Data.Posting{
+
+                    const pad_posting = Data.Posting{
                         .flag = null,
                         .account = balance.account,
                         .amount = .{
@@ -295,14 +296,11 @@ pub fn check(self: *Self) !void {
                         .cost = null,
                         .price = null,
                         .meta = null,
-                    });
-                    tree.addPosition(balance.account.slice, balance.amount.currency.?, missing) catch |err| switch (err) {
-                        error.DoesNotHoldCurrency => try self.addError(last_pad.pad, sorted.file, .account_does_not_hold_currency),
-                        error.CannotAddToLotsInventory => try self.addError(last_pad.pad, sorted.file, .account_is_booked),
-                        error.AccountNotOpen => try self.addError(last_pad.pad, sorted.file, .account_not_open),
-                        else => return err,
                     };
-                    try self.synthetic_postings.append(self.alloc, Data.Posting{
+                    try self.synthetic_postings.append(self.alloc, pad_posting);
+                    try self.postInventoryRecovering(&tree, entry.date, pad_posting, sorted.file);
+
+                    const pad_to_posting = Data.Posting{
                         .flag = null,
                         .account = last_pad.pad_to,
                         .amount = .{
@@ -312,13 +310,10 @@ pub fn check(self: *Self) !void {
                         .cost = null,
                         .price = null,
                         .meta = null,
-                    });
-                    tree.addPosition(last_pad.pad_to.slice, balance.amount.currency.?, missing.negate()) catch |err| switch (err) {
-                        error.DoesNotHoldCurrency => try self.addError(last_pad.pad_to, sorted.file, .account_does_not_hold_currency),
-                        error.CannotAddToLotsInventory => try self.addError(last_pad.pad_to, sorted.file, .account_is_booked),
-                        error.AccountNotOpen => try self.addError(last_pad.pad_to, sorted.file, .account_not_open),
-                        else => return err,
                     };
+                    try self.synthetic_postings.append(self.alloc, pad_to_posting);
+                    try self.postInventoryRecovering(&tree, entry.date, pad_to_posting, sorted.file);
+
                     const postings = Data.Range.create(postings_top, self.synthetic_postings.len);
                     const payload = Data.Entry.Payload{
                         .transaction = .{
@@ -358,17 +353,12 @@ pub fn check(self: *Self) !void {
             .transaction => |tx| {
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
-                        const account = data.postings.items(.account)[i];
-                        tree.addPosition(
-                            account.slice,
-                            data.postings.items(.amount)[i].currency.?,
-                            data.postings.items(.amount)[i].number.?,
-                        ) catch |err| switch (err) {
-                            error.DoesNotHoldCurrency => try self.addError(account, sorted.file, .account_does_not_hold_currency),
-                            error.CannotAddToLotsInventory => try self.addError(account, sorted.file, .account_is_booked),
-                            error.AccountNotOpen => try self.addError(account, sorted.file, .account_not_open),
-                            else => return err,
-                        };
+                        try self.postInventoryRecovering(
+                            &tree,
+                            entry.date,
+                            data.postings.get(i),
+                            sorted.file,
+                        );
                     }
                 }
             },
@@ -384,6 +374,57 @@ pub fn check(self: *Self) !void {
             },
             else => {},
         }
+    }
+}
+
+fn postInventoryRecovering(
+    self: *Self,
+    tree: *Tree,
+    date: Date,
+    posting: Data.Posting,
+    file_id: u8,
+) !void {
+    postInventory(tree, date, posting) catch |err| switch (err) {
+        error.DoesNotHoldCurrency => {
+            try self.addError(posting.account, file_id, .account_does_not_hold_currency);
+        },
+        error.CannotAddToLotsInventory => {
+            try self.addError(posting.account, file_id, .account_is_booked);
+        },
+        error.CannotBookToPlainInventory => {
+            try self.addError(posting.account, file_id, .account_is_not_booked);
+        },
+        error.AccountNotOpen => {
+            try self.addError(posting.account, file_id, .account_not_open);
+        },
+        error.CostCurrencyDoesNotMatch => {
+            try self.addError(posting.account, file_id, .cost_currency_does_not_match);
+        },
+        else => return err,
+    };
+}
+
+fn postInventory(tree: *Tree, date: Date, posting: Data.Posting) !void {
+    if (posting.price) |price| {
+        try tree.bookPosition(
+            posting.account.slice,
+            posting.amount.currency.?,
+            .{
+                .units = posting.amount.number.?,
+                .cost = .{
+                    .price = price.amount.number.?,
+                    .date = date,
+                    .label = null,
+                },
+            },
+            price.amount.currency.?,
+        );
+    } else {
+        try tree.addPosition(
+            posting.account.slice,
+            posting.amount.currency.?,
+            posting.amount.number.?,
+        );
     }
 }
 
@@ -407,7 +448,16 @@ pub const AccountIterator = struct {
         };
     }
 
-    pub const Kind = enum { open, close, pad, pad_to, balance, posting, note, document };
+    pub const Kind = enum {
+        open,
+        close,
+        pad,
+        pad_to,
+        balance,
+        posting,
+        note,
+        document,
+    };
 
     pub fn next(it: *AccountIterator) ?struct { file: u32, token: Token, kind: Kind } {
         const self = it.self;

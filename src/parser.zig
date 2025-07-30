@@ -235,8 +235,9 @@ fn parseEntry(p: *Self) !?void {
                 }
             }
             const currencies = Data.Range.create(currency_top, p.currencies.items.len);
-            const booking: ?Inventory.BookingMethod = if (p.tryToken(.string)) |b|
-                if (std.mem.eql(u8, b.slice, "\"FIFO\""))
+            var booking: ?Inventory.Booking = undefined;
+            if (p.tryToken(.string)) |b| {
+                const method: Inventory.BookingMethod = if (std.mem.eql(u8, b.slice, "\"FIFO\""))
                     .fifo
                 else if (std.mem.eql(u8, b.slice, "\"LIFO\""))
                     .lifo
@@ -245,9 +246,15 @@ fn parseEntry(p: *Self) !?void {
                 else if (std.mem.eql(u8, b.slice, "\"STRICT\""))
                     .strict
                 else
-                    return p.failAt(b, .invalid_booking_method)
-            else
-                null;
+                    return p.failAt(b, .invalid_booking_method);
+                const cost_currency = try p.expectTokenSlice(.currency);
+                booking = .{
+                    .method = method,
+                    .cost_currency = cost_currency,
+                };
+            } else {
+                booking = null;
+            }
 
             payload = .{ .open = .{
                 .account = account,
@@ -849,12 +856,12 @@ test "cost spec" {
 
 test "open" {
     try testRoundtrip(
-        \\1985-08-17 open Assets:Foo USD,EUR "STRICT"
+        \\1985-08-17 open Assets:Foo USD,EUR "STRICT" NZD
         \\  a: "Yes"
         \\
         \\1985-09-24 open Assets:Bar NZD
         \\
-        \\1985-09-24 open Assets:Bar "FIFO"
+        \\1985-09-24 open Assets:Bar "FIFO" NZD
         \\
     );
 }

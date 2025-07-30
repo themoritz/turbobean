@@ -44,6 +44,7 @@ pub const Tag = enum {
     account_does_not_hold_currency,
     account_is_booked,
     account_is_not_booked,
+    cost_currency_does_not_match,
 
     flagged,
 
@@ -73,6 +74,7 @@ pub const Tag = enum {
             .account_does_not_hold_currency => "Cannot post this currency to this account. Check open declaration.",
             .account_is_booked => "Booked account. Can only buy or sell.",
             .account_is_not_booked => "Unbooked account. Can't buy or sell",
+            .cost_currency_does_not_match => "Cost currency does not match.",
             .flagged => "Flagged",
         };
     }
