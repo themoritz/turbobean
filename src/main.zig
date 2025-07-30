@@ -52,7 +52,7 @@ pub fn main() !void {
         if (project.hasErrors()) {
             try project.printErrors();
         }
-        // try project.printTree();
+        try project.printTree();
     }
 }
 

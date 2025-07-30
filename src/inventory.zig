@@ -433,24 +433,44 @@ pub const Summary = struct {
         }
     }
 
-    pub fn format(self: *const Summary, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn treeDisplay(self: *const Summary, indent: u32, writer: std.io.AnyWriter) !void {
         var iter = self.by_currency.iterator();
         var first = true;
-        while (iter.next()) |entry| {
-            if (!first) {
-                try std.fmt.format(writer, ", ", .{});
+        while (iter.next()) |kv| {
+            if (!kv.value_ptr.plain.is_zero()) {
+                if (!first) {
+                    try writer.writeByte('\n');
+                    try writer.writeByteNTimes(' ', indent);
+                }
+                try writer.print("{any} {s}", .{ kv.value_ptr.plain, kv.key_ptr.* });
+                first = false;
             }
-            first = false;
-            // TODO: List lots
-            try std.fmt.format(writer, "{any} {s}", .{ entry.value_ptr.plain, entry.key_ptr.* });
+            if (kv.value_ptr.lots.items.len > 0) {
+                for (kv.value_ptr.lots.items) |lot| {
+                    if (!first) {
+                        try writer.writeByte('\n');
+                        try writer.writeByteNTimes(' ', indent);
+                    }
+                    try writer.print("{} {s} @ {} {s} {{{}", .{
+                        lot.units,
+                        kv.key_ptr.*,
+                        lot.cost.price,
+                        kv.value_ptr.cost_currency.?,
+                        lot.cost.date,
+                    });
+                    if (lot.cost.label) |label| {
+                        try writer.print(", {s}", .{label});
+                    }
+                    try writer.print("}}", .{});
+                    first = false;
+                }
+            }
         }
     }
 
     pub fn hoverDisplay(self: *const Summary, writer: std.io.AnyWriter) !void {
-        var currency_iter = self.by_currency.iterator();
-        while (currency_iter.next()) |kv| {
+        var iter = self.by_currency.iterator();
+        while (iter.next()) |kv| {
             if (!kv.value_ptr.plain.is_zero()) {
                 try writer.print("• {any} {s}\n", .{ kv.value_ptr.plain, kv.key_ptr.* });
             }

@@ -186,13 +186,13 @@ fn renderRec(self: *Self, buf: *std.ArrayList(u8), node_index: u32, max_width: u
     const node = self.nodes.items[node_index];
     try buf.appendNTimes(' ', 2 * depth);
     try buf.appendSlice(node.name);
-    var inv = try self.inventoryAggregatedByNode(self.alloc, node_index);
-    defer inv.deinit();
-    if (!inv.isEmpty()) {
+    var summary = try self.inventoryAggregatedByNode(self.alloc, node_index);
+    defer summary.deinit();
+    if (!summary.isEmpty()) {
         const name_width: u32 = try unicodeLen(self.nodes.items[node_index].name);
         const width: u32 = depth * 2 + name_width;
         try buf.appendNTimes(' ', max_width - width + 3);
-        try std.fmt.format(buf.writer(), "{any}", .{inv});
+        try summary.treeDisplay(max_width + 3, buf.writer().any());
     }
     try buf.append('\n');
     for (node.children.items) |child| {

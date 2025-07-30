@@ -661,48 +661,44 @@ pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !vo
     try self.pipeline();
 }
 
-/// Assumes balanced transactions
-// pub fn printTree(self: *Self) !void {
-//     var tree = try Tree.init(self.alloc);
-//     defer tree.deinit();
-//
-//     for (self.sorted_entries.items) |sorted_entry| {
-//         const data = self.files.items[sorted_entry.file];
-//         const entry = data.entries.items[sorted_entry.entry];
-//         switch (entry.payload) {
-//             .open => |open| {
-//                 _ = try tree.open(open.account.slice);
-//             },
-//             .transaction => |tx| {
-//                 if (tx.postings) |postings| {
-//                     for (postings.start..postings.end) |i| {
-//                         try tree.addPosition(
-//                             data.postings.items(.account)[i].slice,
-//                             data.postings.items(.amount)[i].number.?,
-//                             data.postings.items(.amount)[i].currency.?,
-//                         );
-//                     }
-//                 }
-//             },
-//             .pad => |pad| {
-//                 const index = pad.synthetic_index.?;
-//                 const synthetic_entry = self.synthetic_entries.items[index];
-//                 const tx = synthetic_entry.payload.transaction;
-//                 const postings = tx.postings.?;
-//                 for (postings.start..postings.end) |i| {
-//                     try tree.addPosition(
-//                         self.synthetic_postings.items(.account)[i].slice,
-//                         self.synthetic_postings.items(.amount)[i].number.?,
-//                         self.synthetic_postings.items(.amount)[i].currency.?,
-//                     );
-//                 }
-//             },
-//             else => {},
-//         }
-//     }
-//
-//     try tree.print();
-// }
+// Assumes balanced transactions and checks passed
+pub fn printTree(self: *Self) !void {
+    var tree = try Tree.init(self.alloc);
+    defer tree.deinit();
+
+    for (self.sorted_entries.items) |sorted_entry| {
+        const data = self.files.items[sorted_entry.file];
+        const entry = data.entries.items[sorted_entry.entry];
+        switch (entry.payload) {
+            .open => |open| {
+                const currencies = if (open.currencies) |c|
+                    self.files.items[sorted_entry.file].currencies.items[c.start..c.end]
+                else
+                    null;
+                _ = try tree.open(open.account.slice, currencies, open.booking);
+            },
+            .transaction => |tx| {
+                if (tx.postings) |postings| {
+                    for (postings.start..postings.end) |i| {
+                        try postInventory(&tree, entry.date, data.postings.get(i));
+                    }
+                }
+            },
+            .pad => |pad| {
+                const index = pad.synthetic_index.?;
+                const synthetic_entry = self.synthetic_entries.items[index];
+                const tx = synthetic_entry.payload.transaction;
+                const postings = tx.postings.?;
+                for (postings.start..postings.end) |i| {
+                    try postInventory(&tree, entry.date, self.synthetic_postings.get(i));
+                }
+            },
+            else => {},
+        }
+    }
+
+    try tree.print();
+}
 
 fn addErrorDetails(self: *Self, token: Token, file_id: u8, tag: ErrorDetails.Tag, severity: ErrorDetails.Severity) !void {
     const uri = self.uris.items[@intCast(file_id)];
