@@ -223,15 +223,11 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         const writer = value.writer();
                         {
                             try writer.writeAll("Before:\n");
-                            var summary = try inv.before.summary(alloc);
-                            defer summary.deinit();
-                            try summary.hoverDisplay(writer.any());
+                            try inv.before.hoverDisplay(writer.any());
                         }
                         {
                             try writer.writeAll("\nAfter:\n");
-                            var summary = try inv.after.summary(alloc);
-                            defer summary.deinit();
-                            try summary.hoverDisplay(writer.any());
+                            try inv.after.hoverDisplay(writer.any());
                         }
 
                         const result = lsp.types.Hover{

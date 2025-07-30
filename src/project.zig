@@ -6,6 +6,7 @@ const Uri = @import("Uri.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
 const Token = @import("lexer.zig").Lexer.Token;
 const Inventory = @import("inventory.zig").Inventory;
+const InvSummary = @import("inventory.zig").Summary;
 const Date = @import("date.zig").Date;
 
 const Self = @This();
@@ -216,7 +217,9 @@ pub fn pipeline(self: *Self) !void {
 
     try self.refreshLspCache();
 
-    try self.check();
+    if (!self.hasSevereErrors()) {
+        try self.check();
+    }
 }
 
 pub fn check(self: *Self) !void {
@@ -561,36 +564,39 @@ pub fn accountInventoryUntilLine(
     account: []const u8,
     uri: []const u8,
     line: u32,
-) !?struct { before: Inventory, after: Inventory } {
+) !?struct { before: InvSummary, after: InvSummary } {
     const file = self.files_by_uri.get(uri) orelse return null;
-    var inv: Inventory = undefined;
-    errdefer inv.deinit();
+
+    var tree = try Tree.init(self.alloc);
+    defer tree.deinit();
+
     for (self.sorted_entries.items) |sorted_entry| {
-        const entry = self.files.items[sorted_entry.file].entries.items[sorted_entry.entry];
+        const data = self.files.items[sorted_entry.file];
+        const entry = data.entries.items[sorted_entry.entry];
         switch (entry.payload) {
             .open => |open| {
                 if (std.mem.eql(u8, open.account.slice, account)) {
-                    const currencies = if (open.currencies) |cs|
-                        self.files.items[sorted_entry.file].currencies.items[cs.start..cs.end]
+                    const currencies = if (open.currencies) |c|
+                        self.files.items[sorted_entry.file].currencies.items[c.start..c.end]
                     else
                         null;
-                    inv = try Inventory.init(self.alloc, open.booking, currencies);
+                    _ = try tree.open(open.account.slice, currencies, open.booking);
                 }
             },
             .transaction => |tx| {
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
-                        const p = self.files.items[sorted_entry.file].postings;
-                        const p_account = p.items(.account)[i];
-                        if (std.mem.eql(u8, p_account.slice, account)) {
-                            const amount = p.items(.amount)[i];
-                            if (p_account.line == line and sorted_entry.file == file) {
-                                var after = try inv.clone(self.alloc);
+                        const posting = data.postings.get(i);
+                        if (std.mem.eql(u8, posting.account.slice, account)) {
+                            if (posting.account.line == line and sorted_entry.file == file) {
+                                var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                                errdefer before.deinit();
+                                try postInventory(&tree, entry.date, posting);
+                                var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
                                 errdefer after.deinit();
-                                try after.add(amount.currency.?, amount.number.?);
-                                return .{ .before = inv, .after = after };
+                                return .{ .before = before, .after = after };
                             } else {
-                                try inv.add(amount.currency.?, amount.number.?);
+                                try postInventory(&tree, entry.date, posting);
                             }
                         }
                     }
@@ -602,25 +608,29 @@ pub fn accountInventoryUntilLine(
                 const tx = synthetic_entry.payload.transaction;
                 const postings = tx.postings.?;
                 if (std.mem.eql(u8, pad.account.slice, account)) {
-                    const amount = self.synthetic_postings.items(.amount)[postings.start];
+                    const posting = self.synthetic_postings.get(postings.start);
                     if (pad.account.line == line and sorted_entry.file == file) {
-                        var after = try inv.clone(self.alloc);
+                        var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                        errdefer before.deinit();
+                        try postInventory(&tree, entry.date, posting);
+                        var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
                         errdefer after.deinit();
-                        try after.add(amount.currency.?, amount.number.?);
-                        return .{ .before = inv, .after = after };
+                        return .{ .before = before, .after = after };
                     } else {
-                        try inv.add(amount.currency.?, amount.number.?);
+                        try postInventory(&tree, entry.date, posting);
                     }
                 }
                 if (std.mem.eql(u8, pad.pad_to.slice, account)) {
-                    const amount = self.synthetic_postings.items(.amount)[postings.end - 1];
+                    const posting = self.synthetic_postings.get(postings.end - 1);
                     if (pad.pad_to.line == line and sorted_entry.file == file) {
-                        var after = try inv.clone(self.alloc);
+                        var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                        errdefer before.deinit();
+                        try postInventory(&tree, entry.date, posting);
+                        var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
                         errdefer after.deinit();
-                        try after.add(amount.currency.?, amount.number.?);
-                        return .{ .before = inv, .after = after };
+                        return .{ .before = before, .after = after };
                     } else {
-                        try inv.add(amount.currency.?, amount.number.?);
+                        try postInventory(&tree, entry.date, posting);
                     }
                 }
             },

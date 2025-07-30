@@ -217,6 +217,7 @@ pub const LotsInventory = struct {
             for (kv.value_ptr.longs.items) |l| try lots.append(l);
             try by_currency.put(kv.key_ptr.*, .{
                 .plain = Number.zero(),
+                .cost_currency = self.booking.cost_currency,
                 .lots = lots,
             });
         }
@@ -297,6 +298,7 @@ pub const PlainInventory = struct {
         while (iter.next()) |kv| {
             try by_currency.put(kv.key_ptr.*, .{
                 .plain = kv.value_ptr.*,
+                .cost_currency = null,
                 .lots = std.ArrayList(Lot).init(alloc),
             });
         }
@@ -381,6 +383,7 @@ pub const Summary = struct {
 
     pub const CurrencySummary = struct {
         plain: Number,
+        cost_currency: ?[]const u8,
         lots: std.ArrayList(Lot),
     };
 
@@ -413,6 +416,7 @@ pub const Summary = struct {
             } else {
                 try self.by_currency.put(entry.key_ptr.*, .{
                     .plain = entry.value_ptr.plain,
+                    .cost_currency = entry.value_ptr.cost_currency,
                     .lots = try entry.value_ptr.lots.clone(),
                 });
             }
@@ -446,11 +450,24 @@ pub const Summary = struct {
 
     pub fn hoverDisplay(self: *const Summary, writer: std.io.AnyWriter) !void {
         var currency_iter = self.by_currency.iterator();
-        // TODO: List lots
         while (currency_iter.next()) |kv| {
-            try writer.print("• {any} {s}\n", .{ kv.value_ptr.plain, kv.key_ptr.* });
-            for (kv.value_ptr.lots.items) |lot| {
-                try writer.print("  • {} {{ {}, {}, {any} }}\n", .{ lot.units, lot.cost.price, lot.cost.date, lot.cost.label });
+            if (!kv.value_ptr.plain.is_zero()) {
+                try writer.print("• {any} {s}\n", .{ kv.value_ptr.plain, kv.key_ptr.* });
+            }
+            if (kv.value_ptr.lots.items.len > 0) {
+                for (kv.value_ptr.lots.items) |lot| {
+                    try writer.print("• {} {s} @ {} {s} {{{}", .{
+                        lot.units,
+                        kv.key_ptr.*,
+                        lot.cost.price,
+                        kv.value_ptr.cost_currency.?,
+                        lot.cost.date,
+                    });
+                    if (lot.cost.label) |label| {
+                        try writer.print(", {s}", .{label});
+                    }
+                    try writer.print("}}\n", .{});
+                }
             }
         }
     }
