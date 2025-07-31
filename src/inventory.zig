@@ -6,7 +6,6 @@ const Date = @import("date.zig").Date;
 pub const BookingMethod = enum {
     fifo,
     lifo,
-    average,
     strict,
 };
 

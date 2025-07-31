@@ -90,7 +90,6 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
                 try r.slice(switch (booking.method) {
                     .fifo => "\"FIFO\"",
                     .lifo => "\"LIFO\"",
-                    .average => "\"AVERAGE\"",
                     .strict => "\"STRICT\"",
                 });
                 try r.space();

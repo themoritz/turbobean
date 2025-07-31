@@ -607,6 +607,7 @@ pub fn accountInventoryUntilLine(
                 const synthetic_entry = self.synthetic_entries.items[index];
                 const tx = synthetic_entry.payload.transaction;
                 const postings = tx.postings.?;
+                std.debug.assert(postings.end - postings.start == 2);
                 if (std.mem.eql(u8, pad.account.slice, account)) {
                     const posting = self.synthetic_postings.get(postings.start);
                     if (pad.account.line == line and sorted_entry.file == file) {

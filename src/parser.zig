@@ -241,8 +241,6 @@ fn parseEntry(p: *Self) !?void {
                     .fifo
                 else if (std.mem.eql(u8, b.slice, "\"LIFO\""))
                     .lifo
-                else if (std.mem.eql(u8, b.slice, "\"AVERAGE\""))
-                    .average
                 else if (std.mem.eql(u8, b.slice, "\"STRICT\""))
                     .strict
                 else
