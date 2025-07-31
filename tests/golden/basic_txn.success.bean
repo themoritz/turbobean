@@ -1,0 +1,7 @@
+2020-01-01 open Assets:Cash
+2020-01-01 open Expenses:Home
+
+2020-01-02 * "Buy"
+  Assets:Cash  -10 EUR
+  Expenses:Home
+
