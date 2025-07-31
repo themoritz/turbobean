@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Number = @import("number.zig").Number;
 const Date = @import("date.zig").Date;
+const LotSpec = @import("data.zig").LotSpec;
 
 pub const BookingMethod = enum {
     fifo,
@@ -23,107 +24,170 @@ pub const Cost = struct {
     price: Number,
     date: Date,
     label: ?[]const u8,
+
+    fn with_lot_spec(self: *const Cost, spec: ?LotSpec) Cost {
+        if (spec) |s| {
+            return Cost{
+                .price = if (s.price) |p| p.number.? else self.price,
+                .date = s.date orelse self.date,
+                .label = s.label orelse self.label,
+            };
+        } else {
+            return self.*;
+        }
+    }
 };
 
 pub const Lots = struct {
     booking_method: BookingMethod,
-    longs: std.ArrayListUnmanaged(Lot),
-    shorts: std.ArrayListUnmanaged(Lot),
+    lots: std.ArrayListUnmanaged(Lot),
 
     pub fn init(booking_method: BookingMethod) Lots {
         return .{
             .booking_method = booking_method,
-            .longs = std.ArrayListUnmanaged(Lot){},
-            .shorts = std.ArrayListUnmanaged(Lot){},
+            .lots = std.ArrayListUnmanaged(Lot){},
         };
     }
 
     pub fn deinit(self: *Lots, alloc: Allocator) void {
-        self.longs.deinit(alloc);
-        self.shorts.deinit(alloc);
+        self.lots.deinit(alloc);
     }
 
-    /// Only fifo supported for now.
     /// lot: the lot that should be booked
-    /// select_cost: the lot that should be selected, based on the cost spec. It has to fit precisely.
+    /// lot_spec:
+    /// - If reducing lots: filter the lots to reduce.
+    /// - If introducing new lots: Overwrite the properties of the new lot.
     /// Returns: cost-weight
-    pub fn book(self: *Lots, alloc: Allocator, lot: Lot) !Number {
-        var cost_weight = Number.zero();
-        if (lot.units.is_positive()) {
-            std.sort.block(Lot, self.shorts.items, {}, struct {
-                fn lessThan(_: void, a: Lot, b: Lot) bool {
-                    return a.cost.date.compare(b.cost.date) == .before;
-                }
-            }.lessThan);
+    pub fn book(self: *Lots, alloc: Allocator, lot: Lot, lot_spec: ?LotSpec) !Number {
+        // For a long lot, these are shorts which match lot_spec
+        // For a short lot, longs that match lot_spec
+        var filtered = std.ArrayList(usize).init(alloc);
+        defer filtered.deinit();
 
-            var remaining = lot.units;
-            var i = self.shorts.items.len;
-            while (i > 0) {
-                i -= 1;
-                const l = &self.shorts.items[i];
-                if (remaining.is_positive()) {
-                    const to_book = l.units.min(remaining);
-                    cost_weight = cost_weight.add(l.cost.price.mul(to_book));
-                    l.units = l.units.sub(to_book);
-                    remaining = remaining.sub(to_book);
-                    if (l.units.is_zero()) {
-                        _ = self.shorts.pop();
-                    } else {
-                        break;
+        for (self.lots.items, 0..) |l, i| {
+            if (lot.units.is_positive() and l.units.is_positive()) continue;
+            if (lot.units.is_negative() and l.units.is_negative()) continue;
+
+            if (lot_spec) |spec| {
+                if (spec.price) |price| {
+                    if (!l.cost.price.sub(price.number.?).is_zero()) continue;
+                }
+                if (spec.date) |date| {
+                    if (!std.meta.eql(l.cost.date, date)) continue;
+                }
+                if (spec.label) |l1| {
+                    if (l.cost.label) |l2| {
+                        if (!std.mem.eql(u8, l1, l2)) continue;
                     }
+                }
+            }
+            try filtered.append(i);
+        }
+
+        if (filtered.items.len > 1) {
+            var total_filtered = Number.zero();
+            for (filtered.items) |i|
+                total_filtered = total_filtered.add(self.lots.items[i].units);
+            if (!total_filtered.sub(lot.units).is_zero()) {
+                switch (self.booking_method) {
+                    .strict => {
+                        return error.CantDisambiguateLots;
+                    },
+                    .fifo => {
+                        std.sort.block(usize, filtered.items, self.lots.items, struct {
+                            fn lessThan(lots: []Lot, a: usize, b: usize) bool {
+                                return lots[a].cost.date.compare(lots[b].cost.date) == .after;
+                            }
+                        }.lessThan);
+                    },
+                    .lifo => {
+                        std.sort.block(usize, filtered.items, self.lots.items, struct {
+                            fn lessThan(lots: []Lot, a: usize, b: usize) bool {
+                                return lots[a].cost.date.compare(lots[b].cost.date) == .before;
+                            }
+                        }.lessThan);
+                    },
+                }
+            }
+        }
+
+        var cost_weight = Number.zero();
+
+        if (lot.units.is_positive()) {
+            var remaining = lot.units;
+            for (filtered.items) |i| {
+                const l = &self.lots.items[i];
+                if (remaining.is_positive()) {
+                    std.debug.assert(l.units.is_negative());
+                    const to_book = l.units.negate().min(remaining);
+                    cost_weight = cost_weight.add(l.cost.price.mul(to_book));
+                    l.units = l.units.add(to_book);
+                    remaining = remaining.sub(to_book);
                     if (remaining.is_zero()) break;
                 }
             }
             if (remaining.is_positive()) {
                 cost_weight = cost_weight.add(remaining.mul(lot.cost.price));
-                try self.longs.append(alloc, Lot{
+                try self.lots.append(alloc, Lot{
                     .units = remaining,
-                    .cost = lot.cost,
+                    .cost = lot.cost.with_lot_spec(lot_spec),
                 });
             }
         }
-        if (lot.units.is_negative()) {
-            std.sort.block(Lot, self.longs.items, {}, struct {
-                fn lessThan(_: void, a: Lot, b: Lot) bool {
-                    return a.cost.date.compare(b.cost.date) == .before;
-                }
-            }.lessThan);
 
-            var remaining = lot.units.negate();
-            var i = self.longs.items.len;
-            while (i > 0) {
-                i -= 1;
-                const l = &self.longs.items[i];
-                if (remaining.is_positive()) {
-                    const to_book = l.units.min(remaining);
+        if (lot.units.is_negative()) {
+            var remaining = lot.units;
+            for (filtered.items) |i| {
+                const l = &self.lots.items[i];
+                if (remaining.is_negative()) {
+                    std.debug.assert(l.units.is_positive());
+                    const to_book = l.units.min(remaining.negate());
                     cost_weight = cost_weight.sub(l.cost.price.mul(to_book));
                     l.units = l.units.sub(to_book);
-                    remaining = remaining.sub(to_book);
-                    if (l.units.is_zero()) {
-                        _ = self.longs.pop();
-                    } else {
-                        break;
-                    }
+                    remaining = remaining.add(to_book);
                     if (remaining.is_zero()) break;
                 }
             }
-            if (remaining.is_positive()) {
-                cost_weight = cost_weight.sub(remaining.mul(lot.cost.price));
-                try self.shorts.append(alloc, Lot{
+            if (remaining.is_negative()) {
+                cost_weight = cost_weight.add(remaining.mul(lot.cost.price));
+                try self.lots.append(alloc, Lot{
                     .units = remaining,
-                    .cost = lot.cost,
+                    .cost = lot.cost.with_lot_spec(lot_spec),
                 });
             }
         }
 
-        std.debug.assert(@intFromBool(self.shorts.items.len > 0) + @intFromBool(self.longs.items.len > 0) <= 1);
+        // Filter out empty lots
+        var write_index: usize = 0;
+        for (self.lots.items) |l| {
+            if (!l.units.is_zero()) {
+                self.lots.items[write_index] = l;
+                write_index += 1;
+            }
+        }
+        self.lots.shrinkRetainingCapacity(write_index);
+
+        // Check lots are either all long or all short.
+        std.debug.assert(b: {
+            var long: ?bool = null;
+            for (self.lots.items) |l| {
+                if (long) |lng| {
+                    if (lng and l.units.is_negative()) break :b false;
+                    if (!lng and l.units.is_positive()) break :b false;
+                } else {
+                    if (l.units.is_positive()) long = true;
+                    if (l.units.is_negative()) long = false;
+                }
+            }
+            break :b true;
+        });
+
         return cost_weight;
     }
 
     pub fn balance(self: *Lots) Number {
         var result = Number.zero();
-        for (self.shorts.items) |short| result = result.sub(short.units);
-        for (self.longs.items) |long| result = result.add(long.units);
+        for (self.lots.items) |lot| result = result.add(lot.units);
         return result;
     }
 
@@ -178,18 +242,26 @@ pub const LotsInventory = struct {
         currency: []const u8,
         lot: Lot,
         cost_currency: []const u8,
+        lot_spec: ?LotSpec,
     ) !Number {
         if (!std.mem.eql(u8, cost_currency, self.booking.cost_currency)) {
             return error.CostCurrencyDoesNotMatch;
         }
+        if (lot_spec) |spec| {
+            if (spec.price) |price| {
+                if (!std.mem.eql(u8, price.currency.?, self.booking.cost_currency)) {
+                    return error.CostCurrencyDoesNotMatch;
+                }
+            }
+        }
         if (self.by_currency.getPtr(currency)) |lots| {
-            return try lots.book(self.alloc, lot);
+            return try lots.book(self.alloc, lot, lot_spec);
         } else {
             if (self.restricted) {
                 return error.DoesNotHoldCurrency;
             } else {
                 var lots = Lots.init(self.booking.method);
-                const cost_weight = lots.book(self.alloc, lot);
+                const cost_weight = lots.book(self.alloc, lot, lot_spec);
                 try self.by_currency.put(currency, lots);
                 return cost_weight;
             }
@@ -199,7 +271,7 @@ pub const LotsInventory = struct {
     pub fn isEmpty(self: *const LotsInventory) bool {
         var iter = self.by_currency.valueIterator();
         while (iter.next()) |v| {
-            if (v.shorts.items.len > 0 or v.longs.items.len > 0) return false;
+            if (v.lots.items.len > 0) return false;
         }
         return true;
     }
@@ -208,20 +280,15 @@ pub const LotsInventory = struct {
         var by_currency = std.StringHashMap(Summary.CurrencySummary).init(alloc);
         var iter = self.by_currency.iterator();
         while (iter.next()) |kv| {
-            var lots = std.ArrayList(Lot).init(alloc);
-            for (kv.value_ptr.shorts.items) |l| try lots.append(.{
-                .units = l.units.negate(),
-                .cost = l.cost,
-            });
-            for (kv.value_ptr.longs.items) |l| try lots.append(l);
             try by_currency.put(kv.key_ptr.*, .{
                 .plain = Number.zero(),
                 .cost_currency = self.booking.cost_currency,
-                .lots = lots,
+                .lots = try kv.value_ptr.lots.clone(alloc),
             });
         }
         return Summary{
             .by_currency = by_currency,
+            .alloc = alloc,
         };
     }
 
@@ -298,10 +365,10 @@ pub const PlainInventory = struct {
             try by_currency.put(kv.key_ptr.*, .{
                 .plain = kv.value_ptr.*,
                 .cost_currency = null,
-                .lots = std.ArrayList(Lot).init(alloc),
+                .lots = .{},
             });
         }
-        return .{ .by_currency = by_currency };
+        return .{ .by_currency = by_currency, .alloc = alloc };
     }
 
     pub fn clone(self: *const PlainInventory, alloc: Allocator) !PlainInventory {
@@ -379,22 +446,24 @@ pub const Inventory = union(enum) {
 
 pub const Summary = struct {
     by_currency: std.StringHashMap(CurrencySummary),
+    alloc: Allocator,
 
     pub const CurrencySummary = struct {
         plain: Number,
         cost_currency: ?[]const u8,
-        lots: std.ArrayList(Lot),
+        lots: std.ArrayListUnmanaged(Lot),
     };
 
     pub fn init(alloc: Allocator) Summary {
         return .{
             .by_currency = std.StringHashMap(CurrencySummary).init(alloc),
+            .alloc = alloc,
         };
     }
 
     pub fn deinit(self: *Summary) void {
         var iter = self.by_currency.valueIterator();
-        while (iter.next()) |v| v.lots.deinit();
+        while (iter.next()) |v| v.lots.deinit(self.alloc);
         self.by_currency.deinit();
     }
 
@@ -411,12 +480,12 @@ pub const Summary = struct {
         while (iter.next()) |entry| {
             if (self.by_currency.getPtr(entry.key_ptr.*)) |v| {
                 v.plain = v.plain.add(entry.value_ptr.plain);
-                for (entry.value_ptr.lots.items) |l| try v.lots.append(l);
+                for (entry.value_ptr.lots.items) |l| try v.lots.append(self.alloc, l);
             } else {
                 try self.by_currency.put(entry.key_ptr.*, .{
                     .plain = entry.value_ptr.plain,
                     .cost_currency = entry.value_ptr.cost_currency,
-                    .lots = try entry.value_ptr.lots.clone(),
+                    .lots = try entry.value_ptr.lots.clone(self.alloc),
                 });
             }
         }
@@ -505,7 +574,7 @@ test "cost weight" {
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
-    });
+    }, null);
     _ = try inv.book(alloc, Lot{
         .units = Number.fromInt(10),
         .cost = Cost{
@@ -513,7 +582,7 @@ test "cost weight" {
             .date = try Date.fromSlice("2025-01-02"),
             .label = null,
         },
-    });
+    }, null);
     const cost_weight = try inv.book(alloc, Lot{
         .units = Number.fromInt(-15),
         .cost = Cost{
@@ -521,10 +590,10 @@ test "cost weight" {
             .date = try Date.fromSlice("2025-01-03"),
             .label = null,
         },
-    });
+    }, null);
 
     try std.testing.expectEqual(Number.fromInt(-175), cost_weight);
-    try std.testing.expectEqual(1, inv.longs.items.len);
+    try std.testing.expectEqual(1, inv.lots.items.len);
     try std.testing.expectEqual(Number.fromInt(5), inv.balance());
 }
 
@@ -541,7 +610,7 @@ test "cross line" {
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
-    });
+    }, null);
     const cost_weight = try inv.book(alloc, Lot{
         .units = Number.fromInt(2),
         .cost = Cost{
@@ -549,11 +618,10 @@ test "cross line" {
             .date = try Date.fromSlice("2025-01-03"),
             .label = null,
         },
-    });
+    }, null);
 
     try std.testing.expectEqual(Number.fromInt(30), cost_weight);
-    try std.testing.expectEqual(0, inv.shorts.items.len);
-    try std.testing.expectEqual(1, inv.longs.items.len);
+    try std.testing.expectEqual(1, inv.lots.items.len);
     try std.testing.expectEqual(Number.fromInt(1), inv.balance());
 }
 
@@ -574,7 +642,7 @@ test "combine" {
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
-    }, "NZD");
+    }, "NZD", null);
     _ = try lots.book("EUR", Lot{
         .units = Number.fromInt(2),
         .cost = Cost{
@@ -582,7 +650,7 @@ test "combine" {
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
-    }, "NZD");
+    }, "NZD", null);
     var plain_sum = try plain.summary(std.testing.allocator);
     var lots_sum = try lots.summary(std.testing.allocator);
     defer plain_sum.deinit();
@@ -620,7 +688,7 @@ test "lots empty" {
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
-    }, "NZD");
+    }, "NZD", null);
     try std.testing.expect(!inv.isEmpty());
     _ = try inv.book("USD", Lot{
         .units = Number.fromInt(-1),
@@ -629,7 +697,7 @@ test "lots empty" {
             .date = try Date.fromSlice("2025-01-02"),
             .label = null,
         },
-    }, "NZD");
+    }, "NZD", null);
     try std.testing.expect(inv.isEmpty());
 }
 

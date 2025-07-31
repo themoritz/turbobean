@@ -21,7 +21,6 @@ config: Config,
 postings: Postings,
 tagslinks: TagsLinks,
 meta: Meta,
-costcomps: CostComps,
 currencies: Currencies,
 
 errors: std.ArrayList(ErrorDetails),
@@ -30,7 +29,6 @@ pub const Entries = std.ArrayList(Entry);
 pub const Postings = std.MultiArrayList(Posting);
 pub const TagsLinks = std.MultiArrayList(TagLink);
 pub const Meta = std.MultiArrayList(KeyValue);
-pub const CostComps = std.ArrayList(CostComp);
 pub const Currencies = std.ArrayList([]const u8);
 pub const Imports = std.ArrayList([]const u8);
 
@@ -40,7 +38,7 @@ pub const Posting = struct {
     flag: ?Lexer.Token,
     account: Lexer.Token,
     amount: Amount,
-    cost: ?Cost,
+    lot_spec: ?LotSpec,
     price: ?Price,
     meta: ?Range,
 };
@@ -63,10 +61,10 @@ pub const Cost = struct {
     total: bool,
 };
 
-pub const CostComp = union(enum) {
-    amount: Amount,
-    date: Date,
-    label: []const u8,
+pub const LotSpec = struct {
+    price: ?Amount,
+    date: ?Date,
+    label: ?[]const u8,
 };
 
 pub const Price = struct {
@@ -239,7 +237,6 @@ pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: boo
         .postings = .{},
         .tagslinks = .{},
         .meta = .{},
-        .costcomps = CostComps.init(alloc),
         .currencies = Currencies.init(alloc),
         .tokens = Tokens.init(alloc),
         .entries = Entries.init(alloc),
@@ -269,7 +266,6 @@ pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: boo
         .postings = &self.postings,
         .tagslinks = &self.tagslinks,
         .meta = &self.meta,
-        .costcomps = &self.costcomps,
         .currencies = &self.currencies,
         .config = &self.config,
         .imports = Imports.init(self.alloc),
@@ -345,7 +341,6 @@ pub fn deinit(self: *Self) void {
 
     self.tokens.deinit();
     self.entries.deinit();
-    self.costcomps.deinit();
     self.currencies.deinit();
     self.postings.deinit(self.alloc);
     self.tagslinks.deinit(self.alloc);
