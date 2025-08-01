@@ -38,7 +38,6 @@ imports: Data.Imports,
 postings: *Data.Postings,
 tagslinks: *Data.TagsLinks,
 meta: *Data.Meta,
-costcomps: *Data.CostComps,
 currencies: *Data.Currencies,
 
 active_tags: std.StringHashMap(void),
@@ -67,12 +66,6 @@ fn addTagLink(p: *Self, taglink: Data.TagLink) !usize {
 fn addKeyValue(p: *Self, keyvalue: Data.KeyValue) !usize {
     const result = p.meta.len;
     try p.meta.append(p.alloc, keyvalue);
-    return result;
-}
-
-fn addCostComp(p: *Self, costcomp: Data.CostComp) !usize {
-    const result = p.costcomps.items.len;
-    try p.costcomps.append(costcomp);
     return result;
 }
 
@@ -506,7 +499,7 @@ fn parsePosting(p: *Self) !?usize {
     const flag = p.parseFlag();
     const account = p.tryToken(.account) orelse return null;
     const amount = try p.parseIncomleteAmount();
-    const cost = try p.parseCost();
+    const lot_spec = try p.parseLotSpec();
     const price = try p.parsePriceAnnotation();
     _ = p.tryToken(.comment);
     _ = p.tryToken(.eol);
@@ -521,7 +514,7 @@ fn parsePosting(p: *Self) !?usize {
         .flag = flag,
         .account = account,
         .amount = amount,
-        .cost = cost,
+        .lot_spec = lot_spec,
         .price = price,
         .meta = meta,
     };
@@ -547,44 +540,36 @@ fn parsePriceAnnotation(p: *Self) !?Data.Price {
     }
 }
 
-fn parseCost(p: *Self) !?Data.Cost {
-    const open = p.tryToken(.lcurl) orelse p.tryToken(.lcurllcurl) orelse return null;
+fn parseLotSpec(p: *Self) !?Data.LotSpec {
+    _ = p.tryToken(.lcurl) orelse return null;
 
-    const costcomp_top = p.costcomps.items.len;
+    var price: ?Data.Amount = null;
+    var date: ?Date = null;
+    var label: ?[]const u8 = null;
 
     while (true) {
         switch (p.currentToken().tag) {
             .date => {
-                const date = try p.parseDate() orelse return p.failExpected(.date);
-                _ = try p.addCostComp(.{ .date = date });
+                if (date != null) return p.fail(.duplicate_lot_spec);
+                date = try p.parseDate() orelse return p.failExpected(.date);
             },
             .string => {
-                const label = p.advanceToken().slice;
-                _ = try p.addCostComp(.{ .label = label });
+                if (label != null) return p.fail(.duplicate_lot_spec);
+                label = p.advanceToken().slice;
             },
             else => {
-                const amount = try p.parseIncomleteAmount();
-                if (amount.exists()) {
-                    _ = try p.addCostComp(.{ .amount = amount });
-                } else break;
+                const amount = try p.parseAmount();
+                if (amount) |_| {
+                    if (price != null) return p.fail(.duplicate_lot_spec);
+                    price = amount;
+                }
             },
         }
         if (p.tryToken(.comma) == null) break;
     }
 
-    const range = Data.Range.create(costcomp_top, p.costcomps.items.len);
-
-    switch (open.tag) {
-        .lcurl => {
-            _ = try p.expectToken(.rcurl);
-            return .{ .comps = range, .total = false };
-        },
-        .lcurllcurl => {
-            _ = try p.expectToken(.rcurlrcurl);
-            return .{ .comps = range, .total = true };
-        },
-        else => unreachable,
-    }
+    _ = try p.expectToken(.rcurl);
+    return .{ .price = price, .date = date, .label = label };
 }
 
 fn parseKeyValueLine(p: *Self) !?usize {

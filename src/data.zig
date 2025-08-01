@@ -56,11 +56,6 @@ pub const Amount = struct {
     }
 };
 
-pub const Cost = struct {
-    comps: ?Range,
-    total: bool,
-};
-
 pub const LotSpec = struct {
     price: ?Amount,
     date: ?Date,

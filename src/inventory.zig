@@ -415,10 +415,11 @@ pub const Inventory = union(enum) {
         currency: []const u8,
         lot: Lot,
         cost_currency: []const u8,
+        lot_spec: ?LotSpec,
     ) !Number {
         switch (self.*) {
             .plain => return error.CannotBookToPlainInventory,
-            .lots => |*inv| return try inv.book(currency, lot, cost_currency),
+            .lots => |*inv| return try inv.book(currency, lot, cost_currency, lot_spec),
         }
     }
 

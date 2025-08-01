@@ -296,7 +296,7 @@ pub fn check(self: *Self) !void {
                             .number = missing,
                             .currency = balance.amount.currency,
                         },
-                        .cost = null,
+                        .lot_spec = null,
                         .price = null,
                         .meta = null,
                     };
@@ -310,7 +310,7 @@ pub fn check(self: *Self) !void {
                             .number = missing.negate(),
                             .currency = balance.amount.currency,
                         },
-                        .cost = null,
+                        .lot_spec = null,
                         .price = null,
                         .meta = null,
                     };
@@ -421,6 +421,7 @@ fn postInventory(tree: *Tree, date: Date, posting: Data.Posting) !void {
                 },
             },
             price.amount.currency.?,
+            posting.lot_spec,
         );
     } else {
         try tree.addPosition(

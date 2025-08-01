@@ -168,7 +168,7 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
         .transaction => |tx| {
             if (tx.postings) |postings| {
                 for (postings.start..postings.end) |i| {
-                    try r.renderPosting(i);
+                    try r.renderPosting(r.data.postings.get(i));
                 }
             }
         },
@@ -176,44 +176,47 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
     }
 }
 
-fn renderPosting(r: *Render, posting: usize) !void {
+fn renderPosting(r: *Render, posting: Data.Posting) !void {
     try r.indent();
 
-    if (r.data.postings.items(.flag)[posting]) |flag| {
+    if (posting.flag) |flag| {
         try r.slice(flag.slice);
         try r.space();
     }
 
-    try r.slice(r.data.postings.items(.account)[posting].slice);
+    try r.slice(posting.account.slice);
 
-    const amount = r.data.postings.items(.amount)[posting];
+    const amount = posting.amount;
     if (amount.exists()) try r.space();
     try r.renderAmount(amount);
 
-    if (r.data.postings.items(.cost)[posting]) |cost| {
-        if (cost.total) try r.slice(" {{") else try r.slice(" {");
-        if (cost.comps) |comps| {
-            for (comps.start..comps.end, 0..) |i, j| {
-                if (j > 0) try r.slice(", ");
-                const comp = r.data.costcomps.items[i];
-                switch (comp) {
-                    .amount => |am| try r.renderAmount(am),
-                    .date => |date| try r.format("{}", .{date}),
-                    .label => |label| try r.slice(label),
-                }
-            }
+    if (posting.lot_spec) |lot_spec| {
+        try r.slice(" {");
+        var first = true;
+        if (lot_spec.price) |price| {
+            try r.renderAmount(price);
+            first = false;
         }
-        if (cost.total) try r.slice("}}") else try r.slice("}");
+        if (lot_spec.date) |date| {
+            if (!first) try r.slice(", ");
+            try r.format("{}", .{date});
+            first = false;
+        }
+        if (lot_spec.label) |label| {
+            if (!first) try r.slice(", ");
+            try r.slice(label);
+        }
+        try r.slice("}");
     }
 
-    if (r.data.postings.items(.price)[posting]) |price| {
+    if (posting.price) |price| {
         if (price.total) try r.slice(" @@ ") else try r.slice(" @ ");
         try r.renderAmount(price.amount);
     }
 
     try r.newline();
 
-    if (r.data.postings.items(.meta)[posting]) |meta| try r.renderMeta(meta, 2);
+    if (posting.meta) |meta| try r.renderMeta(meta, 2);
 }
 
 fn renderKeyValue(r: *Render, i: usize) !void {

@@ -5,6 +5,7 @@ const Booking = @import("inventory.zig").Booking;
 const Lot = @import("inventory.zig").Lot;
 const Summary = @import("inventory.zig").Summary;
 const Number = @import("number.zig").Number;
+const Data = @import("data.zig");
 const Self = @This();
 
 alloc: Allocator,
@@ -113,9 +114,10 @@ pub fn bookPosition(
     currency: []const u8,
     lot: Lot,
     cost_currency: []const u8,
+    lot_spec: ?Data.LotSpec,
 ) !void {
     const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
-    _ = try self.nodes.items[index].inventory.book(currency, lot, cost_currency);
+    _ = try self.nodes.items[index].inventory.book(currency, lot, cost_currency, lot_spec);
 }
 
 /// Caller doesn't own returned inventory.
