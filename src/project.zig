@@ -403,6 +403,18 @@ fn postInventoryRecovering(
         error.CostCurrencyDoesNotMatch => {
             try self.addError(posting.account, file_id, .cost_currency_does_not_match);
         },
+        error.LotSpecAmbiguousMatch => {
+            try self.addError(posting.account, file_id, .lot_spec_ambiguous_match);
+        },
+        error.LotSpecMatchTooSmall => {
+            try self.addError(posting.account, file_id, .lot_spec_match_too_small);
+        },
+        error.LotSpecNoMatch => {
+            try self.addError(posting.account, file_id, .lot_spec_no_match);
+        },
+        error.AmbiguousStrictBooking => {
+            try self.addError(posting.account, file_id, .ambiguous_strict_booking);
+        },
         else => return err,
     };
 }

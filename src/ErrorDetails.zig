@@ -47,6 +47,11 @@ pub const Tag = enum {
     account_is_not_booked,
     cost_currency_does_not_match,
 
+    lot_spec_ambiguous_match,
+    lot_spec_match_too_small,
+    lot_spec_no_match,
+    ambiguous_strict_booking,
+
     flagged,
 
     pub fn message(self: Tag) []const u8 {
@@ -77,6 +82,10 @@ pub const Tag = enum {
             .account_is_booked => "Booked account. Can only buy or sell.",
             .account_is_not_booked => "Unbooked account. Can't buy or sell",
             .cost_currency_does_not_match => "Cost currency does not match.",
+            .lot_spec_ambiguous_match => "Ambiguous match. Lot spec needs to match exactly one lot.",
+            .lot_spec_match_too_small => "Matched lot too small. You can cancel at most one lot.",
+            .lot_spec_no_match => "No matching lot found for lot spec.",
+            .ambiguous_strict_booking => "Strict booking requires explicit lot selection, or new lot needs to cancel all existing lots exactly.",
             .flagged => "Flagged",
         };
     }

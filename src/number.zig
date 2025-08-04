@@ -158,6 +158,13 @@ pub const Number = struct {
             return other;
         }
     }
+
+    pub fn abs(self: Number) Number {
+        return Number{
+            .value = @intCast(@abs(self.value)),
+            .precision = self.precision,
+        };
+    }
 };
 
 fn pow10(n: u32) i64 {
@@ -193,4 +200,7 @@ test Number {
     try std.testing.expectEqual(Number.fromFloat(123456.4), try Number.fromSlice("123,456.4"));
 
     try std.testing.expectEqual(Number.fromFloat(1.1111).min(Number.fromFloat(2.222)), Number.fromFloat(1.1111));
+
+    try std.testing.expectEqual(Number.fromInt(2).abs(), Number.fromInt(2));
+    try std.testing.expectEqual(Number.fromInt(-4).abs(), Number.fromInt(4));
 }

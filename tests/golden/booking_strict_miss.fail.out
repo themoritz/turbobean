@@ -1,0 +1,5 @@
+booking_strict_miss.fail.bean: [Error] No matching lot found for lot spec.
+
+   13 |   Assets:Stocks  -10 AAPL {1 USD} @ 30 USD
+          ^^^^^^^^^^^^^
+

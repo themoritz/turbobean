@@ -1,0 +1,5 @@
+booking_strict.fail.bean: [Error] Strict booking requires explicit lot selection, or new lot needs to cancel all existing lots exactly.
+
+   13 |   Assets:Stocks  -10 AAPL @ 30 USD
+          ^^^^^^^^^^^^^
+

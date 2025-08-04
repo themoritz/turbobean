@@ -1,0 +1,5 @@
+booking_spec_too_small.fail.bean: [Error] Matched lot too small. You can cancel at most one lot.
+
+   13 |   Assets:Stocks  -15 AAPL {"magic lot"} @ 30 USD
+          ^^^^^^^^^^^^^
+
