@@ -54,7 +54,7 @@ pub fn build(b: *std.Build) void {
             &.{ b.build_root.path.?, "tests", "golden" },
         ) catch @panic("OOM");
 
-        var tests_dir = std.fs.openDirAbsolute(tests_path, .{}) catch
+        var tests_dir = std.fs.openDirAbsolute(tests_path, .{ .iterate = true }) catch
             @panic("can't open golden test folder");
         defer tests_dir.close();
 

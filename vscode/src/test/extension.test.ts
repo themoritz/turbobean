@@ -31,21 +31,17 @@ suite('LSP', () => {
         // Equity:Ope𝄞ning-Balances
         await testHighlight(doc, new Position(2, 30), [
             toRange(2, 29, 54),
+            toRange(3, 16, 41),
             toRange(30, 26, 51),
             toRange(34, 26, 51),
-        ]);
-
-        // Equity:Opening-Balances
-        await testHighlight(doc, new Position(3, 17), [
-            toRange(3, 16, 39),
         ]);
     });
 
     test('Diagnostics', async function() {
         testDiagnostics(doc, [
             {
-                prefix: "Account is not open",
-                range: toRange(3, 16, 39),
+                prefix: "Flagged",
+                range: toRange(9, 11, 12),
                 severity: DiagnosticSeverity.Warning
             },
         ]);

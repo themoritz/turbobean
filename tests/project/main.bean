@@ -1,13 +1,13 @@
 include "open.bean" ; this is a comment
 
 2020-01-01 pad Expenses:Food Equity:Ope𝄞ning-Balances
-2026-01-01 note Equity:Opening-Balances ""
+2026-01-01 note Equity:Ope𝄞ning-Balances ""
 
 2025-01-01 balance Expenses:Food    100.1 USD
 
 2025-01-01 note Assets:Checking    "Hello"
 
-2025-04-22 * "Buy coffee" ^mylink #tag
+2025-04-22 ! "Buy coffee" ^mylink #tag
     Assets:Checking    100.10 USD
     Expenses:Food
 
