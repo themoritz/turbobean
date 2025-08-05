@@ -26,7 +26,9 @@ jobs:
         run: zig fmt --check .
 
       - name: Run zig build test
-        run: zig build test --summary all
+        run: |
+          zig build test --summary all
+          zig build golden --summary all
 
       - name: Run zig build
         run: |

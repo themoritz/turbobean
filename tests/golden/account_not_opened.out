@@ -1,0 +1,10 @@
+tests/golden/account_not_opened.bean: [[31mError[0m] Account is not open or has been closed. Open it with an open entry
+
+    2 |   Assets:Cash  -10 EUR
+          [31m^^^^^^^^^^^[0m
+
+tests/golden/account_not_opened.bean: [[31mError[0m] Account is not open or has been closed. Open it with an open entry
+
+    3 |   Expenses:Home
+          [31m^^^^^^^^^^^^^[0m
+

@@ -1,9 +1,0 @@
-{
-    "command": "../../zig-out/bin/zigcount",
-    "input_files": "*.success.bean",
-    "arguments": ["${GOLDPLATE_INPUT_FILE}"],
-    "asserts": [
-        {"exit_code": 0},
-        {"stderr": "${GOLDPLATE_INPUT_NAME}.out"}
-    ]
-}

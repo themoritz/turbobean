@@ -1,5 +1,0 @@
-booking_spec_ambiguous.fail.bean: [Error] Ambiguous match. Lot spec needs to match exactly one lot.
-
-   13 |   Assets:Stocks  -10 AAPL {"magic lot"} @ 30 USD
-          ^^^^^^^^^^^^^
-

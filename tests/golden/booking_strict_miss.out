@@ -1,0 +1,5 @@
+tests/golden/booking_strict_miss.bean: [[31mError[0m] No matching lot found for lot spec.
+
+   13 |   Assets:Stocks  -10 AAPL {1 USD} @ 30 USD
+          [31m^^^^^^^^^^^^^[0m
+
