@@ -387,7 +387,7 @@ fn postInventoryRecovering(
     posting: Data.Posting,
     file_id: u8,
 ) !void {
-    postInventory(tree, date, posting) catch |err| switch (err) {
+    tree.postInventory(date, posting) catch |err| switch (err) {
         error.DoesNotHoldCurrency => {
             try self.addError(posting.account, file_id, .account_does_not_hold_currency);
         },
@@ -417,31 +417,6 @@ fn postInventoryRecovering(
         },
         else => return err,
     };
-}
-
-fn postInventory(tree: *Tree, date: Date, posting: Data.Posting) !void {
-    if (posting.price) |price| {
-        try tree.bookPosition(
-            posting.account.slice,
-            posting.amount.currency.?,
-            .{
-                .units = posting.amount.number.?,
-                .cost = .{
-                    .price = price.amount.number.?,
-                    .date = date,
-                    .label = null,
-                },
-            },
-            price.amount.currency.?,
-            posting.lot_spec,
-        );
-    } else {
-        try tree.addPosition(
-            posting.account.slice,
-            posting.amount.currency.?,
-            posting.amount.number.?,
-        );
-    }
 }
 
 pub const AccountIterator = struct {
@@ -604,12 +579,12 @@ pub fn accountInventoryUntilLine(
                             if (posting.account.line == line and sorted_entry.file == file) {
                                 var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
                                 errdefer before.deinit();
-                                try postInventory(&tree, entry.date, posting);
+                                try tree.postInventory(entry.date, posting);
                                 var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
                                 errdefer after.deinit();
                                 return .{ .before = before, .after = after };
                             } else {
-                                try postInventory(&tree, entry.date, posting);
+                                try tree.postInventory(entry.date, posting);
                             }
                         }
                     }
@@ -626,12 +601,12 @@ pub fn accountInventoryUntilLine(
                     if (pad.account.line == line and sorted_entry.file == file) {
                         var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
                         errdefer before.deinit();
-                        try postInventory(&tree, entry.date, posting);
+                        try tree.postInventory(entry.date, posting);
                         var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
                         errdefer after.deinit();
                         return .{ .before = before, .after = after };
                     } else {
-                        try postInventory(&tree, entry.date, posting);
+                        try tree.postInventory(entry.date, posting);
                     }
                 }
                 if (std.mem.eql(u8, pad.pad_to.slice, account)) {
@@ -639,12 +614,12 @@ pub fn accountInventoryUntilLine(
                     if (pad.pad_to.line == line and sorted_entry.file == file) {
                         var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
                         errdefer before.deinit();
-                        try postInventory(&tree, entry.date, posting);
+                        try tree.postInventory(entry.date, posting);
                         var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
                         errdefer after.deinit();
                         return .{ .before = before, .after = after };
                     } else {
-                        try postInventory(&tree, entry.date, posting);
+                        try tree.postInventory(entry.date, posting);
                     }
                 }
             },
@@ -694,7 +669,7 @@ pub fn printTree(self: *Self) !void {
             .transaction => |tx| {
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
-                        try postInventory(&tree, entry.date, data.postings.get(i));
+                        try tree.postInventory(entry.date, data.postings.get(i));
                     }
                 }
             },
@@ -704,7 +679,7 @@ pub fn printTree(self: *Self) !void {
                 const tx = synthetic_entry.payload.transaction;
                 const postings = tx.postings.?;
                 for (postings.start..postings.end) |i| {
-                    try postInventory(&tree, entry.date, self.synthetic_postings.get(i));
+                    try tree.postInventory(entry.date, self.synthetic_postings.get(i));
                 }
             },
             else => {},

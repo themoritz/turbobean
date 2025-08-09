@@ -15,10 +15,11 @@ pub fn create(
     accept: bool,
 ) *Self {
     const self = owner.allocator.create(Self) catch @panic("OOM");
+    const name = std.fmt.allocPrint(owner.allocator, "golden test {s}", .{test_path}) catch @panic("OOM");
     self.* = .{
         .step = Step.init(.{
             .id = .custom,
-            .name = "golden test",
+            .name = name,
             .owner = owner,
             .makeFn = make,
         }),

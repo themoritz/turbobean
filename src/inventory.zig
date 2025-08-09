@@ -436,6 +436,12 @@ pub const Summary = struct {
         plain: Number,
         cost_currency: ?[]const u8,
         lots: std.ArrayListUnmanaged(Lot),
+
+        pub fn total_units(self: *const CurrencySummary) Number {
+            var result = self.plain;
+            for (self.lots.items) |l| result = result.add(l.units);
+            return result;
+        }
     };
 
     pub fn init(alloc: Allocator) Summary {
@@ -477,9 +483,7 @@ pub const Summary = struct {
 
     pub fn balance(self: *const Summary, currency: []const u8) Number {
         if (self.by_currency.get(currency)) |v| {
-            var result = v.plain;
-            for (v.lots.items) |l| result = result.add(l.units);
-            return result;
+            return v.total_units();
         } else {
             return Number.zero();
         }

@@ -6,6 +6,7 @@ const Lot = @import("inventory.zig").Lot;
 const Summary = @import("inventory.zig").Summary;
 const Number = @import("number.zig").Number;
 const Data = @import("data.zig");
+const Date = @import("date.zig").Date;
 const Self = @This();
 
 alloc: Allocator,
@@ -118,6 +119,31 @@ pub fn bookPosition(
 ) !void {
     const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
     _ = try self.nodes.items[index].inventory.book(currency, lot, cost_currency, lot_spec);
+}
+
+pub fn postInventory(self: *Self, date: Date, posting: Data.Posting) !void {
+    if (posting.price) |price| {
+        try self.bookPosition(
+            posting.account.slice,
+            posting.amount.currency.?,
+            .{
+                .units = posting.amount.number.?,
+                .cost = .{
+                    .price = price.amount.number.?,
+                    .date = date,
+                    .label = null,
+                },
+            },
+            price.amount.currency.?,
+            posting.lot_spec,
+        );
+    } else {
+        try self.addPosition(
+            posting.account.slice,
+            posting.amount.currency.?,
+            posting.amount.number.?,
+        );
+    }
 }
 
 /// Caller doesn't own returned inventory.
