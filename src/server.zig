@@ -3,14 +3,14 @@ const zts = @import("zts");
 const tardy = @import("zzz").tardy;
 const Tardy = tardy.Tardy(.auto);
 const Runtime = @import("zzz").tardy.Runtime;
+const Project = @import("project.zig");
+const Tree = @import("tree.zig");
 
 const Watch = @import("Watch.zig");
 
 const http = @import("zzz").HTTP;
 
-const tmpl = @embedFile("templates/foo.html");
-
-pub fn run(alloc: std.mem.Allocator) !void {
+pub fn run(alloc: std.mem.Allocator, project: *Project) !void {
     var t = try Tardy.init(alloc, .{
         .threading = .single,
     });
@@ -25,8 +25,8 @@ pub fn run(alloc: std.mem.Allocator) !void {
 
     var router = try http.Router.init(alloc, &.{
         http.Route.init("/").get({}, index_handler).layer(),
-        http.Route.init("/bar").get({}, bar_handler).layer(),
         http.Route.init("/sse").get(&watch, sse_handler).layer(),
+        http.Route.init("/journal").get(project, journal_handler).layer(),
     }, .{});
     defer router.deinit(alloc);
 
@@ -58,8 +58,9 @@ pub fn run(alloc: std.mem.Allocator) !void {
 }
 
 fn index_handler(ctx: *const http.Context, _: void) !http.Respond {
+    const t = @embedFile("templates/index.html");
     var body = std.ArrayList(u8).init(ctx.allocator);
-    try zts.print(tmpl, "site", .{"from Zig"}, body.writer());
+    try zts.writeHeader(t, body.writer());
 
     return ctx.response.apply(.{
         .status = .OK,
@@ -81,7 +82,7 @@ fn sse_handler(ctx: *const http.Context, watch: *Watch) !http.Respond {
         listener.awaitChanged();
 
         data.clearRetainingCapacity();
-        try zts.print(tmpl, "sse", .{ .count = i }, data.writer());
+        // try zts.print(tmpl, "sse", .{ .count = i }, data.writer());
         sse.send(.{ .data = data.items }) catch |err| switch (err) {
             error.Closed => {
                 std.log.debug("Client closed.", .{});
@@ -95,9 +96,65 @@ fn sse_handler(ctx: *const http.Context, watch: *Watch) !http.Respond {
     return .responded;
 }
 
-fn bar_handler(ctx: *const http.Context, _: void) !http.Respond {
+const JournalParams = struct {
+    account: []const u8,
+};
+
+fn journal_handler(ctx: *const http.Context, project: *Project) !http.Respond {
+    const params = try http.Query(JournalParams).parse(ctx.allocator, ctx);
+
+    const t = @embedFile("templates/journal.html");
     var body = std.ArrayList(u8).init(ctx.allocator);
-    try zts.print(tmpl, "bar", .{}, body.writer());
+    const out = body.writer();
+
+    var tree = try Tree.init(ctx.allocator);
+
+    try zts.write(t, "table", out);
+
+    for (project.sorted_entries.items) |sorted_entry| {
+        const data = project.files.items[sorted_entry.file];
+        const entry = data.entries.items[sorted_entry.entry];
+        switch (entry.payload) {
+            .open => |open| {
+                if (std.mem.eql(u8, open.account.slice, params.account)) {
+                    _ = try tree.open(open.account.slice, null, open.booking);
+                    try zts.print(t, "open_row", .{
+                        .date = entry.date,
+                        .account = open.account.slice,
+                    }, out);
+                }
+            },
+            .transaction => |tx| {
+                if (tx.postings) |postings| {
+                    for (postings.start..postings.end) |i| {
+                        const p = data.postings.get(i);
+                        if (std.mem.eql(u8, p.account.slice, params.account)) {
+                            try zts.print(t, "tx_row", .{
+                                .date = entry.date,
+                                .payee = tx.payee,
+                                .narration = tx.narration,
+                                .change_units = p.amount.number.?,
+                                .change_cur = p.amount.currency.?,
+                            }, out);
+                            try tree.postInventory(entry.date, p);
+                            var sum = try tree.inventoryAggregatedByAccount(ctx.allocator, params.account);
+                            var iter = sum.by_currency.iterator();
+                            while (iter.next()) |kv| {
+                                try zts.print(t, "balance_cur", .{
+                                    .units = kv.value_ptr.total_units(),
+                                    .cur = kv.key_ptr.*,
+                                }, out);
+                            }
+                            try zts.write(t, "end_tx_row", out);
+                        }
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
+    try zts.write(t, "end_table", out);
 
     return ctx.response.apply(.{
         .status = .OK,

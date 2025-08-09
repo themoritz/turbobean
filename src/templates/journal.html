@@ -1,0 +1,20 @@
+.table
+<ul>
+
+    .tx_row
+    <li>
+        {[date]any}: {[payee]?s} {[narration]?s}
+        {[change_units]any} {[change_cur]s},
+
+        .balance_cur
+        {[units]any} {[cur]s} </br>
+        .end_tx_row
+    </li>
+
+    .open_row
+    <li>
+        {[date]any}: open {[account]s}
+    </li>
+
+    .end_table
+</ul>

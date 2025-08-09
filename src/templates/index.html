@@ -1,0 +1,20 @@
+<html>
+
+<head>
+    <title>Foo</title>
+    <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.5/dist/htmx.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.2"></script>
+    <script>
+        htmx.logAll();
+    </script>
+</head>
+
+<body hx-indicator="#spinner">
+    <div id="spinner"
+        class="htmx-indicator h-4 w-4 animate-spin rounded-full border-3 border-solid border-sky-500 border-r-transparent">
+    </div>
+    <div hx-get="/journal" hx-trigger="load">
+    </div>
+</body>
+
+</html>

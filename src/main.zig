@@ -32,28 +32,35 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(alloc);
     defer std.process.argsFree(alloc, args);
     if (args.len < 2) return error.MissingArgument;
-    const filename = args[1];
+    const first_arg = args[1];
 
-    if (std.mem.eql(u8, filename, "--lsp")) {
+    if (std.mem.eql(u8, first_arg, "--lsp")) {
         try lsp.loop(alloc);
-        return;
-    } else if (std.mem.eql(u8, filename, "--server")) {
-        try server.run(alloc);
         return;
     }
 
-    var project = try Project.load(alloc, filename);
+    var project = try Project.load(alloc, first_arg);
     defer project.deinit();
 
     if (project.hasSevereErrors()) {
         try project.printErrors();
         std.process.exit(1);
-    } else {
+    }
+
+    if (args.len < 3) {
         if (project.hasErrors()) {
             try project.printErrors();
         }
         try project.printTree();
+        return;
     }
+
+    if (std.mem.eql(u8, args[2], "--server")) {
+        try server.run(alloc, &project);
+        return;
+    }
+
+    return error.SecondArgumentNeedsToBeServer;
 }
 
 test {
