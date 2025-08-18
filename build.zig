@@ -12,7 +12,6 @@ pub fn build(b: *std.Build) void {
     });
     exe_mod.addImport("lsp", b.dependency("lsp_codegen", .{}).module("lsp"));
     exe_mod.addImport("zts", b.dependency("zts", .{}).module("zts"));
-    exe_mod.addImport("fzwatch", b.dependency("fzwatch", .{}).module("fzwatch"));
     exe_mod.addImport("zzz", b.dependency("zzz", .{}).module("zzz"));
 
     // Create the executable

@@ -5,10 +5,16 @@ const Tardy = tardy.Tardy(.auto);
 const Runtime = @import("zzz").tardy.Runtime;
 const Project = @import("project.zig");
 const Tree = @import("tree.zig");
+const Uri = @import("Uri.zig");
 
 const Watch = @import("Watch.zig");
 
 const http = @import("zzz").HTTP;
+
+const ServerState = struct {
+    project: *Project,
+    watch: *Watch,
+};
 
 pub fn run(alloc: std.mem.Allocator, project: *Project) !void {
     var t = try Tardy.init(alloc, .{
@@ -16,17 +22,23 @@ pub fn run(alloc: std.mem.Allocator, project: *Project) !void {
     });
     defer t.deinit();
 
-    var watch = try Watch.init(alloc, ".");
+    var watch = try Watch.init(alloc);
     defer watch.deinit();
 
-    const thread = try watch.start(0.2);
-    defer thread.join();
-    defer watch.stop();
+    for (project.uris.items) |uri| {
+        try watch.addFile(uri.absolute());
+    }
+
+    try watch.start();
+
+    var state = ServerState{
+        .project = project,
+        .watch = watch,
+    };
 
     var router = try http.Router.init(alloc, &.{
         http.Route.init("/").get({}, index_handler).layer(),
-        http.Route.init("/sse").get(&watch, sse_handler).layer(),
-        http.Route.init("/journal").get(project, journal_handler).layer(),
+        http.Route.init("/journal").get(&state, journal_handler).layer(),
     }, .{});
     defer router.deinit(alloc);
 
@@ -69,45 +81,52 @@ fn index_handler(ctx: *const http.Context, _: void) !http.Respond {
     });
 }
 
-fn sse_handler(ctx: *const http.Context, watch: *Watch) !http.Respond {
+const JournalParams = struct {
+    account: []const u8,
+};
+
+fn journal_handler(ctx: *const http.Context, state: *ServerState) !http.Respond {
     var sse = try http.SSE.init(ctx);
 
-    var data = std.ArrayList(u8).init(ctx.allocator);
-    var i: usize = 0;
+    const params = try http.Query(JournalParams).parse(ctx.allocator, ctx);
 
-    var listener = try watch.newListener(ctx.runtime);
+    var body = std.ArrayList(u8).init(ctx.allocator);
+    const out = body.writer();
+
+    var listener = try state.watch.newListener(ctx.runtime);
     defer listener.deinit();
 
     while (true) {
-        listener.awaitChanged();
+        try render_journal(ctx.allocator, state.project, params.account, out.any());
 
-        data.clearRetainingCapacity();
-        // try zts.print(tmpl, "sse", .{ .count = i }, data.writer());
-        sse.send(.{ .data = data.items }) catch |err| switch (err) {
+        sse.send(.{ .data = body.items }) catch |err| switch (err) {
             error.Closed => {
                 std.log.debug("Client closed.", .{});
                 break;
             },
             else => return err,
         };
-        i += 1;
+
+        body.clearRetainingCapacity();
+
+        const path = listener.awaitChanged();
+        const uri = try Uri.from_absolute(ctx.allocator, path);
+        const source = try uri.load_nullterminated(state.project.alloc);
+        try state.project.update_file(uri.value, source);
     }
 
     return .responded;
 }
 
-const JournalParams = struct {
+fn render_journal(
+    alloc: std.mem.Allocator,
+    project: *Project,
     account: []const u8,
-};
-
-fn journal_handler(ctx: *const http.Context, project: *Project) !http.Respond {
-    const params = try http.Query(JournalParams).parse(ctx.allocator, ctx);
-
+    out: std.io.AnyWriter,
+) !void {
     const t = @embedFile("templates/journal.html");
-    var body = std.ArrayList(u8).init(ctx.allocator);
-    const out = body.writer();
 
-    var tree = try Tree.init(ctx.allocator);
+    var tree = try Tree.init(alloc);
 
     try zts.write(t, "table", out);
 
@@ -116,7 +135,7 @@ fn journal_handler(ctx: *const http.Context, project: *Project) !http.Respond {
         const entry = data.entries.items[sorted_entry.entry];
         switch (entry.payload) {
             .open => |open| {
-                if (std.mem.eql(u8, open.account.slice, params.account)) {
+                if (std.mem.eql(u8, open.account.slice, account)) {
                     _ = try tree.open(open.account.slice, null, open.booking);
                     try zts.print(t, "open_row", .{
                         .date = entry.date,
@@ -128,7 +147,7 @@ fn journal_handler(ctx: *const http.Context, project: *Project) !http.Respond {
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
                         const p = data.postings.get(i);
-                        if (std.mem.eql(u8, p.account.slice, params.account)) {
+                        if (std.mem.eql(u8, p.account.slice, account)) {
                             try zts.print(t, "tx_row", .{
                                 .date = entry.date,
                                 .payee = tx.payee,
@@ -137,7 +156,7 @@ fn journal_handler(ctx: *const http.Context, project: *Project) !http.Respond {
                                 .change_cur = p.amount.currency.?,
                             }, out);
                             try tree.postInventory(entry.date, p);
-                            var sum = try tree.inventoryAggregatedByAccount(ctx.allocator, params.account);
+                            var sum = try tree.inventoryAggregatedByAccount(alloc, account);
                             var iter = sum.by_currency.iterator();
                             while (iter.next()) |kv| {
                                 try zts.print(t, "balance_cur", .{
@@ -155,10 +174,4 @@ fn journal_handler(ctx: *const http.Context, project: *Project) !http.Respond {
     }
 
     try zts.write(t, "end_table", out);
-
-    return ctx.response.apply(.{
-        .status = .OK,
-        .body = body.items,
-        .mime = http.Mime.HTML,
-    });
 }

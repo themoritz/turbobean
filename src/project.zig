@@ -100,16 +100,7 @@ fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Data.Imports.Sl
     const uri = try Uri.from_relative_to_cwd(self.alloc, name);
     try self.uris.append(uri);
 
-    const file = try std.fs.openFileAbsolute(uri.absolute(), .{});
-    defer file.close();
-
-    const filesize = try file.getEndPos();
-    const source = try self.alloc.alloc(u8, filesize + 1);
-
-    _ = try file.readAll(source[0..filesize]);
-    source[filesize] = 0;
-
-    const null_terminated: [:0]u8 = source[0..filesize :0];
+    const null_terminated = try uri.load_nullterminated(self.alloc);
 
     var data, const imports = try Data.loadSource(self.alloc, uri, null_terminated, is_root);
     try data.balanceTransactions();
@@ -634,6 +625,7 @@ pub fn get_account_open_pos(self: *Self, account: []const u8) ?struct { Uri, u32
     return .{ self.uris.items[entry.file], entry.line };
 }
 
+/// Takes ownership of source.
 pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !void {
     const index = self.files_by_uri.get(uri_value) orelse return error.FileNotFound;
     const data = &self.files.items[index];
