@@ -36,9 +36,12 @@ pub fn run(alloc: std.mem.Allocator, project: *Project) !void {
         .watch = watch,
     };
 
+    const static_dir = tardy.Dir.from_std(try std.fs.cwd().openDir("assets", .{}));
+
     var router = try http.Router.init(alloc, &.{
         http.Route.init("/").get({}, index_handler).layer(),
         http.Route.init("/journal").get(&state, journal_handler).layer(),
+        http.FsDir.serve("/static", static_dir),
     }, .{});
     defer router.deinit(alloc);
 
@@ -139,7 +142,6 @@ fn render_journal(
                     _ = try tree.open(open.account.slice, null, open.booking);
                     try zts.print(t, "open_row", .{
                         .date = entry.date,
-                        .account = open.account.slice,
                     }, out);
                 }
             },
@@ -150,6 +152,7 @@ fn render_journal(
                         if (std.mem.eql(u8, p.account.slice, account)) {
                             try zts.print(t, "tx_row", .{
                                 .date = entry.date,
+                                .flag = tx.flag.slice,
                                 .payee = tx.payee,
                                 .narration = tx.narration,
                                 .change_units = p.amount.number.?,

@@ -1,20 +1,33 @@
 .table
-<ul>
+<div class="inner-container">
+    <table class="journal">
+        <tbody>
 
-    .tx_row
-    <li>
-        {[date]any}: {[payee]?s} {[narration]?s}
-        {[change_units]any} {[change_cur]s},
+            .tx_row
+            <tr>
+                <td class="nowrap">{[date]any}</td>
+                <td class="nowrap flag">{[flag]s}</td>
+                <td class="narration">{[payee]?s} {[narration]?s}</td>
+                <td class="nowrap change">{[change_units]any} {[change_cur]s}</td>
+                <td class="nowrap balance">
 
-        .balance_cur
-        {[units]any} {[cur]s} </br>
-        .end_tx_row
-    </li>
+                    .balance_cur
+                    {[units]any} {[cur]s} </br>
 
-    .open_row
-    <li>
-        {[date]any}: open {[account]s}
-    </li>
+                    .end_tx_row
+                </td>
 
-    .end_table
-</ul>
+
+            </tr>
+
+            .open_row
+            <tr>
+                <td class="nowrap">{[date]any}</td>
+                <td class="special">open</td>
+                <td colspan=3></td>
+            </tr>
+
+            .end_table
+        </tbody>
+    </table>
+</div>

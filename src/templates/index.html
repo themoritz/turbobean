@@ -1,3 +1,4 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
 <html>
 
 <head>
@@ -7,13 +8,15 @@
     <script>
         htmx.logAll();
     </script>
+    <link rel="stylesheet" href="static/css/index.css">
 </head>
 
 <body hx-indicator="#spinner">
     <div id="spinner"
         class="htmx-indicator h-4 w-4 animate-spin rounded-full border-3 border-solid border-sky-500 border-r-transparent">
     </div>
-    <div hx-ext="sse" sse-connect="/journal?account=Assets:Foo" sse-swap="message" hx-trigger="load">
+    <div class="outer-container" hx-ext="sse" sse-connect="/journal?account=Assets:Foo" sse-swap="message"
+        hx-trigger="load">
     </div>
 </body>
 
