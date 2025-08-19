@@ -145,6 +145,24 @@ pub const Number = struct {
         return self.value < 0;
     }
 
+    /// For precision of self is 2, checks whether |self - other| <= 0.01
+    pub fn is_within_tolerance(self: Number, other: Number) bool {
+        const diff = self.sub(other).abs();
+        const tolerance = Number{
+            .value = 1,
+            .precision = self.precision,
+        };
+
+        // Compare diff <= tolerance by scaling both to same precision
+        const p = @max(diff.precision, tolerance.precision);
+        const diff_factor = pow10(p - diff.precision);
+        const tolerance_factor = pow10(p - tolerance.precision);
+        const diff_scaled = diff.value * diff_factor;
+        const tolerance_scaled = tolerance.value * tolerance_factor;
+
+        return diff_scaled <= tolerance_scaled;
+    }
+
     pub fn min(self: Number, other: Number) Number {
         const p = @max(self.precision, other.precision);
         const self_factor = pow10(p - self.precision);
@@ -203,4 +221,8 @@ test Number {
 
     try std.testing.expectEqual(Number.fromInt(2).abs(), Number.fromInt(2));
     try std.testing.expectEqual(Number.fromInt(-4).abs(), Number.fromInt(4));
+
+    try std.testing.expect(Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.16)));
+    try std.testing.expect(Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.145)));
+    try std.testing.expect(!Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.135)));
 }

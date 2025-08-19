@@ -274,9 +274,10 @@ pub fn check(self: *Self) !void {
                 };
                 defer inv.deinit();
 
-                const number = inv.balance(balance.amount.currency.?);
-                const missing = balance.amount.number.?.add(number.negate());
+                const accumulated = inv.balance(balance.amount.currency.?);
+                const expected = balance.amount.number.?;
                 if (lastPads.get(balance.account.slice)) |last_pad| {
+                    const missing = expected.add(accumulated.negate());
                     // Build tx
                     const postings_top = self.synthetic_postings.len;
 
@@ -338,8 +339,8 @@ pub fn check(self: *Self) !void {
                     _ = lastPads.remove(balance.account.slice);
                 } else {
                     // Balance check in case of no padding
-                    if (!missing.is_zero()) {
-                        std.debug.print("Balance assertion failed: {any}\n", .{missing});
+                    if (!expected.is_within_tolerance(accumulated)) {
+                        std.debug.print("Balance assertion failed: Expected {any}, accumulated {any}\n", .{ expected, accumulated });
                         try self.addError(entry.main_token, sorted.file, .balance_assertion_failed);
                     }
                 }
