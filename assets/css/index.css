@@ -67,3 +67,10 @@ table.journal td.change {
 table.journal td.balance {
   font-family: "Fira Mono", mono;
 }
+
+table.journal thead {
+  background-color: #f5f5f5;
+  border-bottom: 1px solid #d3d3d3;
+  font-weight: 500;
+  font-style: medium;
+}
