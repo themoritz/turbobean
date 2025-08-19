@@ -228,29 +228,22 @@ fn parseEntry(p: *Self) !?void {
                 }
             }
             const currencies = Data.Range.create(currency_top, p.currencies.items.len);
-            var booking: ?Inventory.Booking = undefined;
-            if (p.tryToken(.string)) |b| {
-                const method: Inventory.BookingMethod = if (std.mem.eql(u8, b.slice, "\"FIFO\""))
+            const booking_method: ?Inventory.BookingMethod = if (p.tryToken(.string)) |b|
+                if (std.mem.eql(u8, b.slice, "\"FIFO\""))
                     .fifo
                 else if (std.mem.eql(u8, b.slice, "\"LIFO\""))
                     .lifo
                 else if (std.mem.eql(u8, b.slice, "\"STRICT\""))
                     .strict
                 else
-                    return p.failAt(b, .invalid_booking_method);
-                const cost_currency = try p.expectTokenSlice(.currency);
-                booking = .{
-                    .method = method,
-                    .cost_currency = cost_currency,
-                };
-            } else {
-                booking = null;
-            }
+                    return p.failAt(b, .invalid_booking_method)
+            else
+                null;
 
             payload = .{ .open = .{
                 .account = account,
                 .currencies = currencies,
-                .booking = booking,
+                .booking_method = booking_method,
             } };
         },
         .keyword_close => {

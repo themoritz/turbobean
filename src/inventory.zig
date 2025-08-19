@@ -10,11 +10,6 @@ pub const BookingMethod = enum {
     strict,
 };
 
-pub const Booking = struct {
-    method: BookingMethod,
-    cost_currency: []const u8,
-};
-
 pub const Lot = struct {
     units: Number,
     cost: Cost,
@@ -22,6 +17,7 @@ pub const Lot = struct {
 
 pub const Cost = struct {
     price: Number,
+    currency: []const u8,
     date: Date,
     label: ?[]const u8,
 
@@ -29,6 +25,7 @@ pub const Cost = struct {
         if (spec) |s| {
             return Cost{
                 .price = if (s.price) |p| p.number.? else self.price,
+                .currency = if (s.price) |p| p.currency.? else self.currency,
                 .date = s.date orelse self.date,
                 .label = s.label orelse self.label,
             };
@@ -76,6 +73,7 @@ pub const Lots = struct {
             for (other.items, 0..) |l, i| {
                 if (spec.price) |price| {
                     if (!l.cost.price.sub(price.number.?).is_zero()) continue;
+                    if (!std.mem.eql(u8, l.cost.currency, price.currency.?)) continue;
                 }
                 if (spec.date) |date| {
                     if (!std.meta.eql(l.cost.date, date)) continue;
@@ -183,29 +181,29 @@ pub const Lots = struct {
 pub const LotsInventory = struct {
     alloc: Allocator,
     restricted: bool,
-    booking: Booking,
+    booking_method: BookingMethod,
     by_currency: std.StringHashMap(Lots),
 
     pub fn init(
         alloc: Allocator,
-        booking: Booking,
+        booking_method: BookingMethod,
         currencies: ?[][]const u8,
     ) !LotsInventory {
         if (currencies) |cs| {
             var by_currency = std.StringHashMap(Lots).init(alloc);
-            for (cs) |c| try by_currency.put(c, Lots.init(booking.method));
+            for (cs) |c| try by_currency.put(c, Lots.init(booking_method));
 
             return .{
                 .alloc = alloc,
                 .restricted = true,
-                .booking = booking,
+                .booking_method = booking_method,
                 .by_currency = by_currency,
             };
         } else {
             return .{
                 .alloc = alloc,
                 .restricted = false,
-                .booking = booking,
+                .booking_method = booking_method,
                 .by_currency = std.StringHashMap(Lots).init(alloc),
             };
         }
@@ -221,26 +219,15 @@ pub const LotsInventory = struct {
         self: *LotsInventory,
         currency: []const u8,
         lot: Lot,
-        cost_currency: []const u8,
         lot_spec: ?LotSpec,
     ) !Number {
-        if (!std.mem.eql(u8, cost_currency, self.booking.cost_currency)) {
-            return error.CostCurrencyDoesNotMatch;
-        }
-        if (lot_spec) |spec| {
-            if (spec.price) |price| {
-                if (!std.mem.eql(u8, price.currency.?, self.booking.cost_currency)) {
-                    return error.CostCurrencyDoesNotMatch;
-                }
-            }
-        }
         if (self.by_currency.getPtr(currency)) |lots| {
             return try lots.book(self.alloc, lot, lot_spec);
         } else {
             if (self.restricted) {
                 return error.DoesNotHoldCurrency;
             } else {
-                var lots = Lots.init(self.booking.method);
+                var lots = Lots.init(self.booking_method);
                 const cost_weight = lots.book(self.alloc, lot, lot_spec);
                 try self.by_currency.put(currency, lots);
                 return cost_weight;
@@ -265,7 +252,6 @@ pub const LotsInventory = struct {
             try lots.appendSlice(alloc, kv.value_ptr.shorts.items);
             try by_currency.put(kv.key_ptr.*, .{
                 .plain = Number.zero(),
-                .cost_currency = self.booking.cost_currency,
                 .lots = lots,
             });
         }
@@ -279,7 +265,7 @@ pub const LotsInventory = struct {
         var result = LotsInventory{
             .alloc = alloc,
             .restricted = self.restricted,
-            .booking = self.booking,
+            .booking_method = self.booking_method,
             .by_currency = std.StringHashMap(Lots).init(alloc),
         };
         errdefer result.deinit();
@@ -347,7 +333,6 @@ pub const PlainInventory = struct {
         while (iter.next()) |kv| {
             try by_currency.put(kv.key_ptr.*, .{
                 .plain = kv.value_ptr.*,
-                .cost_currency = null,
                 .lots = .{},
             });
         }
@@ -367,8 +352,8 @@ pub const Inventory = union(enum) {
     plain: PlainInventory,
     lots: LotsInventory,
 
-    pub fn init(alloc: Allocator, booking: ?Booking, currencies: ?[][]const u8) !Inventory {
-        if (booking) |b| {
+    pub fn init(alloc: Allocator, booking_method: ?BookingMethod, currencies: ?[][]const u8) !Inventory {
+        if (booking_method) |b| {
             return .{
                 .lots = try LotsInventory.init(alloc, b, currencies),
             };
@@ -397,12 +382,16 @@ pub const Inventory = union(enum) {
         self: *Inventory,
         currency: []const u8,
         lot: Lot,
-        cost_currency: []const u8,
         lot_spec: ?LotSpec,
-    ) !Number {
+    ) !?Number {
         switch (self.*) {
-            .plain => return error.CannotBookToPlainInventory,
-            .lots => |*inv| return try inv.book(currency, lot, cost_currency, lot_spec),
+            .plain => |*inv| if (lot_spec) |_| {
+                return error.PlainInventoryDoesNotSupportLotSpec;
+            } else {
+                try inv.add(currency, lot.units);
+                return null;
+            },
+            .lots => |*inv| return try inv.book(currency, lot, lot_spec),
         }
     }
 
@@ -434,7 +423,6 @@ pub const Summary = struct {
 
     pub const CurrencySummary = struct {
         plain: Number,
-        cost_currency: ?[]const u8,
         lots: std.ArrayListUnmanaged(Lot),
 
         pub fn total_units(self: *const CurrencySummary) Number {
@@ -474,7 +462,6 @@ pub const Summary = struct {
             } else {
                 try self.by_currency.put(entry.key_ptr.*, .{
                     .plain = entry.value_ptr.plain,
-                    .cost_currency = entry.value_ptr.cost_currency,
                     .lots = try entry.value_ptr.lots.clone(self.alloc),
                 });
             }
@@ -511,7 +498,7 @@ pub const Summary = struct {
                         lot.units,
                         kv.key_ptr.*,
                         lot.cost.price,
-                        kv.value_ptr.cost_currency.?,
+                        lot.cost.currency,
                         lot.cost.date,
                     });
                     if (lot.cost.label) |label| {
@@ -536,7 +523,7 @@ pub const Summary = struct {
                         lot.units,
                         kv.key_ptr.*,
                         lot.cost.price,
-                        kv.value_ptr.cost_currency.?,
+                        lot.cost.currency,
                         lot.cost.date,
                     });
                     if (lot.cost.label) |label| {

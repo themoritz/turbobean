@@ -237,7 +237,7 @@ pub fn check(self: *Self) !void {
                     data.currencies.items[c.start..c.end]
                 else
                     null;
-                _ = try tree.open(open.account.slice, currencies, open.booking);
+                _ = try tree.open(open.account.slice, currencies, open.booking_method);
             },
             .close => |close| {
                 tree.close(close.account.slice) catch |err| switch (err) {
@@ -385,14 +385,11 @@ fn postInventoryRecovering(
         error.CannotAddToLotsInventory => {
             try self.addError(posting.account, file_id, .account_is_booked);
         },
-        error.CannotBookToPlainInventory => {
-            try self.addError(posting.account, file_id, .account_is_not_booked);
+        error.PlainInventoryDoesNotSupportLotSpec => {
+            try self.addError(posting.account, file_id, .account_does_not_support_lot_spec);
         },
         error.AccountNotOpen => {
             try self.addError(posting.account, file_id, .account_not_open);
-        },
-        error.CostCurrencyDoesNotMatch => {
-            try self.addError(posting.account, file_id, .cost_currency_does_not_match);
         },
         error.LotSpecAmbiguousMatch => {
             try self.addError(posting.account, file_id, .lot_spec_ambiguous_match);
@@ -559,7 +556,7 @@ pub fn accountInventoryUntilLine(
                         self.files.items[sorted_entry.file].currencies.items[c.start..c.end]
                     else
                         null;
-                    _ = try tree.open(open.account.slice, currencies, open.booking);
+                    _ = try tree.open(open.account.slice, currencies, open.booking_method);
                 }
             },
             .transaction => |tx| {
@@ -656,7 +653,7 @@ pub fn printTree(self: *Self) !void {
                     self.files.items[sorted_entry.file].currencies.items[c.start..c.end]
                 else
                     null;
-                _ = try tree.open(open.account.slice, currencies, open.booking);
+                _ = try tree.open(open.account.slice, currencies, open.booking_method);
             },
             .transaction => |tx| {
                 if (tx.postings) |postings| {

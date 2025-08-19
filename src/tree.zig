@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Inventory = @import("inventory.zig").Inventory;
-const Booking = @import("inventory.zig").Booking;
+const BookingMethod = @import("inventory.zig").BookingMethod;
 const Lot = @import("inventory.zig").Lot;
 const Summary = @import("inventory.zig").Summary;
 const Number = @import("number.zig").Number;
@@ -61,7 +61,7 @@ pub fn open(
     self: *Self,
     name: []const u8,
     currencies: ?[][]const u8,
-    booking: ?Booking,
+    booking_method: ?BookingMethod,
 ) !u32 {
     if (self.node_by_name.contains(name)) {
         return error.AccountExists;
@@ -83,7 +83,7 @@ pub fn open(
             self.alloc,
             part,
             current_index,
-            try Inventory.init(self.alloc, booking, currencies),
+            try Inventory.init(self.alloc, booking_method, currencies),
         );
         try self.nodes.append(new_node);
         try self.nodes.items[current_index].children.append(new_index);
@@ -114,11 +114,10 @@ pub fn bookPosition(
     account: []const u8,
     currency: []const u8,
     lot: Lot,
-    cost_currency: []const u8,
     lot_spec: ?Data.LotSpec,
 ) !void {
     const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
-    _ = try self.nodes.items[index].inventory.book(currency, lot, cost_currency, lot_spec);
+    _ = try self.nodes.items[index].inventory.book(currency, lot, lot_spec);
 }
 
 pub fn postInventory(self: *Self, date: Date, posting: Data.Posting) !void {
@@ -130,11 +129,11 @@ pub fn postInventory(self: *Self, date: Date, posting: Data.Posting) !void {
                 .units = posting.amount.number.?,
                 .cost = .{
                     .price = price.amount.number.?,
+                    .currency = price.amount.currency.?,
                     .date = date,
                     .label = null,
                 },
             },
-            price.amount.currency.?,
             posting.lot_spec,
         );
     } else {

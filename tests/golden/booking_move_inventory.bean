@@ -1,5 +1,5 @@
-2020-01-01 open Assets:Stocks     AAPL "FIFO" USD
-2020-01-01 open Assets:MoreStocks AAPL "FIFO" USD
+2020-01-01 open Assets:Stocks     AAPL "FIFO"
+2020-01-01 open Assets:MoreStocks AAPL "FIFO"
 2020-01-01 open Assets:Cash
 
 2020-01-02 * "Buy"

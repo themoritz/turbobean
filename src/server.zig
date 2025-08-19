@@ -139,7 +139,7 @@ fn render_journal(
         switch (entry.payload) {
             .open => |open| {
                 if (std.mem.eql(u8, open.account.slice, account)) {
-                    _ = try tree.open(open.account.slice, null, open.booking);
+                    _ = try tree.open(open.account.slice, null, open.booking_method);
                     try zts.print(t, "open_row", .{
                         .date = entry.date,
                     }, out);

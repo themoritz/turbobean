@@ -127,7 +127,7 @@ pub const Config = struct {
 pub const Open = struct {
     account: Lexer.Token,
     currencies: ?Range,
-    booking: ?Inventory.Booking,
+    booking_method: ?Inventory.BookingMethod,
 };
 
 pub const Close = struct {

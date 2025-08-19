@@ -44,8 +44,7 @@ pub const Tag = enum {
 
     account_does_not_hold_currency,
     account_is_booked,
-    account_is_not_booked,
-    cost_currency_does_not_match,
+    account_does_not_support_lot_spec,
 
     lot_spec_ambiguous_match,
     lot_spec_match_too_small,
@@ -80,8 +79,7 @@ pub const Tag = enum {
             .balance_assertion_failed => "Balance assertion failed",
             .account_does_not_hold_currency => "Cannot post this currency to this account. Check open declaration.",
             .account_is_booked => "Booked account. Can only buy or sell.",
-            .account_is_not_booked => "Unbooked account. Can't buy or sell",
-            .cost_currency_does_not_match => "Cost currency does not match.",
+            .account_does_not_support_lot_spec => "Can't use lot spec on an unbooked account.",
             .lot_spec_ambiguous_match => "Ambiguous match. Lot spec needs to match exactly one lot.",
             .lot_spec_match_too_small => "Matched lot too small. You can cancel at most one lot.",
             .lot_spec_no_match => "No matching lot found for lot spec.",
@@ -151,8 +149,15 @@ pub fn dump(e: Self, alloc: Allocator, colors: bool) ![]const u8 {
         }
     }
 
+    if (line_end > line_start) {
+        line_end = line_start;
+        col_start = col_end;
+    }
+
+    // std.debug.print("{s}\n", .{e.uri.value});
+    // std.debug.print("{d} {d} {d} {d}\n", .{ line_start, col_start, line_end, col_end });
     std.debug.assert(line_start == line_end);
-    std.debug.assert(col_start < col_end);
+    std.debug.assert(col_start <= col_end);
 
     var line_pos_end = e.source.len;
     for (end..e.source.len) |i| {
