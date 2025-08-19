@@ -20,7 +20,7 @@ body {
   border: 1px solid #d3d3d3;
   border-radius: 4px;
   box-shadow: 1px 1px 8px 0 rgba(0, 0, 0, 0.2);
-  overflow: hidden;
+  overflow-y: scroll;
   height: 100%;
 }
 
@@ -62,10 +62,12 @@ table.journal td.change {
   font-family: "Fira Mono", mono;
   font-weight: 500;
   font-style: medium;
+  text-align: right;
 }
 
 table.journal td.balance {
   font-family: "Fira Mono", mono;
+  text-align: right;
 }
 
 table.journal thead {
@@ -73,4 +75,8 @@ table.journal thead {
   border-bottom: 1px solid #d3d3d3;
   font-weight: 500;
   font-style: medium;
+}
+
+table.journal thead td.right {
+  text-align: right;
 }
