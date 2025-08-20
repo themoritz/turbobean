@@ -116,14 +116,73 @@ pub const Number = struct {
 
     pub fn format(self: Number, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
-        _ = options;
-        const float_val = self.toFloat();
-        var buf: [64]u8 = undefined;
-        const used = std.fmt.formatFloat(&buf, float_val, .{
-            .mode = .decimal,
-            .precision = self.precision,
-        }) catch "[too many digits]";
-        try std.fmt.format(writer, "{s}", .{used});
+
+        const precision: usize = options.precision orelse @intCast(self.precision);
+        const rounded = self.roundTo(@intCast(precision));
+
+        const abs_value: i64 = @intCast(@abs(rounded.value));
+        const negative = rounded.value < 0;
+
+        // Calculate integer and decimal parts
+        const divisor = pow10(rounded.precision);
+        const integer_part = @divFloor(abs_value, divisor);
+        const decimal_part = @rem(abs_value, divisor);
+
+        std.debug.print("{d} {d}\n", .{ rounded.value, rounded.precision });
+        std.debug.print("precision: {d}\n", .{precision});
+        std.debug.print("divisor: {d}\n", .{divisor});
+
+        if (negative) try writer.writeByte('-');
+
+        if (integer_part == 0) {
+            try writer.writeByte('0');
+        } else {
+            var digits: [64]u8 = undefined;
+            var temp_int = integer_part;
+            var i: usize = 0;
+
+            while (temp_int > 0) {
+                digits[i] = @intCast(@rem(temp_int, 10) + '0');
+                temp_int = @divFloor(temp_int, 10);
+                i += 1;
+            }
+
+            var digit_count: usize = 0;
+            while (i > 0) {
+                if (digit_count > 0 and i % 3 == 0) {
+                    try writer.writeByte(',');
+                }
+                i -= 1;
+                try writer.writeByte(digits[i]);
+                digit_count += 1;
+            }
+        }
+
+        if (precision > 0) {
+            try writer.writeByte('.');
+
+            var digits: [64]u8 = undefined;
+            var temp_int = decimal_part;
+            var i: usize = 0;
+
+            while (temp_int > 0) {
+                digits[i] = @intCast(@rem(temp_int, 10) + '0');
+                temp_int = @divFloor(temp_int, 10);
+                i += 1;
+            }
+
+            var digit_count: usize = 0;
+            while (i > 0 and digit_count < precision) {
+                i -= 1;
+                try writer.writeByte(digits[i]);
+                digit_count += 1;
+            }
+
+            while (digit_count < precision) {
+                try writer.writeByte('0');
+                digit_count += 1;
+            }
+        }
     }
 
     pub fn zero() Number {
@@ -183,6 +242,45 @@ pub const Number = struct {
             .precision = self.precision,
         };
     }
+
+    pub fn roundTo(self: Number, target_precision: u32) Number {
+        if (target_precision >= self.precision) {
+            return self;
+        }
+
+        const factor = pow10(self.precision - target_precision);
+        const half = @divTrunc(factor, 2);
+
+        const rounded_value = if (self.value >= 0)
+            @divTrunc(self.value + half, factor)
+        else
+            @divTrunc(self.value - half, factor);
+
+        const result = Number{
+            .value = rounded_value,
+            .precision = target_precision,
+        };
+        return result.normalize();
+    }
+
+    pub fn normalize(self: Number) Number {
+        if (self.precision == 0 or self.value == 0) {
+            return self;
+        }
+
+        var value = self.value;
+        var precision = self.precision;
+
+        while (precision > 0 and @rem(value, 10) == 0) {
+            value = @divTrunc(value, 10);
+            precision -= 1;
+        }
+
+        return Number{
+            .value = value,
+            .precision = precision,
+        };
+    }
 };
 
 fn pow10(n: u32) i64 {
@@ -225,4 +323,23 @@ test Number {
     try std.testing.expect(Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.16)));
     try std.testing.expect(Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.145)));
     try std.testing.expect(!Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.135)));
+
+    // Rounding
+    try std.testing.expectEqual(Number.fromFloat(1.123).roundTo(2), Number.fromFloat(1.12));
+    try std.testing.expectEqual(Number.fromFloat(1.99).roundTo(1), Number.fromFloat(2.0));
+
+    // format
+    try testFormat(Number.fromFloat(1234567.89), "1,234,567.89");
+    try testFormat(Number.fromFloat(42.5), "42.50");
+    try testFormat(Number.fromInt(1000), "1,000.00");
+    try testFormat(Number.fromInt(0), "0.00");
+    try testFormat(Number.fromInt(-10), "-10.00");
+    try testFormat(Number.fromFloat(3.199), "3.20");
+    try testFormat(Number.fromFloat(-4.999), "-5.00");
+}
+
+fn testFormat(num: Number, expected: []const u8) !void {
+    const formatted = try std.fmt.allocPrint(std.testing.allocator, "{any:.2}", .{num});
+    defer std.testing.allocator.free(formatted);
+    try std.testing.expectEqualStrings(expected, formatted);
 }

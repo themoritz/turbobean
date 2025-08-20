@@ -75,8 +75,13 @@ fn render(
                             try zts.print(t, "tx_row", .{
                                 .date = entry.date,
                                 .flag = tx.flag.slice,
-                                .payee = tx.payee,
-                                .narration = tx.narration,
+                            }, out);
+                            if (tx.payee) |payee| {
+                                try zts.print(t, "payee", .{ .payee = payee[1 .. payee.len - 1] }, out);
+                                if (tx.narration) |_| try zts.print(t, "separator", .{}, out);
+                            }
+                            if (tx.narration) |n| try zts.print(t, "narration", .{ .narration = n[1 .. n.len - 1] }, out);
+                            try zts.print(t, "tx_row_2", .{
                                 .change_units = p.amount.number.?,
                                 .change_cur = p.amount.currency.?,
                             }, out);
@@ -84,10 +89,13 @@ fn render(
                             var sum = try tree.inventoryAggregatedByAccount(alloc, account);
                             var iter = sum.by_currency.iterator();
                             while (iter.next()) |kv| {
-                                try zts.print(t, "balance_cur", .{
-                                    .units = kv.value_ptr.total_units(),
-                                    .cur = kv.key_ptr.*,
-                                }, out);
+                                const units = kv.value_ptr.total_units();
+                                if (!units.is_zero()) {
+                                    try zts.print(t, "balance_cur", .{
+                                        .units = units,
+                                        .cur = kv.key_ptr.*,
+                                    }, out);
+                                }
                             }
                             try zts.write(t, "end_tx_row", out);
                         }

@@ -34,12 +34,18 @@ nav input {
 content {
   grid-area: content;
   padding: 5px;
+  height: 100%;
+  overflow-y: scroll;
 }
 
 .table-container {
   border: 1px solid #d3d3d3;
-  border-radius: 4px;
-  box-shadow: 1px 1px 8px 0 rgba(0, 0, 0, 0.2);
+  border-radius: 5px;
+  box-shadow:
+    1px 1px 6px hsl(0deg 0% 0% / 0.07),
+    2px 2px 8px hsl(0deg 0% 0% / 0.07),
+    3px 3px 10px hsl(0deg 0% 0% / 0.07);
+
   overflow-y: scroll;
   height: 100%;
 }
@@ -66,12 +72,30 @@ table.journal td.special {
 
 table.journal td.narration {
   width: 100%;
+  /* white-space: nowrap; */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+table.journal td.narration .separator::before {
+  padding: 2px;
+  margin: 0 2px;
+  font-weight: 500;
+  font-style: medium;
+  color: hsl(0deg 0% 50%);
+  content: "\2022";
+}
+
+table.journal td.narration b {
+  font-weight: 500;
+  font-style: medium;
 }
 
 table.journal td {
-  padding: 2pt;
-  padding-left: 4pt;
-  padding-right: 4pt;
+  padding: 2px;
+  padding-left: 5px;
+  padding-right: 5px;
+  vertical-align: bottom;
 }
 
 table.journal tr:nth-child(even) {
@@ -83,11 +107,13 @@ table.journal td.change {
   font-weight: 500;
   font-style: medium;
   text-align: right;
+  white-space: pre;
 }
 
-table.journal td.balance {
+table.journal .balance {
   font-family: "Fira Mono", mono;
   text-align: right;
+  white-space: pre;
 }
 
 table.journal thead {
