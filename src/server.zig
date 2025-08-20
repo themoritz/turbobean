@@ -40,7 +40,8 @@ pub fn run(alloc: std.mem.Allocator, project: *Project) !void {
 
     var router = try http.Router.init(alloc, &.{
         http.Route.init("/").get({}, index_handler).layer(),
-        http.Route.init("/journal").get(&state, journal_handler).layer(),
+        http.Route.init("/journal").get({}, index_handler).layer(),
+        http.Route.init("/sse/journal").get(&state, journal_handler).layer(),
         http.FsDir.serve("/static", static_dir),
     }, .{});
     defer router.deinit(alloc);

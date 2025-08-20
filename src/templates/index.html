@@ -2,22 +2,29 @@
 <html>
 
 <head>
-    <title>Foo</title>
-    <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.5/dist/htmx.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.2"></script>
-    <script>
-        htmx.logAll();
-    </script>
+    <title>Zigcount</title>
+    <link rel="icon" href="data:;base64,=">
     <link rel="stylesheet" href="static/css/index.css">
+    <script src="static/js/index.js"></script>
 </head>
 
-<body hx-indicator="#spinner">
-    <div id="spinner"
-        class="htmx-indicator h-4 w-4 animate-spin rounded-full border-3 border-solid border-sky-500 border-r-transparent">
-    </div>
-    <div class="outer-container" hx-ext="sse" sse-connect="/journal?account=Assets:Cash" sse-swap="message"
-        hx-trigger="load">
-    </div>
+<body>
+    <header>
+        <div id="spinner"
+            class="htmx-indicator h-4 w-4 animate-spin rounded-full border-3 border-solid border-sky-500 border-r-transparent">
+        </div>
+        Header
+    </header>
+    <nav>
+        Nav
+        <form>
+            <input type="text" name="account" placeholder="Account.."><br />
+            <button>Go</button>
+        </form>
+    </nav>
+    <content>
+        Content
+    </content>
 </body>
 
 </html>

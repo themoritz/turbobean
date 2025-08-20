@@ -6,17 +6,37 @@ body {
   font-weight: 400;
   font-style: normal;
   font-size: 13px;
-}
 
-.outer-container {
   height: 100svh;
-  padding-top: 50px;
-  padding-left: 100px;
-  padding-right: 5px;
-  padding-bottom: 5px;
+
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  grid-template-rows: 50px 1fr;
+  grid-template-areas:
+    'header header'
+    'nav    content';
 }
 
-.inner-container {
+header {
+  grid-area: header;
+  padding: 5px;
+}
+
+nav {
+  grid-area: nav;
+  padding: 5px;
+}
+
+nav input {
+  width: 100%;
+}
+
+content {
+  grid-area: content;
+  padding: 5px;
+}
+
+.table-container {
   border: 1px solid #d3d3d3;
   border-radius: 4px;
   box-shadow: 1px 1px 8px 0 rgba(0, 0, 0, 0.2);
