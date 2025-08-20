@@ -1,54 +1,47 @@
 .table
-<div class="table-container">
-    <table class="journal">
-        <thead>
-            <tr>
-                <td>Date</td>
-                <td>Flag</td>
-                <td>Payee / Narration</td>
-                <td class="right">Change</td>
-                <td class="right">Balance</td>
-            </tr>
-        </thead>
-        <tbody>
+<div class="journal">
+    <div class="row header">
+        <div class="cell">Date</div>
+        <div class="cell">Flag</div>
+        <div class="cell">Payee / Narration</div>
+        <div class="cell right">Change</div>
+        <div class="cell right">Balance</div>
+    </div>
 
-            .tx_row
-            <tr>
-                <td class="nowrap">{[date]any}</td>
-                <td class="nowrap flag">{[flag]s}</td>
-                <td class="narration">
+    .tx_row
+    <div class="row">
+        <div class="cell nowrap">{[date]any}</div>
+        <div class="cell nowrap flag">{[flag]s}</div>
+        <div class="cell narration">
 
-                    .payee
-                    <b>{[payee]s}</b>
+            .payee
+            <b>{[payee]s}</b>
 
-                    .separator
-                    <span class="separator"></span>
+            .separator
+            <span class="separator"></span>
 
-                    .narration
-                    {[narration]s}
+            .narration
+            {[narration]s}
 
-                    .tx_row_2
-                </td>
-                <td class="nowrap change">{[change_units]any:.2} {[change_cur]s}</td>
-                <td class="nowrap">
+            .tx_row_2
+        </div>
+        <div class="cell nowrap change right">{[change_units]any:.2} {[change_cur]s}</div>
+        <div class="cell nowrap right">
+            <div class="balances">
+                .balance_cur
+                <div class="balance">{[units]any:.2} {[cur]s}</div>
 
-                    .balance_cur
-                    <div class="balance">{[units]any:.2} {[cur]s}</div>
+                .end_tx_row
+            </div>
+        </div>
+    </div>
 
-                    .end_tx_row
-                </td>
+    .open_row
+    <div class="row">
+        <div class="cell nowrap">{[date]any}</div>
+        <div class="cell flag special">open</div>
+        <div class="cell colspan3-6"></div>
+    </div>
 
-
-            </tr>
-
-            .open_row
-            <tr>
-                <td class="nowrap">{[date]any}</td>
-                <td class="special">open</td>
-                <td colspan=3></td>
-            </tr>
-
-            .end_table
-        </tbody>
-    </table>
+    .end_table
 </div>

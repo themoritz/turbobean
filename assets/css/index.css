@@ -38,7 +38,9 @@ content {
   overflow-y: scroll;
 }
 
-.table-container {
+/************************ JOURNAL ***************************/
+
+.journal {
   border: 1px solid #d3d3d3;
   border-radius: 5px;
   box-shadow:
@@ -48,36 +50,41 @@ content {
 
   overflow-y: scroll;
   height: 100%;
+
+  display: grid;
+  grid-template-columns: 0fr 0fr 1fr 0fr 0fr;
 }
 
-table.journal {
-  width: 100%;
-  border-collapse: collapse;
+.journal .row {
+  display: contents;
 }
 
-table.journal td.flag {
+.journal .row:nth-of-type(2n) > .cell {
+  background-color: #f5f5f5;
+}
+
+.journal .row .flag {
   color: #555;
-  text-align: center;
+  justify-content: center;
 }
 
-table.journal td.nowrap {
+.journal .row .nowrap {
   white-space: nowrap;
   width: auto;
   min-width: fit-content;
 }
 
-table.journal td.special {
-  background-color: #c4d6ff;
+.journal .row .special {
+  background-color: #c4d6ff !important;
 }
 
-table.journal td.narration {
-  width: 100%;
-  /* white-space: nowrap; */
+.journal .row .narration {
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-table.journal td.narration .separator::before {
+.journal .row .narration .separator::before {
   padding: 2px;
   margin: 0 2px;
   font-weight: 500;
@@ -86,23 +93,18 @@ table.journal td.narration .separator::before {
   content: "\2022";
 }
 
-table.journal td.narration b {
+.journal .narration b {
   font-weight: 500;
   font-style: medium;
 }
 
-table.journal td {
-  padding: 2px;
-  padding-left: 5px;
-  padding-right: 5px;
-  vertical-align: bottom;
+.journal .row .cell {
+  padding: 2px 5px;
+  display: flex;
+  align-items: flex-end;
 }
 
-table.journal tr:nth-child(even) {
-  background-color: #f5f5f5;
-}
-
-table.journal td.change {
+.journal .row .change {
   font-family: "Fira Mono", mono;
   font-weight: 500;
   font-style: medium;
@@ -110,19 +112,28 @@ table.journal td.change {
   white-space: pre;
 }
 
-table.journal .balance {
+.journal .row .balances {
+  display: flex;
+  flex-direction: column;
+}
+
+.journal .row .balance {
   font-family: "Fira Mono", mono;
   text-align: right;
   white-space: pre;
 }
 
-table.journal thead {
+.journal .row .colspan3-6 {
+  grid-column: 3 / 6;
+}
+
+.journal .header .cell {
   background-color: #f5f5f5;
   border-bottom: 1px solid #d3d3d3;
   font-weight: 500;
   font-style: medium;
 }
 
-table.journal thead td.right {
-  text-align: right;
+.journal .row .right {
+  justify-content: flex-end;
 }
