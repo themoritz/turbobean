@@ -89,4 +89,17 @@
             closeExistingConnection();
         });
     });
+
+    document.addEventListener('alpine:init', function() {
+        Alpine.store('txOpen', {
+            open: localStorage.getItem('txOpen') ? JSON.parse(localStorage.getItem('txOpen')) : {},
+            toggle(index) {
+                if (this.open[index] === undefined) {
+                    this.open[index] = false;
+                }
+                this.open[index] = !this.open[index];
+                localStorage.setItem('txOpen', JSON.stringify(this.open));
+            }
+        });
+    });
 })();

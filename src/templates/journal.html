@@ -8,49 +8,73 @@
         <div class="cell right">Balance</div>
     </div>
 
-    .tx_row
+    <!-- TRANSACTION -->
+    .transaction
     <div class="row">
-        <div class="cell nowrap">{[date]any}</div>
+        <div class="cell nowrap date">{[date]any}</div>
         <div class="cell nowrap flag">{[flag]s}</div>
         <div class="cell payee-narration">
             <div class="payee-narration-inner">
 
-                .payee
+                .transaction_payee
                 <span class="payee">{[payee]s}</span>
 
-                .separator
+                .transaction_separator
                 <span class="separator"></span>
 
-                .narration
+                .transaction_narration
                 <span class="narration">{[narration]s}</span>
 
-                .tx_row_2
+                .transaction_legs
             </div>
-            <div class="legs">
+            <div class="legs" @click="$store.txOpen.toggle({[hash]d})">
 
-                .narration_leg
+                .transaction_leg
                 <div class="leg"></div>
 
-                .tx_row_3
+                .transaction_legs_end
             </div>
         </div>
         <div class="cell nowrap change right">{[change_units]any:.2} {[change_cur]s}</div>
         <div class="cell nowrap right">
             <div class="balances">
-                .balance_cur
+                .transaction_balance_cur
                 <div class="balance">{[units]any:.2} {[cur]s}</div>
 
-                .end_tx_row
+                .transaction_balance_end
             </div>
+        </div>
+
+        <div class="postings" x-show="$store.txOpen.open[{[hash]d}]">
+            .transaction_posting
+            <div class="tree">
+                .tree_middle
+                <svg viewBox="0 0 20 30">
+                    <path d="M 10,0 L 10,30 M 10,16 L 20,16" stroke="hsl(0deg 0% 80%)" stroke-width="1.75"
+                        fill="none" />
+                </svg>
+
+                .tree_last
+                <svg viewBox="0 0 20 30">
+                    <path d="M 10,0 L 10,16 L 20,16" stroke="hsl(0deg 0% 80%)" stroke-width="1.75" fill="none" />
+                </svg>
+
+                .tree_end
+            </div>
+            <div class="account">{[account]s}</div>
+            <div class="posting_change">{[change_units]any:.2} {[change_cur]s}</div>
+
+            .transaction_end
         </div>
     </div>
 
-    .open_row
+    <!-- OPEN -->
+    .open
     <div class="row">
-        <div class="cell nowrap">{[date]any}</div>
+        <div class="cell nowrap date">{[date]any}</div>
         <div class="cell flag special">open</div>
         <div class="cell colspan3-6"></div>
     </div>
 
-    .end_table
+    .table_end
 </div>

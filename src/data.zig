@@ -95,6 +95,22 @@ pub const Entry = struct {
             else => return false,
         }
     }
+
+    pub fn hash(self: Entry) u64 {
+        var wy = std.hash.Wyhash.init(0);
+        wy.update(std.mem.asBytes(&self.date));
+        switch (self.payload) {
+            .transaction => |tx| {
+                wy.update(std.mem.asBytes(&tx.payee));
+                wy.update(std.mem.asBytes(&tx.narration));
+            },
+            .open => |open| {
+                wy.update(open.account.slice);
+            },
+            else => {},
+        }
+        return wy.final();
+    }
 };
 
 pub const Config = struct {

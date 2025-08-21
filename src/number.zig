@@ -128,10 +128,6 @@ pub const Number = struct {
         const integer_part = @divFloor(abs_value, divisor);
         const decimal_part = @rem(abs_value, divisor);
 
-        std.debug.print("{d} {d}\n", .{ rounded.value, rounded.precision });
-        std.debug.print("precision: {d}\n", .{precision});
-        std.debug.print("divisor: {d}\n", .{divisor});
-
         if (negative) try writer.writeByte('-');
 
         if (integer_part == 0) {

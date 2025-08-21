@@ -62,7 +62,7 @@ fn render(
             .open => |open| {
                 if (std.mem.eql(u8, open.account.slice, account)) {
                     _ = try tree.open(open.account.slice, null, open.booking_method);
-                    try zts.print(t, "open_row", .{
+                    try zts.print(t, "open", .{
                         .date = entry.date,
                     }, out);
                 }
@@ -72,23 +72,30 @@ fn render(
                     for (postings.start..postings.end) |i| {
                         const p = data.postings.get(i);
                         if (std.mem.eql(u8, p.account.slice, account)) {
-                            try zts.print(t, "tx_row", .{
+                            try zts.print(t, "transaction", .{
                                 .date = entry.date,
                                 .flag = tx.flag.slice,
                             }, out);
-                            if (tx.payee) |payee| {
-                                try zts.print(t, "payee", .{ .payee = payee[1 .. payee.len - 1] }, out);
-                                if (tx.narration) |_| try zts.write(t, "separator", out);
-                            }
-                            if (tx.narration) |n| try zts.print(t, "narration", .{ .narration = n[1 .. n.len - 1] }, out);
 
-                            try zts.write(t, "tx_row_2", out);
+                            if (tx.payee) |payee| {
+                                try zts.print(t, "transaction_payee", .{
+                                    .payee = payee[1 .. payee.len - 1],
+                                }, out);
+                                if (tx.narration) |_| try zts.write(t, "transaction_separator", out);
+                            }
+                            if (tx.narration) |n| try zts.print(t, "transaction_narration", .{
+                                .narration = n[1 .. n.len - 1],
+                            }, out);
+
+                            try zts.print(t, "transaction_legs", .{
+                                .hash = entry.hash(),
+                            }, out);
 
                             for (postings.start..postings.end) |_| {
-                                try zts.write(t, "narration_leg", out);
+                                try zts.write(t, "transaction_leg", out);
                             }
 
-                            try zts.print(t, "tx_row_3", .{
+                            try zts.print(t, "transaction_legs_end", .{
                                 .change_units = p.amount.number.?,
                                 .change_cur = p.amount.currency.?,
                             }, out);
@@ -99,13 +106,34 @@ fn render(
                             while (iter.next()) |kv| {
                                 const units = kv.value_ptr.total_units();
                                 if (!units.is_zero()) {
-                                    try zts.print(t, "balance_cur", .{
+                                    try zts.print(t, "transaction_balance_cur", .{
                                         .units = units,
                                         .cur = kv.key_ptr.*,
                                     }, out);
                                 }
                             }
-                            try zts.write(t, "end_tx_row", out);
+                            try zts.print(t, "transaction_balance_end", .{
+                                .hash = entry.hash(),
+                            }, out);
+
+                            for (postings.start..postings.end) |j| {
+                                const p2 = data.postings.get(j);
+                                try zts.write(t, "transaction_posting", out);
+
+                                if (j < postings.end - 1) {
+                                    try zts.write(t, "tree_middle", out);
+                                } else {
+                                    try zts.write(t, "tree_last", out);
+                                }
+
+                                try zts.print(t, "tree_end", .{
+                                    .account = p2.account.slice,
+                                    .change_units = p2.amount.number.?,
+                                    .change_cur = p2.amount.currency.?,
+                                }, out);
+                            }
+
+                            try zts.write(t, "transaction_end", out);
                         }
                     }
                 }
@@ -114,5 +142,5 @@ fn render(
         }
     }
 
-    try zts.write(t, "end_table", out);
+    try zts.write(t, "table_end", out);
 }
