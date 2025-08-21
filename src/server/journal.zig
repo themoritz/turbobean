@@ -78,13 +78,21 @@ fn render(
                             }, out);
                             if (tx.payee) |payee| {
                                 try zts.print(t, "payee", .{ .payee = payee[1 .. payee.len - 1] }, out);
-                                if (tx.narration) |_| try zts.print(t, "separator", .{}, out);
+                                if (tx.narration) |_| try zts.write(t, "separator", out);
                             }
                             if (tx.narration) |n| try zts.print(t, "narration", .{ .narration = n[1 .. n.len - 1] }, out);
-                            try zts.print(t, "tx_row_2", .{
+
+                            try zts.write(t, "tx_row_2", out);
+
+                            for (postings.start..postings.end) |_| {
+                                try zts.write(t, "narration_leg", out);
+                            }
+
+                            try zts.print(t, "tx_row_3", .{
                                 .change_units = p.amount.number.?,
                                 .change_cur = p.amount.currency.?,
                             }, out);
+
                             try tree.postInventory(entry.date, p);
                             var sum = try tree.inventoryAggregatedByAccount(alloc, account);
                             var iter = sum.by_currency.iterator();

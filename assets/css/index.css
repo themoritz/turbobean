@@ -78,13 +78,31 @@ content {
   background-color: #c4d6ff !important;
 }
 
-.journal .row .narration {
+.journal .row .payee-narration {
+  display: flex;
+  gap: 20px;
+  min-width: 0;
+}
+
+.journal .row .payee-narration .payee-narration-inner {
+  display: flex;
+  gap: 3px;
+  flex-grow: 1;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.journal .row .payee-narration-inner .payee {
+  font-weight: 500;
+  font-style: medium;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
-.journal .row .narration .separator::before {
+.journal .row .payee-narration-inner .separator::before {
   padding: 2px;
   margin: 0 2px;
   font-weight: 500;
@@ -93,9 +111,27 @@ content {
   content: "\2022";
 }
 
-.journal .narration b {
-  font-weight: 500;
-  font-style: medium;
+.journal .row .payee-narration-inner .narration {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 2;
+  min-width: 0;
+}
+
+.journal .row .payee-narration .legs {
+  display: flex;
+  gap: 3px;
+  height: calc(13rem / 16 * 1.5);
+  align-items: center;
+  cursor: pointer;
+}
+
+.journal .row .payee-narration .legs .leg {
+  border-radius: 3px;
+  background-color: hsl(0deg 0% 80%);
+  width: 6px;
+  height: 6px;
 }
 
 .journal .row .cell {

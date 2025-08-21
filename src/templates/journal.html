@@ -12,18 +12,27 @@
     <div class="row">
         <div class="cell nowrap">{[date]any}</div>
         <div class="cell nowrap flag">{[flag]s}</div>
-        <div class="cell narration">
+        <div class="cell payee-narration">
+            <div class="payee-narration-inner">
 
-            .payee
-            <b>{[payee]s}</b>
+                .payee
+                <span class="payee">{[payee]s}</span>
 
-            .separator
-            <span class="separator"></span>
+                .separator
+                <span class="separator"></span>
 
-            .narration
-            {[narration]s}
+                .narration
+                <span class="narration">{[narration]s}</span>
 
-            .tx_row_2
+                .tx_row_2
+            </div>
+            <div class="legs">
+
+                .narration_leg
+                <div class="leg"></div>
+
+                .tx_row_3
+            </div>
         </div>
         <div class="cell nowrap change right">{[change_units]any:.2} {[change_cur]s}</div>
         <div class="cell nowrap right">
