@@ -1,5 +1,6 @@
 const std = @import("std");
 const Self = @This();
+const log = std.log.scoped(.watcher);
 
 watch_entries: std.ArrayList(WatchItem),
 kq: i32,
@@ -75,18 +76,56 @@ pub fn addFile(self: *Self, path: []const u8) !void {
 
 fn threadMain(self: *Self) !void {
     while (self.running) {
-        var changelist: [1]std.c.Kevent = undefined;
+        var changelist: [128]std.c.Kevent = undefined;
         @memset(&changelist, std.mem.zeroes(std.c.Kevent));
 
-        const count = std.posix.system.kevent(self.kq, &changelist, 0, &changelist, 1, null);
+        log.debug("Waiting for events", .{});
+        var count = std.posix.system.kevent(self.kq, &changelist, 0, &changelist, 128, null);
+        log.debug("Received {d} events", .{count});
+
+        // Give the events more time to coalesce
+        if (count < 128 / 2) {
+            std.Thread.sleep(10_000_000); // 10ms
+            const remain = 128 - count;
+            const extra = std.posix.system.kevent(
+                self.kq,
+                changelist[@intCast(count)..].ptr,
+                0,
+                changelist[@intCast(count)..].ptr,
+                remain,
+                null,
+            );
+
+            count += extra;
+        }
+
+        log.debug("{d} events after coalesce", .{count});
+
+        var deduped: [128]std.c.Kevent = undefined;
+        var deduped_count: u32 = 0;
+        if (count > 0) {
+            deduped[0] = changelist[0];
+            deduped_count += 1;
+            for (changelist[1..@intCast(count)]) |ev| {
+                if (ev.udata != deduped[deduped_count - 1].udata) {
+                    deduped[deduped_count] = ev;
+                    deduped_count += 1;
+                }
+            }
+        }
+
+        log.debug("Deduped to {d} events", .{deduped_count});
 
         self.mutex.lock();
         defer self.mutex.unlock();
 
         if (self.running) {
-            for (changelist[0..@intCast(count)]) |ev| {
+            for (deduped[0..@intCast(deduped_count)]) |ev| {
+                log.debug("Received event: {any}", .{ev});
                 if (ev.fflags & std.c.NOTE.WRITE != 0) {
-                    self.onChange(self.ctx, self.watch_entries.items[@intCast(ev.udata)].path);
+                    const path = self.watch_entries.items[@intCast(ev.udata)].path;
+                    log.debug("Triggering callback for {s}", .{path});
+                    self.onChange(self.ctx, path);
                 }
             }
         }

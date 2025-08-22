@@ -23,7 +23,16 @@
         eventSource.onmessage = function(event) {
             const contentElement = document.querySelector('content');
             if (contentElement) {
+                // Save current scroll position
+                var journal = contentElement.querySelector('.journal');
+                const scrollPos = journal ? journal.scrollTop : 0;
                 contentElement.innerHTML = event.data;
+                // Restore scroll position after content renders.
+                // Need to query element again because it's new HTML.
+                journal = contentElement.querySelector('.journal');
+                if (journal) {
+                    journal.scrollTop = scrollPos;
+                }
             }
         };
 
@@ -98,6 +107,9 @@
                     this.open[index] = false;
                 }
                 this.open[index] = !this.open[index];
+                if (!this.open[index]) {
+                    delete this.open[index];
+                }
                 localStorage.setItem('txOpen', JSON.stringify(this.open));
             }
         });

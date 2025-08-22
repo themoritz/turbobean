@@ -72,6 +72,10 @@ fn render(
                     for (postings.start..postings.end) |i| {
                         const p = data.postings.get(i);
                         if (std.mem.eql(u8, p.account.slice, account)) {
+                            // Add i to get different hashes when the same transaction
+                            // has multiple postings to the queried account.
+                            const hash = entry.hash() + i;
+
                             try zts.print(t, "transaction", .{
                                 .date = entry.date,
                                 .flag = tx.flag.slice,
@@ -88,7 +92,7 @@ fn render(
                             }, out);
 
                             try zts.print(t, "transaction_legs", .{
-                                .hash = entry.hash(),
+                                .hash = hash,
                             }, out);
 
                             for (postings.start..postings.end) |_| {
@@ -113,7 +117,7 @@ fn render(
                                 }
                             }
                             try zts.print(t, "transaction_balance_end", .{
-                                .hash = entry.hash(),
+                                .hash = hash,
                             }, out);
 
                             for (postings.start..postings.end) |j| {

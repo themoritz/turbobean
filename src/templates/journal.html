@@ -27,7 +27,7 @@
 
                 .transaction_legs
             </div>
-            <div class="legs" @click="$store.txOpen.toggle({[hash]d})">
+            <div class="legs" @click="$store.txOpen.toggle('{[hash]d}')">
 
                 .transaction_leg
                 <div class="leg"></div>
@@ -45,7 +45,7 @@
             </div>
         </div>
 
-        <div class="postings" x-show="$store.txOpen.open[{[hash]d}]">
+        <div class="postings" x-show="$store.txOpen.open['{[hash]d}']">
             .transaction_posting
             <div class="tree">
                 .tree_middle
