@@ -1,117 +1,106 @@
-(function() {
-    let eventSource = null;
+document.addEventListener('alpine:init', () => {
+    Alpine.data('app', () => ({
+        account: '',
+        eventSource: null,
 
-    function closeExistingConnection() {
-        if (eventSource) {
-            eventSource.close();
-            eventSource = null;
-        }
-    }
+        init() {
+            this.initializeFromUrl();
+            this.setupPopstateHandler();
+            this.setupBeforeUnloadHandler();
+        },
 
-    function establishSSEConnection(account, updateUrl = true) {
-        closeExistingConnection();
-
-        if (updateUrl) {
-            const url = new URL(window.location);
-            url.pathname = '/journal';
-            url.search = `account=${encodeURIComponent(account)}`;
-            history.pushState({ account: account }, '', url);
-        }
-
-        eventSource = new EventSource(`/sse/journal?account=${encodeURIComponent(account)}`);
-
-        eventSource.onmessage = function(event) {
-            const contentElement = document.querySelector('content');
-            if (contentElement) {
-                // Save current scroll position
-                var journal = contentElement.querySelector('.journal');
-                const scrollPos = journal ? journal.scrollTop : 0;
-                contentElement.innerHTML = event.data;
-                // Restore scroll position after content renders.
-                // Need to query element again because it's new HTML.
-                journal = contentElement.querySelector('.journal');
-                if (journal) {
-                    journal.scrollTop = scrollPos;
-                }
+        closeExistingConnection() {
+            if (this.eventSource) {
+                this.eventSource.close();
+                this.eventSource = null;
             }
-        };
+        },
 
-        eventSource.onerror = function(event) {
-            console.error('SSE connection error:', event);
-            closeExistingConnection();
-        };
-    }
+        establishSSEConnection(account, updateUrl = true) {
+            this.closeExistingConnection();
 
-    function getAccountFromUrl() {
-        const url = new URL(window.location);
-        if (url.pathname === '/journal') {
-            return url.searchParams.get('account');
-        }
-        return null;
-    }
-
-    function initializeFromUrl() {
-        const account = getAccountFromUrl();
-        if (account) {
-            const accountInput = document.querySelector('nav form input[name="account"]');
-            if (accountInput) {
-                accountInput.value = account;
+            if (updateUrl) {
+                const url = new URL(window.location);
+                url.pathname = '/journal';
+                url.search = `account=${encodeURIComponent(account)}`;
+                history.pushState({ account: account }, '', url);
             }
-            establishSSEConnection(account, false);
-        }
-    }
 
-    document.addEventListener('DOMContentLoaded', function() {
-        const form = document.querySelector('nav form');
-        const accountInput = form.querySelector('input[name="account"]');
-        const goButton = form.querySelector('button');
+            this.eventSource = new EventSource(`/sse/journal?account=${encodeURIComponent(account)}`);
 
-        // Initialize from URL on page load
-        initializeFromUrl();
-
-        goButton.addEventListener('click', function(event) {
-            event.preventDefault();
-
-            const accountValue = accountInput.value.trim();
-            if (accountValue) {
-                establishSSEConnection(accountValue);
-            }
-        });
-
-        // Handle browser back/forward navigation
-        window.addEventListener('popstate', function(event) {
-            if (event.state && event.state.account) {
-                accountInput.value = event.state.account;
-                establishSSEConnection(event.state.account, false);
-            } else {
-                closeExistingConnection();
-                accountInput.value = '';
-                const contentElement = document.querySelector('content');
+            this.eventSource.onmessage = (event) => {
+                const contentElement = this.$refs.content;
                 if (contentElement) {
-                    contentElement.innerHTML = 'Content';
+                    const journal = contentElement.querySelector('.journal');
+                    const scrollPos = journal ? journal.scrollTop : 0;
+                    contentElement.innerHTML = event.data;
+                    const newJournal = contentElement.querySelector('.journal');
+                    if (newJournal) {
+                        newJournal.scrollTop = scrollPos;
+                    }
                 }
-            }
-        });
+            };
 
-        // Clean up on page unload
-        window.addEventListener('beforeunload', function() {
-            closeExistingConnection();
-        });
-    });
+            this.eventSource.onerror = (event) => {
+                console.error('SSE connection error:', event);
+                this.closeExistingConnection();
+            };
+        },
 
-    document.addEventListener('alpine:init', function() {
-        Alpine.store('txOpen', {
-            open: localStorage.getItem('txOpen') ? JSON.parse(localStorage.getItem('txOpen')) : {},
-            toggle(index) {
-                if (this.open[index] === undefined) {
-                    this.open[index] = false;
-                }
-                this.open[index] = !this.open[index];
-                if (!this.open[index]) {
-                    delete this.open[index];
-                }
-                localStorage.setItem('txOpen', JSON.stringify(this.open));
+        getAccountFromUrl() {
+            const url = new URL(window.location);
+            if (url.pathname === '/journal') {
+                return url.searchParams.get('account');
             }
-        });
+            return null;
+        },
+
+        initializeFromUrl() {
+            const urlAccount = this.getAccountFromUrl();
+            if (urlAccount) {
+                this.account = urlAccount;
+                this.establishSSEConnection(urlAccount, false);
+            }
+        },
+
+        handleFormSubmit() {
+            const accountValue = this.account.trim();
+            if (accountValue) {
+                this.establishSSEConnection(accountValue);
+            }
+        },
+
+        setupPopstateHandler() {
+            window.addEventListener('popstate', (event) => {
+                if (event.state && event.state.account) {
+                    this.account = event.state.account;
+                    this.establishSSEConnection(event.state.account, false);
+                } else {
+                    this.closeExistingConnection();
+                    this.account = '';
+                    this.content = 'Content';
+                }
+            });
+        },
+
+        setupBeforeUnloadHandler() {
+            window.addEventListener('beforeunload', () => {
+                this.closeExistingConnection();
+            });
+        }
+    }));
+
+    Alpine.store('txOpen', {
+        open: localStorage.getItem('txOpen') ? JSON.parse(localStorage.getItem('txOpen')) : {},
+        toggle(index) {
+            if (this.open[index] === undefined) {
+                this.open[index] = false;
+            }
+            this.open[index] = !this.open[index];
+            if (!this.open[index]) {
+                delete this.open[index];
+            }
+            localStorage.setItem('txOpen', JSON.stringify(this.open));
+        }
     });
-})();
+});

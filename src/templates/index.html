@@ -9,7 +9,7 @@
     <script src="static/js/index.js"></script>
 </head>
 
-<body>
+<body x-data="app">
     <header>
         <div id="spinner"
             class="htmx-indicator h-4 w-4 animate-spin rounded-full border-3 border-solid border-sky-500 border-r-transparent">
@@ -18,12 +18,12 @@
     </header>
     <nav>
         Nav
-        <form>
-            <input type="text" name="account" placeholder="Account.."><br />
-            <button>Go</button>
+        <form @submit.prevent="handleFormSubmit()">
+            <input type="text" x-model="account" placeholder="Account.."><br />
+            <button type="submit">Go</button>
         </form>
     </nav>
-    <content>
+    <content x-ref="content">
         Content
     </content>
 </body>
