@@ -1,6 +1,8 @@
 document.addEventListener('alpine:init', () => {
     Alpine.data('app', () => ({
         account: '',
+        startDate: '',
+        endDate: '',
         eventSource: null,
 
         init() {
@@ -22,11 +24,19 @@ document.addEventListener('alpine:init', () => {
             if (updateUrl) {
                 const url = new URL(window.location);
                 url.pathname = '/journal';
-                url.search = `account=${encodeURIComponent(account)}`;
-                history.pushState({ account: account }, '', url);
+                const params = new URLSearchParams();
+                params.set('account', account);
+                if (this.startDate) params.set('startDate', this.startDate);
+                if (this.endDate) params.set('endDate', this.endDate);
+                url.search = params.toString();
+                history.pushState({ account: account, startDate: this.startDate, endDate: this.endDate }, '', url);
             }
 
-            this.eventSource = new EventSource(`/sse/journal?account=${encodeURIComponent(account)}`);
+            const params = new URLSearchParams();
+            params.set('account', account);
+            if (this.startDate) params.set('startDate', this.startDate);
+            if (this.endDate) params.set('endDate', this.endDate);
+            this.eventSource = new EventSource(`/sse/journal?${params.toString()}`);
 
             this.eventSource.onmessage = (event) => {
                 const contentElement = this.$refs.content;
@@ -50,16 +60,22 @@ document.addEventListener('alpine:init', () => {
         getAccountFromUrl() {
             const url = new URL(window.location);
             if (url.pathname === '/journal') {
-                return url.searchParams.get('account');
+                return {
+                    account: url.searchParams.get('account'),
+                    startDate: url.searchParams.get('startDate') || '',
+                    endDate: url.searchParams.get('endDate') || ''
+                };
             }
             return null;
         },
 
         initializeFromUrl() {
-            const urlAccount = this.getAccountFromUrl();
-            if (urlAccount) {
-                this.account = urlAccount;
-                this.establishSSEConnection(urlAccount, false);
+            const urlParams = this.getAccountFromUrl();
+            if (urlParams && urlParams.account) {
+                this.account = urlParams.account;
+                this.startDate = urlParams.startDate;
+                this.endDate = urlParams.endDate;
+                this.establishSSEConnection(urlParams.account, false);
             }
         },
 
@@ -74,10 +90,14 @@ document.addEventListener('alpine:init', () => {
             window.addEventListener('popstate', (event) => {
                 if (event.state && event.state.account) {
                     this.account = event.state.account;
+                    this.startDate = event.state.startDate || '';
+                    this.endDate = event.state.endDate || '';
                     this.establishSSEConnection(event.state.account, false);
                 } else {
                     this.closeExistingConnection();
                     this.account = '';
+                    this.startDate = '';
+                    this.endDate = '';
                     this.content = 'Content';
                 }
             });

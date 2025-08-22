@@ -5,10 +5,31 @@ const ServerState = @import("../server.zig").ServerState;
 const Uri = @import("../Uri.zig");
 const Project = @import("../project.zig");
 const Tree = @import("../tree.zig");
+const Date = @import("../date.zig").Date;
 
 const Params = struct {
     account: []const u8,
+    startDate: ?[]const u8 = null,
+    endDate: ?[]const u8 = null,
 };
+
+fn isWithinDateRange(entry_date: Date, start_date: ?[]const u8, end_date: ?[]const u8) bool {
+    if (start_date) |start| {
+        const start_parsed = Date.fromSlice(start) catch return false;
+        if (entry_date.compare(start_parsed) == .after) {
+            return false;
+        }
+    }
+
+    if (end_date) |end| {
+        const end_parsed = Date.fromSlice(end) catch return false;
+        if (entry_date.compare(end_parsed) == .before) {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 pub fn handler(ctx: *const http.Context, state: *ServerState) !http.Respond {
     var sse = try http.SSE.init(ctx);
@@ -22,7 +43,7 @@ pub fn handler(ctx: *const http.Context, state: *ServerState) !http.Respond {
     defer listener.deinit();
 
     while (true) {
-        try render(ctx.allocator, state.project, params.account, out.any());
+        try render(ctx.allocator, state.project, params, out.any());
 
         sse.send(.{ .data = body.items }) catch |err| switch (err) {
             error.Closed => {
@@ -46,7 +67,7 @@ pub fn handler(ctx: *const http.Context, state: *ServerState) !http.Respond {
 fn render(
     alloc: std.mem.Allocator,
     project: *Project,
-    account: []const u8,
+    params: Params,
     out: std.io.AnyWriter,
 ) !void {
     const t = @embedFile("../templates/journal.html");
@@ -60,18 +81,22 @@ fn render(
         const entry = data.entries.items[sorted_entry.entry];
         switch (entry.payload) {
             .open => |open| {
-                if (std.mem.eql(u8, open.account.slice, account)) {
+                if (std.mem.eql(u8, open.account.slice, params.account)) {
+                    // We have to open the account even if it's outside the date filter.
                     _ = try tree.open(open.account.slice, null, open.booking_method);
-                    try zts.print(t, "open", .{
-                        .date = entry.date,
-                    }, out);
+                    if (isWithinDateRange(entry.date, params.startDate, params.endDate)) {
+                        try zts.print(t, "open", .{
+                            .date = entry.date,
+                        }, out);
+                    }
                 }
             },
             .transaction => |tx| {
+                if (!isWithinDateRange(entry.date, params.startDate, params.endDate)) continue;
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
                         const p = data.postings.get(i);
-                        if (std.mem.eql(u8, p.account.slice, account)) {
+                        if (std.mem.eql(u8, p.account.slice, params.account)) {
                             // Add i to get different hashes when the same transaction
                             // has multiple postings to the queried account.
                             const hash = entry.hash() + i;
@@ -105,7 +130,7 @@ fn render(
                             }, out);
 
                             try tree.postInventory(entry.date, p);
-                            var sum = try tree.inventoryAggregatedByAccount(alloc, account);
+                            var sum = try tree.inventoryAggregatedByAccount(alloc, params.account);
                             var iter = sum.by_currency.iterator();
                             while (iter.next()) |kv| {
                                 const units = kv.value_ptr.total_units();
