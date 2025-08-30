@@ -40,6 +40,7 @@ document.addEventListener('alpine:init', () => {
 
             this.eventSource.onmessage = (event) => {
                 const contentElement = this.$refs.content;
+                console.log(event);
                 if (contentElement) {
                     const journal = contentElement.querySelector('.journal');
                     const scrollPos = journal ? journal.scrollTop : 0;
@@ -50,6 +51,10 @@ document.addEventListener('alpine:init', () => {
                     }
                 }
             };
+
+            this.eventSource.addEventListener('plot_points', (event) => {
+                console.log(event);
+            })
 
             this.eventSource.onerror = (event) => {
                 console.error('SSE connection error:', event);

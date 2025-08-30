@@ -43,9 +43,21 @@ pub fn handler(ctx: *const http.Context, state: *ServerState) !http.Respond {
     defer listener.deinit();
 
     while (true) {
-        try render(ctx.allocator, state.project, params, out.any());
+        const plot_points = try render(ctx.allocator, state.project, params, out.any());
 
         sse.send(.{ .data = body.items }) catch |err| switch (err) {
+            error.Closed => {
+                std.log.debug("Client closed.", .{});
+                break;
+            },
+            else => return err,
+        };
+
+        body.clearRetainingCapacity();
+
+        try std.json.stringify(plot_points.items, .{}, out);
+
+        sse.send(.{ .data = body.items, .event = "plot_points" }) catch |err| switch (err) {
             error.Closed => {
                 std.log.debug("Client closed.", .{});
                 break;
@@ -64,15 +76,24 @@ pub fn handler(ctx: *const http.Context, state: *ServerState) !http.Respond {
     return .responded;
 }
 
+const PlotPoint = struct {
+    hash: u64,
+    date: []const u8,
+    currency: []const u8,
+    balance: f64,
+    balance_rendered: []const u8,
+};
+
 fn render(
-    alloc: std.mem.Allocator,
+    arena: std.mem.Allocator,
     project: *Project,
     params: Params,
     out: std.io.AnyWriter,
-) !void {
+) !std.ArrayList(PlotPoint) {
     const t = @embedFile("../templates/journal.html");
 
-    var tree = try Tree.init(alloc);
+    var tree = try Tree.init(arena);
+    var plot_points = std.ArrayList(PlotPoint).init(arena);
 
     try zts.write(t, "table", out);
 
@@ -130,7 +151,7 @@ fn render(
                             }, out);
 
                             try tree.postInventory(entry.date, p);
-                            var sum = try tree.inventoryAggregatedByAccount(alloc, params.account);
+                            var sum = try tree.inventoryAggregatedByAccount(arena, params.account);
                             var iter = sum.by_currency.iterator();
                             while (iter.next()) |kv| {
                                 const units = kv.value_ptr.total_units();
@@ -163,6 +184,15 @@ fn render(
                             }
 
                             try zts.write(t, "transaction_end", out);
+
+                            const balance = sum.by_currency.get(p.amount.currency.?).?.total_units();
+                            try plot_points.append(.{
+                                .hash = hash,
+                                .date = try std.fmt.allocPrint(arena, "{any}", .{entry.date}),
+                                .currency = p.amount.currency.?,
+                                .balance = balance.toFloat(),
+                                .balance_rendered = try std.fmt.allocPrint(arena, "{any:.2}", .{balance}),
+                            });
                         }
                     }
                 }
@@ -172,4 +202,6 @@ fn render(
     }
 
     try zts.write(t, "table_end", out);
+
+    return plot_points;
 }
