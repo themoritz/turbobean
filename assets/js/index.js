@@ -129,17 +129,19 @@ document.addEventListener('alpine:init', () => {
         const xGroup = svg.append("g");
         const yGroup = svg.append("g").attr("class", "mono");
 
+        const chart = svg.append("g");
+
         // Grid lines group
         const grid = svg.append("g").attr("class", "grid");
         const hLine = grid
             .append("line")
-            .attr("stroke", "hsl(0deg 0% 70% / 0.8)")
-            .attr("stroke-width", "0.5")
+            .attr("stroke", "hsl(0deg 50% 70% / 0.8)")
+            .attr("stroke-width", "1")
             .style("display", "none");
         const vLine = grid
             .append("line")
-            .attr("stroke", "hsl(0deg 0% 70% / 0.8)")
-            .attr("stroke-width", "0.5")
+            .attr("stroke", "hsl(0deg 50% 70% / 0.8)")
+            .attr("stroke-width", "1")
             .style("display", "none");
 
         return {
@@ -185,11 +187,10 @@ document.addEventListener('alpine:init', () => {
                     .nice()
                     .range([height, 0]);
 
-
                 const t = d3.transition().duration(300);
 
                 // Horizontal segments (solid)
-                svg
+                chart
                     .selectAll(".horizontal")
                     .data(data.slice(0, -1), (d) => d.hash) // One less than points
                     .join(
@@ -218,16 +219,15 @@ document.addEventListener('alpine:init', () => {
                     );
 
                 // Vertical segments (dashed)
-                svg
+                chart
                     .selectAll(".vertical")
                     .data(data.slice(1), (d) => d.hash) // From second point onward
                     .join(
                         enter => enter
                             .append("line")
                             .attr("class", "vertical")
-                            .attr("stroke", "hsl(0deg 0% 80%")
+                            .attr("stroke", "hsl(0deg 0% 90%")
                             .attr("stroke-width", 1)
-                            .attr("stroke-dasharray", "5,5")
                             .attr("x1", (d, _) => x(d.date))
                             .attr("y1", (_, i) => y(data[i].balance)) // Previous y
                             .attr("x2", (d, _) => x(d.date))
@@ -248,7 +248,7 @@ document.addEventListener('alpine:init', () => {
                     );
 
                 // Circles at each point
-                const circles = svg
+                const circles = chart
                     .selectAll("circle")
                     .data(data, (d) => d.hash)
                     .join(
@@ -256,7 +256,7 @@ document.addEventListener('alpine:init', () => {
                             .append("circle")
                             .attr("stroke", "black")
                             .attr("stroke-width", 1)
-                            .attr("fill", "white")
+                            .attr("fill", "black")
                             .attr("r", 2)
                             .attr("cx", (d) => x(d.date))
                             .attr("cy", (d) => y(d.balance))
@@ -306,12 +306,12 @@ document.addEventListener('alpine:init', () => {
                             }
                         });
 
-                        circles.attr("fill", "white");
+                        circles.attr("fill", "black");
 
                         if (minDist <= 20) {
                             const px = x(closest.date);
                             const py = y(closest.balance);
-                            circles.filter((_, i) => i === closestIndex).attr("fill", "black");
+                            circles.filter((_, i) => i === closestIndex).attr("fill", "white").raise();
 
                             tooltip
                                 .style("display", "block")
@@ -323,14 +323,14 @@ document.addEventListener('alpine:init', () => {
                                 .style("display", "block")
                                 .attr("x1", 0)
                                 .attr("y1", py)
-                                .attr("x2", Math.max(0, px - 10))
+                                .attr("x2", Math.max(0, px - 2))
                                 .attr("y2", py);
                             vLine
                                 .style("display", "block")
                                 .attr("x1", px)
                                 .attr("y1", height)
                                 .attr("x2", px)
-                                .attr("y2", Math.min(py + 10, height));
+                                .attr("y2", Math.min(py + 2, height));
                         } else {
                             // Hide tooltip and lines
                             tooltip.style("display", "none");
@@ -342,7 +342,7 @@ document.addEventListener('alpine:init', () => {
                         tooltip.style("display", "none");
                         hLine.style("display", "none");
                         vLine.style("display", "none");
-                        circles.attr("fill", "white");
+                        circles.attr("fill", "black");
                     });
             }
         }
