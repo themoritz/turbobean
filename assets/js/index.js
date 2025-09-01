@@ -127,7 +127,7 @@ document.addEventListener('alpine:init', () => {
         const tooltip = d3.select("#d3 .tooltip");
 
         const xGroup = svg.append("g");
-        const yGroup = svg.append("g");
+        const yGroup = svg.append("g").attr("class", "mono");
 
         // Grid lines group
         const grid = svg.append("g").attr("class", "grid");
@@ -161,6 +161,7 @@ document.addEventListener('alpine:init', () => {
                         hash: txn.hash,
                         date: new Date(txn.date),
                         balance: txn.balance,
+                        balance_rendered: txn.balance_rendered,
                         currency: txn.currency,
                     })
                 });
@@ -277,7 +278,7 @@ document.addEventListener('alpine:init', () => {
                     .call(d3.axisBottom(x));
 
                 yGroup.transition(t)
-                    .call(d3.axisLeft(y));
+                    .call(d3.axisLeft(y).tickFormat(d3.format("~s")));
 
                 // Invisible rectangle for mouse events
                 svg
@@ -296,7 +297,7 @@ document.addEventListener('alpine:init', () => {
                         let minDist = Infinity;
                         data.forEach((d, i) => {
                             const px = x(d.date);
-                            const py = y(d.val);
+                            const py = y(d.balance);
                             const dist = Math.sqrt((mx - px) ** 2 + (my - py) ** 2);
                             if (dist < minDist) {
                                 minDist = dist;
@@ -309,15 +310,14 @@ document.addEventListener('alpine:init', () => {
 
                         if (minDist <= 20) {
                             const px = x(closest.date);
-                            const py = y(closest.val);
-
-                            circles.filter((d, i) => i === closestIndex).attr("fill", "black");
+                            const py = y(closest.balance);
+                            circles.filter((_, i) => i === closestIndex).attr("fill", "black");
 
                             tooltip
                                 .style("display", "block")
                                 .style("left", `${event.pageX + 10}px`)
                                 .style("top", `${event.pageY - 10}px`)
-                                .text(`${closest.date.toISOString().split('T')[0]}: ${closest.val}`);
+                                .text(`${closest.date.toISOString().split('T')[0]}: ${closest.balance_rendered} ${closest.currency}`);
 
                             hLine
                                 .style("display", "block")
