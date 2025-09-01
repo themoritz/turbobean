@@ -29,9 +29,17 @@
 
 ## Beancount
 
-- New Booking System
-- Check account commodities
-- Balance Tolerances
+
+## UI
+
+- Display more while there are still errors
+
+## Bugs
+
+- Balancing algo doesn't see ambiguity (only substitutes EUR):
+    Foo   1 EUR @
+    Bar
+- Segfault when two sse connections and watch triggers
 
 # Editor Setup
 
@@ -88,3 +96,24 @@ Then press `F5`, or go to debugging and click "Run Extension".
 npm i
 npm run test
 ```
+
+# Scratch
+
+## Pipeline
+
+File:
+- Balance (tx level)
+
+Project:
+- Sort (project level)
+- Check:
+  - Accounts properly opened/not closed (project level)
+  - Insert pads (project level)
+  - Can only post to currencies defined at account open (project level)
+  - Booking rules followed
+
+Process:
+- Insert PnL postings (project level)
+
+Query:
+- Inventory until posting

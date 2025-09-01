@@ -189,36 +189,6 @@ document.addEventListener('alpine:init', () => {
 
                 const t = d3.transition().duration(300);
 
-                // Horizontal segments (solid)
-                chart
-                    .selectAll(".horizontal")
-                    .data(data.slice(0, -1), (d) => d.hash) // One less than points
-                    .join(
-                        enter => enter
-                            .append("line")
-                            .attr("class", "horizontal")
-                            .attr("stroke", "black")
-                            .attr("stroke-width", 1)
-                            .attr("x1", (d, _) => x(d.date))
-                            .attr("y1", (d, _) => y(d.balance))
-                            .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
-                            .attr("y2", (d, _) => y(d.balance))
-                            .style("opacity", 0)
-                            .transition(t)
-                            .style("opacity", 1),
-                        update => update
-                            .transition(t)
-                            .attr("x1", (d, _) => x(d.date))
-                            .attr("y1", (d, _) => y(d.balance))
-                            .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
-                            .attr("y2", (d, _) => y(d.balance)),
-                        exit => exit
-                            .transition(t)
-                            .style("opacity", 0)
-                            .remove(),
-                    );
-
-                // Vertical segments (dashed)
                 chart
                     .selectAll(".vertical")
                     .data(data.slice(1), (d) => d.hash) // From second point onward
@@ -240,6 +210,34 @@ document.addEventListener('alpine:init', () => {
                             .attr("x1", (d, _) => x(d.date))
                             .attr("y1", (_, i) => y(data[i].balance)) // Previous y
                             .attr("x2", (d, _) => x(d.date))
+                            .attr("y2", (d, _) => y(d.balance)),
+                        exit => exit
+                            .transition(t)
+                            .style("opacity", 0)
+                            .remove(),
+                    );
+
+                chart
+                    .selectAll(".horizontal")
+                    .data(data.slice(0, -1), (d) => d.hash) // One less than points
+                    .join(
+                        enter => enter
+                            .append("line")
+                            .attr("class", "horizontal")
+                            .attr("stroke", "black")
+                            .attr("stroke-width", 1)
+                            .attr("x1", (d, _) => x(d.date))
+                            .attr("y1", (d, _) => y(d.balance))
+                            .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
+                            .attr("y2", (d, _) => y(d.balance))
+                            .style("opacity", 0)
+                            .transition(t)
+                            .style("opacity", 1),
+                        update => update
+                            .transition(t)
+                            .attr("x1", (d, _) => x(d.date))
+                            .attr("y1", (d, _) => y(d.balance))
+                            .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
                             .attr("y2", (d, _) => y(d.balance)),
                         exit => exit
                             .transition(t)
@@ -332,7 +330,6 @@ document.addEventListener('alpine:init', () => {
                                 .attr("x2", px)
                                 .attr("y2", Math.min(py + 2, height));
                         } else {
-                            // Hide tooltip and lines
                             tooltip.style("display", "none");
                             hLine.style("display", "none");
                             vLine.style("display", "none");
