@@ -101,8 +101,8 @@ pub const Entry = struct {
         wy.update(std.mem.asBytes(&self.date));
         switch (self.payload) {
             .transaction => |tx| {
-                wy.update(std.mem.asBytes(&tx.payee));
-                wy.update(std.mem.asBytes(&tx.narration));
+                if (tx.payee) |payee| wy.update(payee);
+                if (tx.narration) |narration| wy.update(narration);
             },
             .open => |open| {
                 wy.update(open.account.slice);

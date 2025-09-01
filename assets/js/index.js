@@ -4,6 +4,7 @@ document.addEventListener('alpine:init', () => {
         startDate: '',
         endDate: '',
         eventSource: null,
+        plotData: [],
 
         init() {
             this.initializeFromUrl();
@@ -40,7 +41,6 @@ document.addEventListener('alpine:init', () => {
 
             this.eventSource.onmessage = (event) => {
                 const contentElement = this.$refs.content;
-                console.log(event);
                 if (contentElement) {
                     const journal = contentElement.querySelector('.journal');
                     const scrollPos = journal ? journal.scrollTop : 0;
@@ -53,7 +53,7 @@ document.addEventListener('alpine:init', () => {
             };
 
             this.eventSource.addEventListener('plot_points', (event) => {
-                console.log(event);
+                this.plotData = JSON.parse(event.data);
             })
 
             this.eventSource.onerror = (event) => {
@@ -114,6 +114,239 @@ document.addEventListener('alpine:init', () => {
             });
         }
     }));
+
+    Alpine.data('d3', () => {
+        const margin = {
+            top: 20,
+            right: 30,
+            bottom: 50,
+            left: 50
+        };
+
+        const svg = d3.select("#d3 svg");
+        const tooltip = d3.select("#d3 .tooltip");
+
+        const xGroup = svg.append("g");
+        const yGroup = svg.append("g");
+
+        // Grid lines group
+        const grid = svg.append("g").attr("class", "grid");
+        const hLine = grid
+            .append("line")
+            .attr("stroke", "hsl(0deg 0% 70% / 0.8)")
+            .attr("stroke-width", "0.5")
+            .style("display", "none");
+        const vLine = grid
+            .append("line")
+            .attr("stroke", "hsl(0deg 0% 70% / 0.8)")
+            .attr("stroke-width", "0.5")
+            .style("display", "none");
+
+        return {
+
+            init() {
+                this.$watch('plotData', (newData) => {
+                    if (newData && newData.length > 0) {
+                        this.updateChart(newData);
+                    }
+                });
+            },
+
+            updateChart(alpineData) {
+
+                const data = [];
+
+                alpineData.forEach((txn) => {
+                    data.push({
+                        hash: txn.hash,
+                        date: new Date(txn.date),
+                        balance: txn.balance,
+                        currency: txn.currency,
+                    })
+                });
+
+                const width = document.querySelector("#d3 svg").clientWidth;
+                const height = width / 5;
+
+                svg.attr("viewBox", `${-margin.left} ${-margin.top} ${width + margin.left + margin.right} ${height + margin.top + margin.bottom}`);
+
+                xGroup.attr("transform", `translate(0,${height})`);
+
+                const x = d3
+                    .scaleUtc()
+                    .domain(d3.extent(data, (txn) => txn.date))
+                    .nice()
+                    .range([0, width]);
+
+                const y = d3
+                    .scaleLinear()
+                    .domain(d3.extent(data, (txn) => txn.balance))
+                    .nice()
+                    .range([height, 0]);
+
+
+                const t = d3.transition().duration(300);
+
+                // Horizontal segments (solid)
+                svg
+                    .selectAll(".horizontal")
+                    .data(data.slice(0, -1), (d) => d.hash) // One less than points
+                    .join(
+                        enter => enter
+                            .append("line")
+                            .attr("class", "horizontal")
+                            .attr("stroke", "black")
+                            .attr("stroke-width", 1)
+                            .attr("x1", (d, _) => x(d.date))
+                            .attr("y1", (d, _) => y(d.balance))
+                            .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
+                            .attr("y2", (d, _) => y(d.balance))
+                            .style("opacity", 0)
+                            .transition(t)
+                            .style("opacity", 1),
+                        update => update
+                            .transition(t)
+                            .attr("x1", (d, _) => x(d.date))
+                            .attr("y1", (d, _) => y(d.balance))
+                            .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
+                            .attr("y2", (d, _) => y(d.balance)),
+                        exit => exit
+                            .transition(t)
+                            .style("opacity", 0)
+                            .remove(),
+                    );
+
+                // Vertical segments (dashed)
+                svg
+                    .selectAll(".vertical")
+                    .data(data.slice(1), (d) => d.hash) // From second point onward
+                    .join(
+                        enter => enter
+                            .append("line")
+                            .attr("class", "vertical")
+                            .attr("stroke", "hsl(0deg 0% 80%")
+                            .attr("stroke-width", 1)
+                            .attr("stroke-dasharray", "5,5")
+                            .attr("x1", (d, _) => x(d.date))
+                            .attr("y1", (_, i) => y(data[i].balance)) // Previous y
+                            .attr("x2", (d, _) => x(d.date))
+                            .attr("y2", (d, _) => y(d.balance))
+                            .style("opacity", 0)
+                            .transition(t)
+                            .style("opacity", 1),
+                        update => update
+                            .transition(t)
+                            .attr("x1", (d, _) => x(d.date))
+                            .attr("y1", (_, i) => y(data[i].balance)) // Previous y
+                            .attr("x2", (d, _) => x(d.date))
+                            .attr("y2", (d, _) => y(d.balance)),
+                        exit => exit
+                            .transition(t)
+                            .style("opacity", 0)
+                            .remove(),
+                    );
+
+                // Circles at each point
+                const circles = svg
+                    .selectAll("circle")
+                    .data(data, (d) => d.hash)
+                    .join(
+                        enter => enter
+                            .append("circle")
+                            .attr("stroke", "black")
+                            .attr("stroke-width", 1)
+                            .attr("fill", "white")
+                            .attr("r", 2)
+                            .attr("cx", (d) => x(d.date))
+                            .attr("cy", (d) => y(d.balance))
+                            .style("opacity", 0)
+                            .transition(t)
+                            .style("opacity", 1),
+                        update => update
+                            .transition(t)
+                            .attr("cx", (d) => x(d.date))
+                            .attr("cy", (d) => y(d.balance)),
+                        exit => exit
+                            .transition(t)
+                            .style("opacity", 0)
+                            .remove()
+                    );
+
+                xGroup
+                    .transition(t)
+                    .call(d3.axisBottom(x));
+
+                yGroup.transition(t)
+                    .call(d3.axisLeft(y));
+
+                // Invisible rectangle for mouse events
+                svg
+                    .append("rect")
+                    .attr("width", width)
+                    .attr("height", height)
+                    .attr("fill", "none")
+                    .attr("pointer-events", "all")
+                    .on("mousemove", function(event) {
+                        // Get mouse position relative to SVG
+                        const [mx, my] = d3.pointer(event, svg.node());
+
+                        // Find closest point
+                        let closest = null;
+                        let closestIndex = -1;
+                        let minDist = Infinity;
+                        data.forEach((d, i) => {
+                            const px = x(d.date);
+                            const py = y(d.val);
+                            const dist = Math.sqrt((mx - px) ** 2 + (my - py) ** 2);
+                            if (dist < minDist) {
+                                minDist = dist;
+                                closest = d;
+                                closestIndex = i;
+                            }
+                        });
+
+                        circles.attr("fill", "white");
+
+                        if (minDist <= 20) {
+                            const px = x(closest.date);
+                            const py = y(closest.val);
+
+                            circles.filter((d, i) => i === closestIndex).attr("fill", "black");
+
+                            tooltip
+                                .style("display", "block")
+                                .style("left", `${event.pageX + 10}px`)
+                                .style("top", `${event.pageY - 10}px`)
+                                .text(`${closest.date.toISOString().split('T')[0]}: ${closest.val}`);
+
+                            hLine
+                                .style("display", "block")
+                                .attr("x1", 0)
+                                .attr("y1", py)
+                                .attr("x2", Math.max(0, px - 10))
+                                .attr("y2", py);
+                            vLine
+                                .style("display", "block")
+                                .attr("x1", px)
+                                .attr("y1", height)
+                                .attr("x2", px)
+                                .attr("y2", Math.min(py + 10, height));
+                        } else {
+                            // Hide tooltip and lines
+                            tooltip.style("display", "none");
+                            hLine.style("display", "none");
+                            vLine.style("display", "none");
+                        }
+                    })
+                    .on("mouseleave", () => {
+                        tooltip.style("display", "none");
+                        hLine.style("display", "none");
+                        vLine.style("display", "none");
+                        circles.attr("fill", "white");
+                    });
+            }
+        }
+    });
 
     Alpine.store('txOpen', {
         open: localStorage.getItem('txOpen') ? JSON.parse(localStorage.getItem('txOpen')) : {},

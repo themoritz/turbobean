@@ -6,7 +6,25 @@
     <link rel="icon" href="data:;base64,=">
     <link rel="stylesheet" href="static/css/index.css">
     <script src="//unpkg.com/alpinejs" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <script src="static/js/index.js"></script>
+
+    <style>
+        .tooltip {
+            position: absolute;
+            background: hsl(0deg 0% 0% / 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+        }
+
+        svg text {
+            font-size: 12px;
+        }
+    </style>
 </head>
 
 <body x-data="app">
@@ -28,8 +46,14 @@
             <button type="submit">Go</button>
         </form>
     </nav>
-    <content x-ref="content">
-        Content
+    <content>
+        <div id="d3" x-data="d3">
+            <svg viewBox="0,0 5,1"></svg>
+            <div class="tooltip"></div>
+        </div>
+        <div x-ref="content">
+            Content
+        </div>
     </content>
 </body>
 
