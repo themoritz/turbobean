@@ -14,7 +14,36 @@ const semantic_tokens = @import("lsp/semantic_tokens.zig");
 
 pub const std_options: std.Options = .{
     .log_level = std.log.default_level,
+    .logFn = myLogFn,
 };
+
+pub fn myLogFn(
+    comptime level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const scope_prefix = switch (scope) {
+        .default => "",
+        .tardy,
+        .@"tardy/runtime",
+        .@"tardy/aio",
+        .@"tardy/aio/kqueue",
+        => if (@intFromEnum(level) <= @intFromEnum(std.log.Level.err))
+            " (" ++ @tagName(scope) ++ ")"
+        else
+            return,
+        else => " (" ++ @tagName(scope) ++ ")",
+    };
+
+    const prefix = "[" ++ comptime level.asText() ++ "]" ++ scope_prefix ++ ": ";
+
+    // Print the message to stderr, silently ignoring any errors
+    std.debug.lockStdErr();
+    defer std.debug.unlockStdErr();
+    const stderr = std.io.getStdErr().writer();
+    nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
+}
 
 var debug_allocator: std.heap.DebugAllocator(.{
     .stack_trace_frames = 24,
