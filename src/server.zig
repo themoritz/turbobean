@@ -75,6 +75,7 @@ pub fn run(alloc: std.mem.Allocator, project: *Project) !void {
 fn index_handler(ctx: *const http.Context, _: void) !http.Respond {
     const t = @embedFile("templates/index.html");
     var body = std.ArrayList(u8).init(ctx.allocator);
+    defer body.deinit();
     try zts.writeHeader(t, body.writer());
 
     return ctx.response.apply(.{

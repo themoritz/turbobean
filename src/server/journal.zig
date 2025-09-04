@@ -11,6 +11,12 @@ const Params = struct {
     account: []const u8,
     startDate: ?[]const u8 = null,
     endDate: ?[]const u8 = null,
+
+    pub fn deinit(self: *Params, alloc: std.mem.Allocator) void {
+        alloc.free(self.account);
+        if (self.startDate) |start| alloc.free(start);
+        if (self.endDate) |end| alloc.free(end);
+    }
 };
 
 fn isWithinDateRange(entry_date: Date, start_date: ?[]const u8, end_date: ?[]const u8) bool {
@@ -32,20 +38,34 @@ fn isWithinDateRange(entry_date: Date, start_date: ?[]const u8, end_date: ?[]con
 }
 
 pub fn handler(ctx: *const http.Context, state: *ServerState) !http.Respond {
+    const alloc = state.project.alloc;
     var sse = try http.SSE.init(ctx);
 
-    const params = try http.Query(Params).parse(ctx.allocator, ctx);
+    var params = try http.Query(Params).parse(alloc, ctx);
+    defer params.deinit(alloc);
 
-    var body = std.ArrayList(u8).init(ctx.allocator);
-    const out = body.writer();
+    var html = std.ArrayList(u8).init(alloc);
+    defer html.deinit();
+    const html_out = html.writer();
+
+    var json = std.ArrayList(u8).init(alloc);
+    defer json.deinit();
+    const json_out = json.writer();
 
     var listener = try state.watch.newListener(ctx.runtime);
     defer listener.deinit();
 
     while (true) {
-        const plot_points = try render(ctx.allocator, state.project, params, out.any());
+        const plot_points = try render(alloc, state.project, params, html_out.any());
+        // defer {
+        //     for (plot_points.items) |*plot_point| {
+        //         plot_point.deinit(alloc);
+        //     }
+        //     plot_points.deinit();
+        // }
+        try std.json.stringify(plot_points.items, .{}, json_out);
 
-        sse.send(.{ .data = body.items }) catch |err| switch (err) {
+        sse.send(.{ .data = html.items }) catch |err| switch (err) {
             error.Closed => {
                 std.log.debug("Client closed.", .{});
                 break;
@@ -53,11 +73,7 @@ pub fn handler(ctx: *const http.Context, state: *ServerState) !http.Respond {
             else => return err,
         };
 
-        body.clearRetainingCapacity();
-
-        try std.json.stringify(plot_points.items, .{}, out);
-
-        sse.send(.{ .data = body.items, .event = "plot_points" }) catch |err| switch (err) {
+        sse.send(.{ .data = json.items, .event = "plot_points" }) catch |err| switch (err) {
             error.Closed => {
                 std.log.debug("Client closed.", .{});
                 break;
@@ -65,10 +81,18 @@ pub fn handler(ctx: *const http.Context, state: *ServerState) !http.Respond {
             else => return err,
         };
 
-        body.clearRetainingCapacity();
+        html.clearRetainingCapacity();
+        json.clearRetainingCapacity();
 
         const path = listener.awaitChanged();
-        const uri = try Uri.from_absolute(ctx.allocator, path);
+        sse.send(.{ .event = "ping" }) catch |err| switch (err) {
+            error.Closed => {
+                std.log.debug("Client closed.", .{});
+                break;
+            },
+            else => return err,
+        };
+        const uri = try Uri.from_absolute(alloc, path);
         const source = try uri.load_nullterminated(state.project.alloc);
         try state.project.update_file(uri.value, source);
     }
@@ -82,18 +106,31 @@ const PlotPoint = struct {
     currency: []const u8,
     balance: f64,
     balance_rendered: []const u8,
+
+    pub fn deinit(self: *PlotPoint, alloc: std.mem.Allocator) void {
+        alloc.free(self.date);
+        alloc.free(self.currency);
+        alloc.free(self.balance_rendered);
+    }
 };
 
 fn render(
-    arena: std.mem.Allocator,
+    alloc: std.mem.Allocator,
     project: *Project,
     params: Params,
     out: std.io.AnyWriter,
 ) !std.ArrayList(PlotPoint) {
     const t = @embedFile("../templates/journal.html");
 
-    var tree = try Tree.init(arena);
-    var plot_points = std.ArrayList(PlotPoint).init(arena);
+    var tree = try Tree.init(alloc);
+    defer tree.deinit();
+    var plot_points = std.ArrayList(PlotPoint).init(alloc);
+    errdefer {
+        for (plot_points.items) |*plot_point| {
+            plot_point.deinit(alloc);
+        }
+        plot_points.deinit();
+    }
 
     try zts.write(t, "table", out);
 
@@ -151,7 +188,8 @@ fn render(
                             }, out);
 
                             try tree.postInventory(entry.date, p);
-                            var sum = try tree.inventoryAggregatedByAccount(arena, params.account);
+                            var sum = try tree.inventoryAggregatedByAccount(alloc, params.account);
+                            defer sum.deinit();
                             var iter = sum.by_currency.iterator();
                             while (iter.next()) |kv| {
                                 const units = kv.value_ptr.total_units();
@@ -188,10 +226,10 @@ fn render(
                             const balance = sum.by_currency.get(p.amount.currency.?).?.total_units();
                             try plot_points.append(.{
                                 .hash = hash,
-                                .date = try std.fmt.allocPrint(arena, "{any}", .{entry.date}),
-                                .currency = p.amount.currency.?,
+                                .date = try std.fmt.allocPrint(alloc, "{any}", .{entry.date}),
+                                .currency = try alloc.dupe(u8, p.amount.currency.?),
                                 .balance = balance.toFloat(),
-                                .balance_rendered = try std.fmt.allocPrint(arena, "{any:.2}", .{balance}),
+                                .balance_rendered = try std.fmt.allocPrint(alloc, "{any:.2}", .{balance}),
                             });
                         }
                     }
