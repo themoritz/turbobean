@@ -26,12 +26,12 @@ pub const Listener = struct {
     last_gen: u64,
 
     pub fn waitForNewVersion(self: *Listener) void {
-        self.shared.mutex.lock();
-        defer self.shared.mutex.unlock();
+        self.inner.mutex.lock();
+        defer self.inner.mutex.unlock();
 
-        while (self.shared.gen <= self.last_gen) {
-            self.shared.cond.wait(&self.shared.mutex);
+        while (self.inner.gen <= self.last_gen) {
+            self.inner.cond.wait(&self.inner.mutex);
         }
-        self.last_gen = self.shared.gen;
+        self.last_gen = self.inner.gen;
     }
 };

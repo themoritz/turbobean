@@ -1,7 +1,7 @@
 const std = @import("std");
 const zts = @import("zts");
-const http = @import("zzz").HTTP;
-const ServerState = @import("../server.zig").ServerState;
+const http = @import("http.zig");
+const State = @import("State.zig");
 const Uri = @import("../Uri.zig");
 const Project = @import("../project.zig");
 const Tree = @import("../tree.zig");
@@ -37,11 +37,23 @@ fn isWithinDateRange(entry_date: Date, start_date: ?[]const u8, end_date: ?[]con
     return true;
 }
 
-pub fn handler(ctx: *const http.Context, state: *ServerState) !http.Respond {
-    const alloc = state.project.alloc;
-    var sse = try http.SSE.init(ctx);
+pub fn handler(alloc: std.mem.Allocator, req: *std.http.Server.Request, state: *State) !void {
+    var send_buffer: [98096]u8 = undefined;
 
-    var params = try http.Query(Params).parse(alloc, ctx);
+    var response = req.respondStreaming(.{
+        .send_buffer = &send_buffer,
+        .respond_options = .{
+            .extra_headers = &.{
+                .{ .name = "Content-Type", .value = "text/event-stream" },
+                .{ .name = "Cache-Control", .value = "no-cache" },
+                .{ .name = "Connection", .value = "keep-alive" },
+            },
+        },
+    });
+
+    var parsed_request = try http.ParsedRequest.parse(alloc, req.head.target);
+    defer parsed_request.deinit(alloc);
+    var params = try http.Query(Params).parse(alloc, &parsed_request.params);
     defer params.deinit(alloc);
 
     var html = std.ArrayList(u8).init(alloc);
@@ -52,49 +64,35 @@ pub fn handler(ctx: *const http.Context, state: *ServerState) !http.Respond {
     defer json.deinit();
     const json_out = json.writer();
 
-    var listener = try state.watch.newListener(ctx.runtime);
-    defer listener.deinit();
+    var listener = state.broadcast.newListener();
 
     while (true) {
-        const plot_points = try render(alloc, state.project, params, html_out.any());
-        // defer {
-        //     for (plot_points.items) |*plot_point| {
-        //         plot_point.deinit(alloc);
-        //     }
-        //     plot_points.deinit();
-        // }
-        try std.json.stringify(plot_points.items, .{}, json_out);
+        {
+            state.acquireProject();
+            defer state.releaseProject();
 
-        sse.send(.{ .data = html.items }) catch |err| switch (err) {
-            error.Closed => {
-                std.log.debug("Client closed.", .{});
-                break;
-            },
-            else => return err,
-        };
+            const plot_points = try render(alloc, state.project, params, html_out.any());
+            defer {
+                for (plot_points.items) |*plot_point| plot_point.deinit(alloc);
+                plot_points.deinit();
+            }
+            try std.json.stringify(plot_points.items, .{}, json_out);
+        }
 
-        sse.send(.{ .data = json.items, .event = "plot_points" }) catch |err| switch (err) {
-            error.Closed => {
-                std.log.debug("Client closed.", .{});
-                break;
-            },
-            else => return err,
-        };
+        var iter = std.mem.splitScalar(u8, html.items, '\n');
+        while (iter.next()) |line| {
+            try std.fmt.format(response.writer(), "data: {s}\n", .{line});
+        }
+        try response.writer().writeByte('\n');
+        try response.flush();
+
+        try std.fmt.format(response.writer(), "event: plot_points\ndata: {s}\n\n", .{json.items});
+        try response.flush();
 
         html.clearRetainingCapacity();
         json.clearRetainingCapacity();
 
-        const path = listener.awaitChanged();
-        sse.send(.{ .event = "ping" }) catch |err| switch (err) {
-            error.Closed => {
-                std.log.debug("Client closed.", .{});
-                break;
-            },
-            else => return err,
-        };
-        const uri = try Uri.from_absolute(alloc, path);
-        const source = try uri.load_nullterminated(state.project.alloc);
-        try state.project.update_file(uri.value, source);
+        listener.waitForNewVersion();
     }
 
     return .responded;

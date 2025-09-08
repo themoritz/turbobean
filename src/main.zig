@@ -25,11 +25,7 @@ pub fn myLogFn(
 ) void {
     const scope_prefix = switch (scope) {
         .default => "",
-        .tardy,
-        .@"tardy/runtime",
-        .@"tardy/aio",
-        .@"tardy/aio/kqueue",
-        => if (@intFromEnum(level) <= @intFromEnum(std.log.Level.err))
+        .watcher => if (@intFromEnum(level) <= @intFromEnum(std.log.Level.warn))
             " (" ++ @tagName(scope) ++ ")"
         else
             return,
@@ -85,7 +81,7 @@ pub fn main() !void {
     }
 
     if (std.mem.eql(u8, args[2], "--server")) {
-        try server.run(alloc, &project);
+        try server.loop(alloc, &project);
         return;
     }
 

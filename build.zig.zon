@@ -12,10 +12,6 @@
             .url = "git+https://github.com/zigster64/zts?ref=main#a58ea25255232ff04f63cfb25fd44a5494ef1a84",
             .hash = "zts-0.14.1-AAAAABazAgAWx8_iVDidfnwfB9M4EtnVzUfqgdmw6qjU",
         },
-        .zzz = .{
-            .url = "git+https://github.com/tardy-org/zzz?ref=main#18ec7f1129ce4d0573b7c67f011b4d05c7b195d4",
-            .hash = "zzz-0.3.0-4HoaJrBQAgCXB_66nre0nvYZmAXMxj__gS8sFjpR68Hs",
-        },
     },
     .paths = .{
         "build.zig",

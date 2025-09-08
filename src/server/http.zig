@@ -131,7 +131,7 @@ test Query {
 
 const QueryPararms = std.StringHashMap([]const u8);
 
-const ParsedRequest = struct {
+pub const ParsedRequest = struct {
     path: []const u8,
     params: QueryPararms,
 

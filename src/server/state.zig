@@ -1,6 +1,6 @@
 const std = @import("std");
 const log = std.log.scoped(.state);
-const Project = @import("project.zig").Project;
+const Project = @import("../project.zig");
 const Self = @This();
 const Uri = @import("../Uri.zig");
 const Watcher = @import("../Watcher.zig");
@@ -15,7 +15,7 @@ project_rwlock: std.Thread.RwLock = .{},
 project: *Project,
 
 /// Does not take ownership of the project.
-pub fn init(alloc: std.mem.Allocator, project: *Project) Self {
+pub fn init(alloc: std.mem.Allocator, project: *Project) !*Self {
     const self = try alloc.create(Self);
     errdefer alloc.destroy(self);
     self.* = .{
@@ -23,6 +23,12 @@ pub fn init(alloc: std.mem.Allocator, project: *Project) Self {
         .watcher = try Watcher.init(Self, self, alloc),
         .project = project,
     };
+
+    for (project.uris.items) |uri| {
+        try self.watcher.addFile(uri.absolute());
+    }
+    try self.watcher.start();
+
     return self;
 }
 
@@ -32,7 +38,7 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn onChange(self: *Self, path: []const u8) void {
-    log.debug("Watcher callback tiggered", .{});
+    log.debug("File changed: {s}", .{path});
 
     self.updateProject(path) catch |err| {
         log.err("Failed to update project: {s}", .{@errorName(err)});
@@ -40,14 +46,6 @@ pub fn onChange(self: *Self, path: []const u8) void {
     };
 
     self.broadcast.publishVersion();
-}
-
-pub fn start(self: *Self) !void {
-    try self.watcher.start();
-}
-
-pub fn addFile(self: *Self, path: []const u8) !void {
-    try self.watcher.addFile(path);
 }
 
 pub fn acquireProject(self: *Self) void {
@@ -59,7 +57,7 @@ pub fn releaseProject(self: *Self) void {
 }
 
 fn updateProject(self: *Self, path: []const u8) !void {
-    const uri = try Uri.from_absolute(self.alloc, path);
+    var uri = try Uri.from_absolute(self.alloc, path);
     defer uri.deinit(self.alloc);
     const source = try uri.load_nullterminated(self.alloc);
     {
