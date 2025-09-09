@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const zts = @import("zts");
 const Project = @import("project.zig");
 const journal = @import("server/journal.zig");
-const State = @import("server/State.zig");
+const State = @import("./server/State.zig");
 const http = @import("server/http.zig");
 
 var running: std.atomic.Value(bool) = .init(true);
