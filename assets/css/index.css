@@ -80,7 +80,11 @@ content {
 }
 
 .journal .row .special {
-  background-color: #c4d6ff !important;
+  background-color: hsl(222deg 100% 88%) !important;
+}
+
+.journal .row .flagged {
+  background-color: hsl(22deg 100% 88%) !important;
 }
 
 .journal .row .payee-narration {

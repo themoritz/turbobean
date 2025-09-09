@@ -159,6 +159,10 @@ fn render(
                             try zts.print(t, "transaction", .{
                                 .date = entry.date,
                                 .flag = tx.flag.slice,
+                                .highlight = switch (tx.flag.slice[0]) {
+                                    '!' => "flagged",
+                                    else => "",
+                                },
                             }, out);
 
                             if (tx.payee) |payee| {
