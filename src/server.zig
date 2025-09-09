@@ -23,7 +23,7 @@ pub fn loop(alloc: std.mem.Allocator, project: *Project) !void {
         var net_server = try address.listen(.{ .reuse_address = true });
         defer net_server.deinit();
 
-        std.debug.print("Listening on {any}\n", .{address});
+        std.log.info("Listening on {any}", .{address});
 
         while (running.load(.seq_cst)) {
             const conn = try net_server.accept();
@@ -33,7 +33,7 @@ pub fn loop(alloc: std.mem.Allocator, project: *Project) !void {
             std.Thread.sleep(1_000_000);
         }
 
-        std.debug.print("Server stopped, waiting for workers...\n", .{});
+        std.log.info("Server stopped, waiting for workers...", .{});
     }
 
     for (threads.items) |thread| thread.join();
@@ -51,7 +51,6 @@ fn handle_conn(
     var read_buffer: [8096]u8 = undefined;
     var server = std.http.Server.init(conn, &read_buffer);
 
-    std.debug.print("Request \n", .{});
     var req = server.receiveHead() catch |err| {
         switch (err) {
             error.HttpConnectionClosing => {},

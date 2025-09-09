@@ -93,7 +93,7 @@ fn threadMain(self: *Self) !void {
                 0,
                 changelist[@intCast(count)..].ptr,
                 remain,
-                null,
+                &.{ .sec = 0, .nsec = 100_000 },
             );
 
             count += extra;
