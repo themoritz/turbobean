@@ -546,6 +546,7 @@ test "cost weight" {
         .units = Number.fromInt(10),
         .cost = Cost{
             .price = Number.fromInt(10),
+            .currency = "USD",
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
@@ -554,6 +555,7 @@ test "cost weight" {
         .units = Number.fromInt(10),
         .cost = Cost{
             .price = Number.fromInt(15),
+            .currency = "USD",
             .date = try Date.fromSlice("2025-01-02"),
             .label = null,
         },
@@ -562,6 +564,7 @@ test "cost weight" {
         .units = Number.fromInt(-15),
         .cost = Cost{
             .price = Number.fromInt(30),
+            .currency = "USD",
             .date = try Date.fromSlice("2025-01-03"),
             .label = null,
         },
@@ -583,6 +586,7 @@ test "cross line" {
         .units = Number.fromInt(-1),
         .cost = Cost{
             .price = Number.fromInt(10),
+            .currency = "USD",
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
@@ -591,6 +595,7 @@ test "cross line" {
         .units = Number.fromInt(2),
         .cost = Cost{
             .price = Number.fromInt(20),
+            .currency = "USD",
             .date = try Date.fromSlice("2025-01-03"),
             .label = null,
         },
@@ -607,7 +612,7 @@ test "combine" {
     defer plain.deinit();
     var lots = try LotsInventory.init(
         std.testing.allocator,
-        .{ .method = .fifo, .cost_currency = "NZD" },
+        .fifo,
         null,
     );
     defer lots.deinit();
@@ -616,18 +621,20 @@ test "combine" {
         .units = Number.fromInt(1),
         .cost = Cost{
             .price = Number.fromInt(10),
+            .currency = "USD",
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
-    }, "NZD", null);
+    }, null);
     _ = try lots.book("EUR", Lot{
         .units = Number.fromInt(2),
         .cost = Cost{
             .price = Number.fromInt(10),
+            .currency = "NZD",
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
-    }, "NZD", null);
+    }, null);
     var plain_sum = try plain.summary(std.testing.allocator);
     var lots_sum = try lots.summary(std.testing.allocator);
     defer plain_sum.deinit();
@@ -652,7 +659,7 @@ test "plain empty" {
 test "lots empty" {
     var inv = try LotsInventory.init(
         std.testing.allocator,
-        .{ .method = .fifo, .cost_currency = "NZD" },
+        .fifo,
         null,
     );
     defer inv.deinit();
@@ -662,19 +669,21 @@ test "lots empty" {
         .units = Number.fromInt(1),
         .cost = Cost{
             .price = Number.fromInt(10),
+            .currency = "NZD",
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
-    }, "NZD", null);
+    }, null);
     try std.testing.expect(!inv.isEmpty());
     _ = try inv.book("USD", Lot{
         .units = Number.fromInt(-1),
         .cost = Cost{
             .price = Number.fromInt(10),
+            .currency = "NZD",
             .date = try Date.fromSlice("2025-01-02"),
             .label = null,
         },
-    }, "NZD", null);
+    }, null);
     try std.testing.expect(inv.isEmpty());
 }
 

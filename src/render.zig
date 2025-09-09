@@ -85,15 +85,13 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
                     try r.slice(r.data.currencies.items[i]);
                 }
             }
-            if (open.booking) |booking| {
+            if (open.booking_method) |method| {
                 try r.space();
-                try r.slice(switch (booking.method) {
+                try r.slice(switch (method) {
                     .fifo => "\"FIFO\"",
                     .lifo => "\"LIFO\"",
                     .strict => "\"STRICT\"",
                 });
-                try r.space();
-                try r.slice(booking.cost_currency);
             }
         },
         .close => |close| {

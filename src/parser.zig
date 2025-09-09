@@ -832,12 +832,12 @@ test "cost spec" {
 
 test "open" {
     try testRoundtrip(
-        \\1985-08-17 open Assets:Foo USD,EUR "STRICT" NZD
+        \\1985-08-17 open Assets:Foo USD,EUR "STRICT"
         \\  a: "Yes"
         \\
         \\1985-09-24 open Assets:Bar NZD
         \\
-        \\1985-09-24 open Assets:Bar "FIFO" NZD
+        \\1985-09-24 open Assets:Bar "FIFO"
         \\
     );
 }
@@ -877,7 +877,7 @@ test "balance" {
         \\1985-08-17 balance Assets:Foo 0.0 USD
         \\  a: "Yes"
         \\
-        \\1985-09-24 balance Assets:Bar 0.10 ~ 0.0001 EUR
+        \\1985-09-24 balance Assets:Bar 0.10 ~ 0.01 EUR
         \\
     );
 }
