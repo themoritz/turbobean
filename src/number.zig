@@ -157,26 +157,14 @@ pub const Number = struct {
         if (precision > 0) {
             try writer.writeByte('.');
 
-            var digits: [64]u8 = undefined;
-            var temp_int = decimal_part;
-            var i: usize = 0;
+            // Scale decimal_part to match the requested precision
+            const scaled_decimal_part = decimal_part * pow10(@intCast(precision - rounded.precision));
 
-            while (temp_int > 0) {
-                digits[i] = @intCast(@rem(temp_int, 10) + '0');
-                temp_int = @divFloor(temp_int, 10);
-                i += 1;
-            }
-
-            var digit_count: usize = 0;
-            while (i > 0 and digit_count < precision) {
-                i -= 1;
-                try writer.writeByte(digits[i]);
-                digit_count += 1;
-            }
-
-            while (digit_count < precision) {
-                try writer.writeByte('0');
-                digit_count += 1;
+            // Write decimal digits from most to least significant
+            for (0..precision) |digit_pos| {
+                const place_value = pow10(@intCast(precision - 1 - digit_pos));
+                const digit = @rem(@divFloor(scaled_decimal_part, place_value), 10);
+                try writer.writeByte(@intCast(digit + '0'));
             }
         }
     }
@@ -319,12 +307,14 @@ test Number {
     try std.testing.expect(Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.16)));
     try std.testing.expect(Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.145)));
     try std.testing.expect(!Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.135)));
+}
 
-    // Rounding
+test "rounding" {
     try std.testing.expectEqual(Number.fromFloat(1.123).roundTo(2), Number.fromFloat(1.12));
     try std.testing.expectEqual(Number.fromFloat(1.99).roundTo(1), Number.fromFloat(2.0));
+}
 
-    // format
+test "format" {
     try testFormat(Number.fromFloat(1234567.89), "1,234,567.89");
     try testFormat(Number.fromFloat(42.5), "42.50");
     try testFormat(Number.fromInt(1000), "1,000.00");
@@ -332,6 +322,8 @@ test Number {
     try testFormat(Number.fromInt(-10), "-10.00");
     try testFormat(Number.fromFloat(3.199), "3.20");
     try testFormat(Number.fromFloat(-4.999), "-5.00");
+    try testFormat(Number.fromFloat(1.01), "1.01");
+    try testFormat(Number.fromFloat(0.01), "0.01");
 }
 
 fn testFormat(num: Number, expected: []const u8) !void {
