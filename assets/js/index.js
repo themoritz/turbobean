@@ -119,7 +119,7 @@ document.addEventListener('alpine:init', () => {
         const margin = {
             top: 20,
             right: 30,
-            bottom: 50,
+            bottom: 55,
             left: 50
         };
 
@@ -130,6 +130,9 @@ document.addEventListener('alpine:init', () => {
         const yGroup = svg.append("g").attr("class", "mono");
 
         const chart = svg.append("g");
+
+        // Legend group
+        const legend = svg.append("g").attr("class", "legend");
 
         // Grid lines group
         const grid = svg.append("g").attr("class", "grid");
@@ -208,7 +211,10 @@ document.addEventListener('alpine:init', () => {
                     updateCurrency(currency, colorScale(currency), chart, dataByCurrency.get(currency), x, y, t);
                 });
 
-                const circles = d3.selectAll("circle");
+                // Update legend
+                updateLegend(legend, width, height, currencies, colorScale);
+
+                const circles = d3.selectAll(".circle");
 
                 xGroup
                     .transition(t)
@@ -299,6 +305,48 @@ document.addEventListener('alpine:init', () => {
         }
     });
 });
+
+function updateLegend(legend, width, height, currencies, colorScale) {
+    const legendItemHeight = 20;
+    const legendItemSpacing = 5;
+    const legendItemWidth = 60;
+    const circleRadius = 4;
+    const textOffset = 15;
+
+    // Clear existing legend
+    legend.selectAll("*").remove();
+
+    // Position legend at top right
+    legend.attr("transform", `translate(${legendItemSpacing}, ${height + 25})`);
+
+    currencies.forEach((currency, i) => {
+        const legendItem = legend
+            .append("g")
+            .attr("class", "legend-item")
+            .attr("transform", `translate(${i * (legendItemWidth + legendItemSpacing)}, 0)`);
+
+        // Add colored circle
+        legendItem
+            .append("circle")
+            .attr("cx", circleRadius)
+            .attr("cy", legendItemHeight / 2)
+            .attr("r", circleRadius)
+            .attr("fill", colorScale(currency))
+            .attr("stroke", colorScale(currency))
+            .attr("stroke-width", 1);
+
+        // Add currency label
+        legendItem
+            .append("text")
+            .attr("x", textOffset)
+            .attr("y", legendItemHeight / 2)
+            .attr("dy", "0.35em")
+            .attr("font-family", "Fira Sans, sans-serif")
+            .attr("font-size", "12px")
+            .attr("fill", "currentColor")
+            .text(currency);
+    });
+}
 
 function updateCurrency(currency, color, chart, data, x, y, t) {
     var desaturated = d3.hsl(color);
