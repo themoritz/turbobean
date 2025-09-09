@@ -10,11 +10,12 @@ body {
   height: 100svh;
 
   display: grid;
-  grid-template-columns: 150px 1fr;
-  grid-template-rows: 50px 1fr;
+  grid-template-columns: 1fr;
+  grid-template-rows: 50px 0fr 1fr;
   grid-template-areas:
-    'header header'
-    'nav    content';
+    'header'
+    'nav'
+    'content';
 }
 
 header {
@@ -84,7 +85,7 @@ content {
 }
 
 .journal .row .flagged {
-  background-color: hsl(22deg 100% 88%) !important;
+  background-color: hsl(22deg 100% 80%) !important;
 }
 
 .journal .row .payee-narration {

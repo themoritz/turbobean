@@ -126,7 +126,7 @@ document.addEventListener('alpine:init', () => {
         const svg = d3.select("#d3 svg");
         const tooltip = d3.select("#d3 .tooltip");
 
-        const xGroup = svg.append("g");
+        const xGroup = svg.append("g").attr("class", "sans");
         const yGroup = svg.append("g").attr("class", "mono");
 
         const chart = svg.append("g");
@@ -135,12 +135,12 @@ document.addEventListener('alpine:init', () => {
         const grid = svg.append("g").attr("class", "grid");
         const hLine = grid
             .append("line")
-            .attr("stroke", "hsl(0deg 50% 70% / 0.8)")
+            .attr("stroke", "hsl(0deg 0% 70% / 0.8)")
             .attr("stroke-width", "1")
             .style("display", "none");
         const vLine = grid
             .append("line")
-            .attr("stroke", "hsl(0deg 50% 70% / 0.8)")
+            .attr("stroke", "hsl(0deg 0% 70% / 0.8)")
             .attr("stroke-width", "1")
             .style("display", "none");
 
@@ -168,6 +168,15 @@ document.addEventListener('alpine:init', () => {
                     })
                 });
 
+                // Group data by currency
+                const dataByCurrency = d3.group(data, d => d.currency);
+                const currencies = Array.from(dataByCurrency.keys());
+
+                // Create color scale for currencies
+                const colorScale = d3.scaleOrdinal()
+                    .domain(currencies)
+                    .range(d3.schemeSet2);
+
                 const width = document.querySelector("#d3 svg").clientWidth;
                 const height = width / 5;
 
@@ -189,87 +198,17 @@ document.addEventListener('alpine:init', () => {
 
                 const t = d3.transition().duration(300);
 
-                chart
-                    .selectAll(".vertical")
-                    .data(data.slice(1), (d) => d.hash) // From second point onward
-                    .join(
-                        enter => enter
-                            .append("line")
-                            .attr("class", "vertical")
-                            .attr("stroke", "hsl(0deg 0% 90%")
-                            .attr("stroke-width", 1)
-                            .attr("x1", (d, _) => x(d.date))
-                            .attr("y1", (_, i) => y(data[i].balance)) // Previous y
-                            .attr("x2", (d, _) => x(d.date))
-                            .attr("y2", (d, _) => y(d.balance))
-                            .style("opacity", 0)
-                            .transition(t)
-                            .style("opacity", 1),
-                        update => update
-                            .transition(t)
-                            .attr("x1", (d, _) => x(d.date))
-                            .attr("y1", (_, i) => y(data[i].balance)) // Previous y
-                            .attr("x2", (d, _) => x(d.date))
-                            .attr("y2", (d, _) => y(d.balance)),
-                        exit => exit
-                            .transition(t)
-                            .style("opacity", 0)
-                            .remove(),
-                    );
+                // Hacky way to remove all lines
+                // TODO: Only do this when we look at a new account
+                d3.selectAll('.vertical').remove();
+                d3.selectAll('.horizontal').remove();
+                d3.selectAll('.circle').remove();
 
-                chart
-                    .selectAll(".horizontal")
-                    .data(data.slice(0, -1), (d) => d.hash) // One less than points
-                    .join(
-                        enter => enter
-                            .append("line")
-                            .attr("class", "horizontal")
-                            .attr("stroke", "black")
-                            .attr("stroke-width", 1)
-                            .attr("x1", (d, _) => x(d.date))
-                            .attr("y1", (d, _) => y(d.balance))
-                            .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
-                            .attr("y2", (d, _) => y(d.balance))
-                            .style("opacity", 0)
-                            .transition(t)
-                            .style("opacity", 1),
-                        update => update
-                            .transition(t)
-                            .attr("x1", (d, _) => x(d.date))
-                            .attr("y1", (d, _) => y(d.balance))
-                            .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
-                            .attr("y2", (d, _) => y(d.balance)),
-                        exit => exit
-                            .transition(t)
-                            .style("opacity", 0)
-                            .remove(),
-                    );
+                currencies.forEach((currency) => {
+                    updateCurrency(currency, colorScale(currency), chart, dataByCurrency.get(currency), x, y, t);
+                });
 
-                // Circles at each point
-                const circles = chart
-                    .selectAll("circle")
-                    .data(data, (d) => d.hash)
-                    .join(
-                        enter => enter
-                            .append("circle")
-                            .attr("stroke", "black")
-                            .attr("stroke-width", 1)
-                            .attr("fill", "black")
-                            .attr("r", 2)
-                            .attr("cx", (d) => x(d.date))
-                            .attr("cy", (d) => y(d.balance))
-                            .style("opacity", 0)
-                            .transition(t)
-                            .style("opacity", 1),
-                        update => update
-                            .transition(t)
-                            .attr("cx", (d) => x(d.date))
-                            .attr("cy", (d) => y(d.balance)),
-                        exit => exit
-                            .transition(t)
-                            .style("opacity", 0)
-                            .remove()
-                    );
+                const circles = d3.selectAll("circle");
 
                 xGroup
                     .transition(t)
@@ -279,6 +218,7 @@ document.addEventListener('alpine:init', () => {
                     .call(d3.axisLeft(y).tickFormat(d3.format("~s")));
 
                 // Invisible rectangle for mouse events
+                svg.select("rect").remove();
                 svg
                     .append("rect")
                     .attr("width", width)
@@ -304,7 +244,7 @@ document.addEventListener('alpine:init', () => {
                             }
                         });
 
-                        circles.attr("fill", "black");
+                        circles.attr("fill", (d) => colorScale(d.currency));
 
                         if (minDist <= 20) {
                             const px = x(closest.date);
@@ -339,7 +279,7 @@ document.addEventListener('alpine:init', () => {
                         tooltip.style("display", "none");
                         hLine.style("display", "none");
                         vLine.style("display", "none");
-                        circles.attr("fill", "black");
+                        circles.attr("fill", (d) => colorScale(d.currency));
                     });
             }
         }
@@ -359,3 +299,97 @@ document.addEventListener('alpine:init', () => {
         }
     });
 });
+
+function updateCurrency(currency, color, chart, data, x, y, t) {
+    var desaturated = d3.hsl(color);
+    desaturated.s = 0.0;
+    desaturated.l += 0.1;
+
+    const lineWidth = 1.5;
+    const circleRadius = 2.5;
+
+    chart
+        .selectAll(`.vertical-${currency}`)
+        .data(data.slice(1), (d) => d.hash) // From second point onward
+        .join(
+            enter => enter
+                .append("line")
+                .attr("class", `vertical vertical-${currency}`)
+                .attr("stroke", desaturated)
+                .attr("stroke-width", lineWidth)
+                .attr("stroke-dasharray", "1.5,3")
+                .attr("x1", (d, _) => x(d.date))
+                .attr("y1", (_, i) => y(data[i].balance)) // Previous y
+                .attr("x2", (d, _) => x(d.date))
+                .attr("y2", (d, _) => y(d.balance))
+                .style("opacity", 0)
+                .transition(t)
+                .style("opacity", 1),
+            update => update
+                .transition(t)
+                .attr("x1", (d, _) => x(d.date))
+                .attr("y1", (_, i) => y(data[i].balance)) // Previous y
+                .attr("x2", (d, _) => x(d.date))
+                .attr("y2", (d, _) => y(d.balance)),
+            exit => exit
+                .transition(t)
+                .style("opacity", 0)
+                .remove(),
+        );
+
+    chart
+        .selectAll(`.horizontal-${currency}`)
+        .data(data.slice(0, -1), (d) => d.hash) // One less than points
+        .join(
+            enter => enter
+                .append("line")
+                .attr("class", `horizontal horizontal-${currency}`)
+                .attr("stroke", color)
+                .attr("stroke-width", lineWidth)
+                .attr("x1", (d, _) => x(d.date))
+                .attr("y1", (d, _) => y(d.balance))
+                .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
+                .attr("y2", (d, _) => y(d.balance))
+                .style("opacity", 0)
+                .transition(t)
+                .style("opacity", 1),
+            update => update
+                .transition(t)
+                .attr("x1", (d, _) => x(d.date))
+                .attr("y1", (d, _) => y(d.balance))
+                .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
+                .attr("y2", (d, _) => y(d.balance)),
+            exit => exit
+                .transition(t)
+                .style("opacity", 0)
+                .remove(),
+        );
+
+    // Circles at each point
+    chart
+        .selectAll(`circle-${currency}`)
+        .data(data, (d) => d.hash)
+        .join(
+            enter => enter
+                .append("circle")
+                .attr("class", `circle circle-${currency}`)
+                .attr("stroke", color)
+                .attr("stroke-width", lineWidth)
+                .attr("fill", color)
+                .attr("r", circleRadius)
+                .attr("cx", (d) => x(d.date))
+                .attr("cy", (d) => y(d.balance))
+                .style("opacity", 0)
+                .transition(t)
+                .style("opacity", 1),
+            update => update
+                .transition(t)
+                .attr("cx", (d) => x(d.date))
+                .attr("cy", (d) => y(d.balance)),
+            exit => exit
+                .transition(t)
+                .style("opacity", 0)
+                .remove()
+        );
+
+}

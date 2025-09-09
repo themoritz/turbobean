@@ -28,6 +28,10 @@
         #d3 .mono {
             font-family: "Fira Mono", monospace;
         }
+
+        #d3 .sans {
+            font-family: "Fira Sans", sans-serif;
+        }
     </style>
 </head>
 
@@ -36,7 +40,7 @@
         <div id="spinner"
             class="htmx-indicator h-4 w-4 animate-spin rounded-full border-3 border-solid border-sky-500 border-r-transparent">
         </div>
-        <div>
+        <div style="display: flex; gap: 5px; align-items: center">
             <label for="startDate">Start Date:</label>
             <input type="date" id="startDate" x-model="startDate">
             <label for="endDate">End Date:</label>
@@ -44,8 +48,7 @@
         </div>
     </header>
     <nav>
-        Nav
-        <form @submit.prevent="handleFormSubmit()">
+        <form @submit.prevent="handleFormSubmit()" style="display: flex; gap: 5px">
             <input type="text" x-model="account" placeholder="Account.."><br />
             <button type="submit">Go</button>
         </form>
