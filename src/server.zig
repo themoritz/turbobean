@@ -6,28 +6,37 @@ const journal = @import("server/journal.zig");
 const State = @import("server/State.zig");
 const http = @import("server/http.zig");
 
-pub fn loop(alloc: std.mem.Allocator, project: *Project) !void {
-    const address = try std.net.Address.parseIp("0.0.0.0", 8080);
-    var net_server = try address.listen(.{ .reuse_address = true });
-    defer net_server.deinit();
+var running: std.atomic.Value(bool) = .init(true);
 
-    std.debug.print("Listening on {any}\n", .{address});
+pub fn loop(alloc: std.mem.Allocator, project: *Project) !void {
+    var threads = std.ArrayList(std.Thread).init(alloc);
+    defer threads.deinit();
 
     const state = try State.init(alloc, project);
-    const assets = try std.fs.cwd().openDir("assets", .{});
+    defer state.deinit();
 
-    while (true) {
-        const conn = try net_server.accept();
-        _ = try std.Thread.spawn(.{}, handle_conn, .{ alloc, conn, state, assets });
+    var assets = try std.fs.cwd().openDir("assets", .{});
+    defer assets.close();
+
+    {
+        const address = try std.net.Address.parseIp("0.0.0.0", 8080);
+        var net_server = try address.listen(.{ .reuse_address = true });
+        defer net_server.deinit();
+
+        std.debug.print("Listening on {any}\n", .{address});
+
+        while (running.load(.seq_cst)) {
+            const conn = try net_server.accept();
+            const thread = try std.Thread.spawn(.{}, handle_conn, .{ alloc, conn, state, assets });
+            try threads.append(thread);
+            // Wait 1 ms in case this connection is a shutdown request.
+            std.Thread.sleep(1_000_000);
+        }
+
+        std.debug.print("Server stopped, waiting for workers...\n", .{});
     }
 
-    // var router = try http.Router.init(alloc, &.{
-    //     http.Route.init("/").get({}, index_handler).layer(),
-    //     http.Route.init("/journal").get({}, index_handler).layer(),
-    //     http.Route.init("/sse/journal").get(&state, journal.handler).layer(),
-    //     http.FsDir.serve("/static", static_dir),
-    // }, .{});
-    // defer router.deinit(alloc);
+    for (threads.items) |thread| thread.join();
 }
 
 fn handle_conn(
@@ -36,36 +45,41 @@ fn handle_conn(
     state: *State,
     assets: std.fs.Dir,
 ) !void {
-    var read_buffer: [8096]u8 = undefined;
+    // Don't reuse connection because we don't want to block forever on receiveHead.
+    defer conn.stream.close();
 
+    var read_buffer: [8096]u8 = undefined;
     var server = std.http.Server.init(conn, &read_buffer);
 
-    while (true) {
-        var req = server.receiveHead() catch |err| {
-            switch (err) {
-                error.HttpConnectionClosing => {},
-                else => std.log.warn("Error while accepting HTTP request: {any}", .{err}),
-            }
-            break;
-        };
-
-        std.log.info("Request: {s} {s}", .{ @tagName(req.head.method), req.head.target });
-
-        switch (req.head.method) {
-            .GET => {
-                if (std.mem.eql(u8, req.head.target, "/") or std.mem.startsWith(u8, req.head.target, "/journal")) {
-                    try index_handler(alloc, &req);
-                } else if (std.mem.startsWith(u8, req.head.target, "/sse/journal")) {
-                    journal.handler(alloc, &req, state) catch |err| switch (err) {
-                        error.BrokenPipe => break,
-                        else => return err,
-                    };
-                } else {
-                    try static_handler(alloc, &req, assets);
-                }
-            },
-            else => try req.respond("Method not allowed\n", .{ .status = .method_not_allowed }),
+    std.debug.print("Request \n", .{});
+    var req = server.receiveHead() catch |err| {
+        switch (err) {
+            error.HttpConnectionClosing => {},
+            else => std.log.warn("Error while accepting HTTP request: {any}", .{err}),
         }
+        return;
+    };
+
+    std.log.info("Request: {s} {s}", .{ @tagName(req.head.method), req.head.target });
+
+    switch (req.head.method) {
+        .GET => {
+            if (std.mem.eql(u8, req.head.target, "/") or std.mem.startsWith(u8, req.head.target, "/journal")) {
+                try index_handler(alloc, &req);
+            } else if (std.mem.eql(u8, req.head.target, "/shutdown")) {
+                running.store(false, .seq_cst);
+                state.broadcast.stop();
+                try req.respond("Shutdown initiated\n", .{ .status = .ok });
+            } else if (std.mem.startsWith(u8, req.head.target, "/sse/journal")) {
+                journal.handler(alloc, &req, state) catch |err| switch (err) {
+                    error.BrokenPipe => {},
+                    else => return err,
+                };
+            } else {
+                try static_handler(alloc, &req, assets);
+            }
+        },
+        else => try req.respond("Method not allowed\n", .{ .status = .method_not_allowed }),
     }
 }
 
@@ -113,6 +127,8 @@ fn static_handler(alloc: Allocator, req: *std.http.Server.Request, assets: std.f
         const etag_hash = hash.final();
 
         const calc_etag = try std.fmt.allocPrint(alloc, "\"{d}\"", .{etag_hash});
+        defer alloc.free(calc_etag);
+
         try response_headers.append(.{ .name = "ETag", .value = calc_etag });
 
         if (getHeader(req, "If-None-Match")) |etag| {

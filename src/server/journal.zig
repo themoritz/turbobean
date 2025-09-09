@@ -92,10 +92,9 @@ pub fn handler(alloc: std.mem.Allocator, req: *std.http.Server.Request, state: *
         html.clearRetainingCapacity();
         json.clearRetainingCapacity();
 
-        listener.waitForNewVersion();
+        if (!listener.waitForNewVersion()) break;
     }
-
-    return .responded;
+    try response.end();
 }
 
 const PlotPoint = struct {
