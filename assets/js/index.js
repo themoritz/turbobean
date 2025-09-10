@@ -192,16 +192,11 @@ document.addEventListener('alpine:init', () => {
                     .nice()
                     .range([height, 0]);
 
-                const t = d3.transition().duration(300);
-
-                // Hacky way to remove all lines
-                // TODO: Only do this when we look at a new account
                 d3.selectAll('.vertical').remove();
                 d3.selectAll('.horizontal').remove();
                 d3.selectAll('.circle').remove();
-
                 currencies.forEach((currency) => {
-                    updateCurrency(currency, colorScale(currency), chart, dataByCurrency.get(currency), x, y, t);
+                    updateCurrency(currency, colorScale(currency), chart, dataByCurrency.get(currency), x, y);
                 });
 
                 // Update legend
@@ -210,10 +205,9 @@ document.addEventListener('alpine:init', () => {
                 const circles = d3.selectAll(".circle");
 
                 xGroup
-                    .transition(t)
                     .call(d3.axisBottom(x));
 
-                yGroup.transition(t)
+                yGroup
                     .call(d3.axisLeft(y).tickFormat(d3.format("~s")));
 
                 // Invisible rectangle for mouse events
@@ -341,7 +335,7 @@ function updateLegend(legend, width, height, currencies, colorScale) {
     });
 }
 
-function updateCurrency(currency, color, chart, data, x, y, t) {
+function updateCurrency(currency, color, chart, data, x, y) {
     var desaturated = d3.hsl(color);
     desaturated.s = 0.0;
     desaturated.l += 0.1;
@@ -352,85 +346,41 @@ function updateCurrency(currency, color, chart, data, x, y, t) {
     chart
         .selectAll(`.vertical-${currency}`)
         .data(data.slice(1), (d) => d.hash) // From second point onward
-        .join(
-            enter => enter
-                .append("line")
-                .attr("class", `vertical vertical-${currency}`)
-                .attr("stroke", desaturated)
-                .attr("stroke-width", lineWidth)
-                .attr("stroke-dasharray", "1.5,3")
-                .attr("x1", (d, _) => x(d.date))
-                .attr("y1", (_, i) => y(data[i].balance)) // Previous y
-                .attr("x2", (d, _) => x(d.date))
-                .attr("y2", (d, _) => y(d.balance))
-                .style("opacity", 0)
-                .transition(t)
-                .style("opacity", 1),
-            update => update
-                .transition(t)
-                .attr("x1", (d, _) => x(d.date))
-                .attr("y1", (_, i) => y(data[i].balance)) // Previous y
-                .attr("x2", (d, _) => x(d.date))
-                .attr("y2", (d, _) => y(d.balance)),
-            exit => exit
-                .transition(t)
-                .style("opacity", 0)
-                .remove(),
-        );
+        .enter()
+        .append("line")
+        .attr("class", `vertical vertical-${currency}`)
+        .attr("stroke", desaturated)
+        .attr("stroke-width", lineWidth)
+        .attr("stroke-dasharray", "1.5,3")
+        .attr("x1", (d, _) => x(d.date))
+        .attr("y1", (_, i) => y(data[i].balance)) // Previous y
+        .attr("x2", (d, _) => x(d.date))
+        .attr("y2", (d, _) => y(d.balance));
 
     chart
         .selectAll(`.horizontal-${currency}`)
-        .data(data.slice(0, -1), (d) => d.hash) // One less than points
-        .join(
-            enter => enter
-                .append("line")
-                .attr("class", `horizontal horizontal-${currency}`)
-                .attr("stroke", color)
-                .attr("stroke-width", lineWidth)
-                .attr("x1", (d, _) => x(d.date))
-                .attr("y1", (d, _) => y(d.balance))
-                .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
-                .attr("y2", (d, _) => y(d.balance))
-                .style("opacity", 0)
-                .transition(t)
-                .style("opacity", 1),
-            update => update
-                .transition(t)
-                .attr("x1", (d, _) => x(d.date))
-                .attr("y1", (d, _) => y(d.balance))
-                .attr("x2", (_, i) => x(data[i + 1].date)) // Next x
-                .attr("y2", (d, _) => y(d.balance)),
-            exit => exit
-                .transition(t)
-                .style("opacity", 0)
-                .remove(),
-        );
+        .data(data, (d) => d.hash) // One less than points
+        .enter()
+        .append("line")
+        .attr("class", `horizontal horizontal-${currency}`)
+        .attr("stroke", color)
+        .attr("stroke-width", lineWidth)
+        .attr("x1", (d, _) => x(d.date))
+        .attr("y1", (d, _) => y(d.balance))
+        .attr("x2", (_, i) => (i < data.length - 1) ? x(data[i + 1].date) : x.range()[1]) // Next x
+        .attr("y2", (d, _) => y(d.balance));
 
     // Circles at each point
     chart
         .selectAll(`circle-${currency}`)
         .data(data, (d) => d.hash)
-        .join(
-            enter => enter
-                .append("circle")
-                .attr("class", `circle circle-${currency}`)
-                .attr("stroke", color)
-                .attr("stroke-width", lineWidth)
-                .attr("fill", color)
-                .attr("r", circleRadius)
-                .attr("cx", (d) => x(d.date))
-                .attr("cy", (d) => y(d.balance))
-                .style("opacity", 0)
-                .transition(t)
-                .style("opacity", 1),
-            update => update
-                .transition(t)
-                .attr("cx", (d) => x(d.date))
-                .attr("cy", (d) => y(d.balance)),
-            exit => exit
-                .transition(t)
-                .style("opacity", 0)
-                .remove()
-        );
-
+        .enter()
+        .append("circle")
+        .attr("class", `circle circle-${currency}`)
+        .attr("stroke", color)
+        .attr("stroke-width", lineWidth)
+        .attr("fill", color)
+        .attr("r", circleRadius)
+        .attr("cx", (d) => x(d.date))
+        .attr("cy", (d) => y(d.balance));
 }
