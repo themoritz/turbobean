@@ -3,6 +3,7 @@
 
 <head>
     <title>Zigcount</title>
+    <meta charset="UTF-8">
     <link rel="icon" href="data:;base64,=">
     <link rel="stylesheet" href="static/css/index.css">
     <script src="//unpkg.com/alpinejs" defer></script>
@@ -35,7 +36,7 @@
     </style>
 </head>
 
-<body x-data="app">
+<body x-data="app" @goto-account.window="establishSSEConnection($event.detail)">
     <header>
         <div id="spinner"
             class="htmx-indicator h-4 w-4 animate-spin rounded-full border-3 border-solid border-sky-500 border-r-transparent">
@@ -46,13 +47,16 @@
             <label for="endDate">End Date:</label>
             <input type="date" id="endDate" x-model="endDate">
         </div>
+        <nav x-data="{ open: false }" @keydown.g="open = true" @keydown.escape="open = false">
+            <div class="nav">
+
+                .nav_account
+                <div class="nav-item" @click="$dispatch('goto-account', '{[account]s}')">Journal: {[account]s}</div>
+
+                .nav_end
+            </div>
+        </nav>
     </header>
-    <nav>
-        <form @submit.prevent="handleFormSubmit()" style="display: flex; gap: 5px">
-            <input type="text" x-model="account" placeholder="Account.."><br />
-            <button type="submit">Go</button>
-        </form>
-    </nav>
     <content>
         <div id="d3" x-data="d3">
             <svg viewBox="0,0 5,1"></svg>

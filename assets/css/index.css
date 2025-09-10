@@ -11,10 +11,9 @@ body {
 
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: 50px 0fr 1fr;
+  grid-template-rows: 150px 1fr;
   grid-template-areas:
     'header'
-    'nav'
     'content';
 }
 
@@ -24,12 +23,15 @@ header {
 }
 
 nav {
-  grid-area: nav;
   padding: 5px;
 }
 
-nav input {
-  width: 100%;
+nav .nav-item {
+  cursor: pointer;
+}
+
+nav .nav-item:hover {
+  color: hsl(222deg 100% 38%);
 }
 
 content {

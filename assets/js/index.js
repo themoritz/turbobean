@@ -84,13 +84,6 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        handleFormSubmit() {
-            const accountValue = this.account.trim();
-            if (accountValue) {
-                this.establishSSEConnection(accountValue);
-            }
-        },
-
         setupPopstateHandler() {
             window.addEventListener('popstate', (event) => {
                 if (event.state && event.state.account) {
@@ -151,7 +144,7 @@ document.addEventListener('alpine:init', () => {
 
             init() {
                 this.$watch('plotData', (newData) => {
-                    if (newData && newData.length > 0) {
+                    if (newData) {
                         this.updateChart(newData);
                     }
                 });

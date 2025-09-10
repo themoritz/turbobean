@@ -1,8 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const zts = @import("zts");
 const Project = @import("project.zig");
 const journal = @import("server/journal.zig");
+const index = @import("server/index.zig");
 const State = @import("server/State.zig");
 const http = @import("server/http.zig");
 
@@ -64,7 +64,7 @@ fn handle_conn(
     switch (req.head.method) {
         .GET => {
             if (std.mem.eql(u8, req.head.target, "/") or std.mem.startsWith(u8, req.head.target, "/journal")) {
-                try index_handler(alloc, &req);
+                try index.handler(alloc, &req, state);
             } else if (std.mem.eql(u8, req.head.target, "/shutdown")) {
                 running.store(false, .seq_cst);
                 state.broadcast.stop();
@@ -80,15 +80,6 @@ fn handle_conn(
         },
         else => try req.respond("Method not allowed\n", .{ .status = .method_not_allowed }),
     }
-}
-
-fn index_handler(alloc: Allocator, req: *std.http.Server.Request) !void {
-    const t = @embedFile("templates/index.html");
-    var body = std.ArrayList(u8).init(alloc);
-    defer body.deinit();
-    try zts.writeHeader(t, body.writer());
-
-    try req.respond(body.items, .{});
 }
 
 fn static_handler(alloc: Allocator, req: *std.http.Server.Request, assets: std.fs.Dir) !void {
