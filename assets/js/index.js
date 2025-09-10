@@ -226,15 +226,19 @@ document.addEventListener('alpine:init', () => {
                         let closest = null;
                         let closestIndex = -1;
                         let minDist = Infinity;
-                        data.forEach((d, i) => {
-                            const px = x(d.date);
-                            const py = y(d.balance);
-                            const dist = Math.sqrt((mx - px) ** 2 + (my - py) ** 2);
-                            if (dist < minDist) {
-                                minDist = dist;
-                                closest = d;
-                                closestIndex = i;
-                            }
+                        let i = 0
+                        currencies.forEach((currency) => {
+                            dataByCurrency.get(currency).forEach((d) => {
+                                const px = x(d.date);
+                                const py = y(d.balance);
+                                const dist = Math.sqrt((mx - px) ** 2 + (my - py) ** 2);
+                                if (dist < minDist) {
+                                    minDist = dist;
+                                    closest = d;
+                                    closestIndex = i;
+                                }
+                                i += 1
+                            });
                         });
 
                         circles.attr("fill", (d) => colorScale(d.currency));
