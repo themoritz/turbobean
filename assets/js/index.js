@@ -282,6 +282,62 @@ document.addEventListener('alpine:init', () => {
         }
     });
 
+    Alpine.data('nav', (items) => ({
+        isOpen: false,
+        query: '',
+        items: items,
+        results: [],
+        index: 0,
+
+        open() {
+            if (this.isOpen) {
+                return;
+            }
+            this.isOpen = true;
+            this.query = '';
+            this.search();
+        },
+
+        close() {
+            this.isOpen = false;
+        },
+
+        search() {
+            const results = fuzzysort.go(this.query, this.items, {
+                all: true,
+                key: 'text',
+                scoreFn: (r) => r.score * r.obj.weight,
+            });
+
+            this.results = results.map((result, i) => ({
+                account: result.obj.target,
+                html: result.highlight('<mark>', '</mark>'),
+                index: i,
+            }));
+
+            this.index = 0;
+            document.querySelector('.results').scrollTop = 0;
+        },
+
+        down() {
+            this.index = (this.index + 1) % this.results.length;
+            this.scrollIntoView();
+        },
+
+        up() {
+            this.index = (this.index - 1 + this.results.length) % this.results.length;
+            this.scrollIntoView();
+        },
+
+        scrollIntoView() {
+            const el = document.querySelectorAll('nav .result')[this.index];
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
+    }));
+
     Alpine.store('txOpen', {
         open: localStorage.getItem('txOpen') ? JSON.parse(localStorage.getItem('txOpen')) : {},
         toggle(index) {

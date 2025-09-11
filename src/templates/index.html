@@ -9,6 +9,7 @@
     <script src="//unpkg.com/alpinejs" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <script src="static/js/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fuzzysort@3.1.0/fuzzysort.min.js"></script>
 
     <style>
         .tooltip {
@@ -47,13 +48,41 @@
             <label for="endDate">End Date:</label>
             <input type="date" id="endDate" x-model="endDate">
         </div>
-        <nav x-data="{ open: false }" @keydown.g="open = true" @keydown.escape="open = false">
-            <div class="nav">
+        <nav @keydown.g.window="open(); $nextTick(() => $refs.input.focus())" x-data="nav([
+                {
+                     target: 'income_statement',
+                     text: 'Income Statement',
+                     weight: 2,
+                },
+                {
+                     target: 'balance_sheet',
+                     text: 'Balance Sheet',
+                     weight: 2,
+                },
 
                 .nav_account
-                <div class="nav-item" @click="$dispatch('goto-account', '{[account]s}')">Journal: {[account]s}</div>
+                {{
+                     target: '{[account]s}',
+                     text: 'Journal — {[account]s}',
+                     weight: 1,
+                }},
 
                 .nav_end
+            ])">
+            <div class="modal" x-show="isOpen" @mouseup.outside="close()">
+                <div class="input">
+                    <input type="text" placeholder="Go to..." x-ref="input" x-model="query" @input="search"
+                        @keydown.escape.prevent="close()" @keydown.down.prevent="down" @keydown.ctrl.n.prevent="down"
+                        @keydown.ctrl.p.prevent="up" @keydown.up.prevent="up"
+                        @keydown.enter.prevent="$dispatch('goto-account', results[index].account); close()">
+                </div>
+                <div class="results">
+                    <template x-for="result in results">
+                        <div class="result" :class="index === result.index ? 'active' : ''"
+                            @mouseover="index = result.index"
+                            @click="$dispatch('goto-account', result.account); close()" x-html="result.html"></div>
+                    </template>
+                </div>
             </div>
         </nav>
     </header>
