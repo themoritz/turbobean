@@ -205,12 +205,8 @@ fn lessThanFn(self: *Self, lhs: SortedEntry, rhs: SortedEntry) bool {
 pub fn pipeline(self: *Self) !void {
     self.errors.clearRetainingCapacity();
     try self.sortEntries();
-
     try self.refreshLspCache();
-
-    if (!self.hasSevereErrors()) {
-        try self.check();
-    }
+    try self.check();
 }
 
 pub fn check(self: *Self) !void {
@@ -346,6 +342,8 @@ pub fn check(self: *Self) !void {
                 }
             },
             .transaction => |tx| {
+                if (tx.dirty) continue;
+
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
                         try self.postInventoryRecovering(
@@ -561,6 +559,8 @@ pub fn accountInventoryUntilLine(
                 }
             },
             .transaction => |tx| {
+                if (tx.dirty) continue;
+
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
                         const posting = data.postings.get(i);
@@ -580,6 +580,8 @@ pub fn accountInventoryUntilLine(
                 }
             },
             .pad => |pad| {
+                if (pad.synthetic_index == null) continue;
+
                 const index = pad.synthetic_index.?;
                 const synthetic_entry = self.synthetic_entries.items[index];
                 const tx = synthetic_entry.payload.transaction;
@@ -640,7 +642,6 @@ pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !vo
     try self.pipeline();
 }
 
-// Assumes balanced transactions and checks passed
 pub fn printTree(self: *Self) !void {
     var tree = try Tree.init(self.alloc);
     defer tree.deinit();
@@ -657,6 +658,8 @@ pub fn printTree(self: *Self) !void {
                 _ = try tree.open(open.account.slice, currencies, open.booking_method);
             },
             .transaction => |tx| {
+                if (tx.dirty) continue;
+
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
                         try tree.postInventory(entry.date, data.postings.get(i));
@@ -664,6 +667,8 @@ pub fn printTree(self: *Self) !void {
                 }
             },
             .pad => |pad| {
+                if (pad.synthetic_index == null) continue;
+
                 const index = pad.synthetic_index.?;
                 const synthetic_entry = self.synthetic_entries.items[index];
                 const tx = synthetic_entry.payload.transaction;

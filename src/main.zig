@@ -67,15 +67,9 @@ pub fn main() !void {
     var project = try Project.load(alloc, first_arg);
     defer project.deinit();
 
-    if (project.hasSevereErrors()) {
-        try project.printErrors();
-        std.process.exit(1);
-    }
+    if (project.hasErrors()) try project.printErrors();
 
     if (args.len < 3) {
-        if (project.hasErrors()) {
-            try project.printErrors();
-        }
         try project.printTree();
         return;
     }

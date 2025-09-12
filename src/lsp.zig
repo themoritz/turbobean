@@ -197,20 +197,6 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         continue :loop;
                     };
 
-                    if (state.project.hasSevereErrors()) {
-                        const result = lsp.types.Hover{
-                            .contents = .{
-                                .MarkupContent = lsp.types.MarkupContent{
-                                    .kind = lsp.types.MarkupKind.plaintext,
-                                    .value = "Please fix errors first",
-                                },
-                            },
-                            .range = tokenRange(account),
-                        };
-                        try transport.any().writeResponse(alloc, request.id, lsp.types.Hover, result, .{});
-                        continue :loop;
-                    }
-
                     if (try state.project.accountInventoryUntilLine(account.slice, uri, position.line)) |inv| {
                         defer {
                             var before = inv.before;

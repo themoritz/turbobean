@@ -401,7 +401,7 @@ function updateCurrency(currency, color, chart, data, x, y) {
     desaturated.l += 0.1;
 
     const lineWidth = 1.5;
-    const circleRadius = 2.5;
+    const circleRadius = 1.5;
 
     chart
         .selectAll(`.vertical-${currency}`)

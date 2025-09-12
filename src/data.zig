@@ -198,6 +198,8 @@ pub const Transaction = struct {
     payee: ?[]const u8,
     narration: ?[]const u8,
     postings: ?Range,
+    /// Set to true in `balance_transactions` in case the transaction can't be balanced.
+    dirty: bool = false,
 };
 
 pub const Range = struct {
@@ -298,9 +300,9 @@ pub fn balanceTransactions(self: *Self) !void {
     var solver = Solver.init(self.alloc);
     defer solver.deinit();
 
-    for (self.entries.items) |entry| {
+    for (self.entries.items) |*entry| {
         switch (entry.payload) {
-            .transaction => |tx| {
+            .transaction => |*tx| {
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
                         const number: *?Number = &self.postings.items(.amount)[i].number;
@@ -328,6 +330,7 @@ pub fn balanceTransactions(self: *Self) !void {
                             error.MultipleSolutions => .tx_multiple_solutions,
                             else => return err,
                         };
+                        tx.dirty = true;
                         try self.addError(entry.main_token, self.uri, tag);
                     };
                 }

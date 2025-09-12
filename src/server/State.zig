@@ -45,6 +45,8 @@ pub fn onChange(self: *Self, path: []const u8) void {
         return;
     };
 
+    self.project.printErrors() catch {};
+
     self.broadcast.publishVersion();
 }
 

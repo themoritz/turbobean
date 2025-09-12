@@ -147,6 +147,8 @@ fn render(
                 }
             },
             .transaction => |tx| {
+                if (tx.dirty) continue;
+
                 if (!isWithinDateRange(entry.date, params.startDate, params.endDate)) continue;
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
