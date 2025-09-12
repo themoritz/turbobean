@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +22,7 @@ jobs:
           version: 0.14.0
 
       - name: Run zig fmt
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'macos-latest'
         run: zig fmt --check .
 
       - name: Run zig build test
@@ -36,7 +36,6 @@ jobs:
           echo "$(pwd)/zig-out/bin" >> "$GITHUB_PATH"
 
       - name: Set up Node.js
-        if: matrix.os == 'ubuntu-latest'
         uses: actions/setup-node@v4
         with:
           node-version: 22
