@@ -228,7 +228,7 @@ fn renderRec(self: *Self, buf: *std.ArrayList(u8), node_index: u32, max_width: u
 }
 
 fn maxWidth(self: *Self) !u32 {
-    return try self.maxWidthRec(0, 0) - 2;
+    return @max(try self.maxWidthRec(0, 0), 2) - 2;
 }
 
 fn maxWidthRec(self: *Self, node_index: u32, depth: u32) !u32 {
@@ -269,6 +269,18 @@ test "tree" {
     try std.testing.expectEqualStrings(expected, rendered);
 }
 
+test "render empty tree" {
+    var tree = try Self.init(std.testing.allocator);
+    defer tree.deinit();
+
+    const rendered = try tree.render();
+    defer std.testing.allocator.free(rendered);
+
+    const expected = "";
+
+    try std.testing.expectEqualStrings(expected, rendered);
+}
+
 test "aggregated" {
     var tree = try Self.init(std.testing.allocator);
     defer tree.deinit();
@@ -277,19 +289,22 @@ test "aggregated" {
     _ = try tree.open("Assets:Currency:BoA", null, null);
     _ = try tree.open("Income:Dividends", null, null);
 
-    try tree.addPosition("Assets:Currency:Chas𝄞", Number.fromInt(1), "USD");
-    try tree.addPosition("Assets:Currency:BoA", Number.fromInt(1), "EUR");
-    try tree.addPosition("Assets:Currency:BoA", Number.fromInt(1), "USD");
-    try tree.addPosition("Income:Dividends", Number.fromInt(1), "USD");
+    try tree.addPosition("Assets:Currency:Chas𝄞", "USD", Number.fromInt(1));
+    try tree.addPosition("Assets:Currency:BoA", "EUR", Number.fromInt(1));
+    try tree.addPosition("Assets:Currency:BoA", "USD", Number.fromInt(1));
+    try tree.addPosition("Income:Dividends", "USD", Number.fromInt(1));
 
     const rendered = try tree.render();
     defer std.testing.allocator.free(rendered);
 
     const expected =
-        \\Assets        1 EUR, 2 USD
-        \\  Currency    1 EUR, 2 USD
+        \\Assets        1 EUR
+        \\              2 USD
+        \\  Currency    1 EUR
+        \\              2 USD
         \\    Chas𝄞     1 USD
-        \\    BoA       1 EUR, 1 USD
+        \\    BoA       1 EUR
+        \\              1 USD
         \\Income        1 USD
         \\  Dividends   1 USD
         \\

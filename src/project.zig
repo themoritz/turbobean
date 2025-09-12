@@ -289,7 +289,7 @@ pub fn check(self: *Self) !void {
                         .meta = null,
                     };
                     try self.synthetic_postings.append(self.alloc, pad_posting);
-                    try self.postInventoryRecovering(&tree, entry.date, pad_posting, sorted.file);
+                    try tree.postInventory(entry.date, pad_posting);
 
                     const pad_to_posting = Data.Posting{
                         .flag = null,
@@ -303,7 +303,7 @@ pub fn check(self: *Self) !void {
                         .meta = null,
                     };
                     try self.synthetic_postings.append(self.alloc, pad_to_posting);
-                    try self.postInventoryRecovering(&tree, entry.date, pad_to_posting, sorted.file);
+                    try tree.postInventory(entry.date, pad_to_posting);
 
                     const postings = Data.Range.create(postings_top, self.synthetic_postings.len);
                     const payload = Data.Entry.Payload{
@@ -341,7 +341,7 @@ pub fn check(self: *Self) !void {
                     }
                 }
             },
-            .transaction => |tx| {
+            .transaction => |*tx| {
                 if (tx.dirty) continue;
 
                 if (tx.postings) |postings| {
@@ -351,6 +351,7 @@ pub fn check(self: *Self) !void {
                             entry.date,
                             data.postings.get(i),
                             sorted.file,
+                            tx,
                         );
                     }
                 }
@@ -376,33 +377,37 @@ fn postInventoryRecovering(
     date: Date,
     posting: Data.Posting,
     file_id: u8,
+    tx: *Data.Transaction,
 ) !void {
-    tree.postInventory(date, posting) catch |err| switch (err) {
-        error.DoesNotHoldCurrency => {
-            try self.addError(posting.account, file_id, .account_does_not_hold_currency);
-        },
-        error.CannotAddToLotsInventory => {
-            try self.addError(posting.account, file_id, .account_is_booked);
-        },
-        error.PlainInventoryDoesNotSupportLotSpec => {
-            try self.addError(posting.account, file_id, .account_does_not_support_lot_spec);
-        },
-        error.AccountNotOpen => {
-            try self.addError(posting.account, file_id, .account_not_open);
-        },
-        error.LotSpecAmbiguousMatch => {
-            try self.addError(posting.account, file_id, .lot_spec_ambiguous_match);
-        },
-        error.LotSpecMatchTooSmall => {
-            try self.addError(posting.account, file_id, .lot_spec_match_too_small);
-        },
-        error.LotSpecNoMatch => {
-            try self.addError(posting.account, file_id, .lot_spec_no_match);
-        },
-        error.AmbiguousStrictBooking => {
-            try self.addError(posting.account, file_id, .ambiguous_strict_booking);
-        },
-        else => return err,
+    tree.postInventory(date, posting) catch |err| {
+        tx.dirty = true;
+        switch (err) {
+            error.DoesNotHoldCurrency => {
+                try self.addError(posting.account, file_id, .account_does_not_hold_currency);
+            },
+            error.CannotAddToLotsInventory => {
+                try self.addError(posting.account, file_id, .account_is_booked);
+            },
+            error.PlainInventoryDoesNotSupportLotSpec => {
+                try self.addError(posting.account, file_id, .account_does_not_support_lot_spec);
+            },
+            error.AccountNotOpen => {
+                try self.addError(posting.account, file_id, .account_not_open);
+            },
+            error.LotSpecAmbiguousMatch => {
+                try self.addError(posting.account, file_id, .lot_spec_ambiguous_match);
+            },
+            error.LotSpecMatchTooSmall => {
+                try self.addError(posting.account, file_id, .lot_spec_match_too_small);
+            },
+            error.LotSpecNoMatch => {
+                try self.addError(posting.account, file_id, .lot_spec_no_match);
+            },
+            error.AmbiguousStrictBooking => {
+                try self.addError(posting.account, file_id, .ambiguous_strict_booking);
+            },
+            else => return err,
+        }
     };
 }
 

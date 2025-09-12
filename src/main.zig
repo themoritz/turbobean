@@ -89,5 +89,9 @@ test {
     _ = Data;
     _ = parser;
     _ = Project;
+    _ = @import("tree.zig");
+    _ = @import("ErrorDetails.zig");
+    _ = @import("Uri.zig");
+    _ = @import("solver.zig");
     _ = semantic_tokens;
 }

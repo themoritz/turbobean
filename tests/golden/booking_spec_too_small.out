@@ -3,3 +3,9 @@ tests/golden/booking_spec_too_small.bean: [[31mError[0m] Matched lot too small
    13 |   Assets:Stocks  -15 AAPL {"magic lot"} @ 30 USD
           [31m^^^^^^^^^^^^^[0m
 
+Assets     10 AAPL @ 10 USD {2020-01-02, "magic lot"}
+           10 AAPL @ 15 USD {2020-01-03}
+           -250 USD
+  Stocks   10 AAPL @ 10 USD {2020-01-02, "magic lot"}
+           10 AAPL @ 15 USD {2020-01-03}
+  Cash     -250 USD
