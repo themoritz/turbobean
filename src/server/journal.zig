@@ -171,9 +171,9 @@ fn render(
                                 try zts.print(t, "transaction_payee", .{
                                     .payee = payee[1 .. payee.len - 1],
                                 }, out);
-                                if (tx.narration) |_| try zts.write(t, "transaction_separator", out);
+                                if (tx.narration) |n| if (n.len > 2) try zts.write(t, "transaction_separator", out);
                             }
-                            if (tx.narration) |n| try zts.print(t, "transaction_narration", .{
+                            if (tx.narration) |n| if (n.len > 2) try zts.print(t, "transaction_narration", .{
                                 .narration = n[1 .. n.len - 1],
                             }, out);
 

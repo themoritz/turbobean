@@ -1,5 +1,6 @@
 document.addEventListener('alpine:init', () => {
     Alpine.data('app', () => ({
+        loading: false,
         account: '',
         startDate: '',
         endDate: '',
@@ -21,8 +22,10 @@ document.addEventListener('alpine:init', () => {
 
         establishSSEConnection(account, updateUrl = true) {
             this.closeExistingConnection();
+            this.loading = true;
 
             if (updateUrl) {
+                this.account = account;
                 const url = new URL(window.location);
                 url.pathname = '/journal';
                 const params = new URLSearchParams();
@@ -40,6 +43,7 @@ document.addEventListener('alpine:init', () => {
             this.eventSource = new EventSource(`/sse/journal?${params.toString()}`);
 
             this.eventSource.onmessage = (event) => {
+                this.loading = false;
                 const contentElement = this.$refs.content;
                 if (contentElement) {
                     const journal = contentElement.querySelector('.journal');
