@@ -28,8 +28,8 @@
     ],
     "commands": [
       {
-        "command": "zigcount.restartServer",
-        "title": "Restart Zigcount Language Server"
+        "command": "turbobean.restartServer",
+        "title": "Restart TurboBean Language Server"
       }
     ]
   },

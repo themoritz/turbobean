@@ -5,7 +5,7 @@ let client: LanguageClient | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     const exe: Executable = {
-        command: 'zigcount',
+        command: 'turbobean',
         args: ['--lsp'],
         transport: TransportKind.stdio,
     };
@@ -20,12 +20,12 @@ export function activate(context: vscode.ExtensionContext) {
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/.bean')
         },
-        outputChannel: vscode.window.createOutputChannel('Zigcount'),
+        outputChannel: vscode.window.createOutputChannel('TurboBean'),
     };
 
     client = new LanguageClient(
-        'zigcount',
-        'zigcount VSCode extension',
+        'turbobean',
+        'TurboBean VSCode extension',
         serverOptions,
         clientOptions
     );
@@ -33,19 +33,19 @@ export function activate(context: vscode.ExtensionContext) {
     client.start();
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('zigcount.restartServer', async () => {
+        vscode.commands.registerCommand('turbobean.restartServer', async () => {
             if (client) {
                 await client.stop();
                 client = undefined;
             }
             client = new LanguageClient(
-                'zigcount',
-                'zigcount VSCode extension',
+                'turbobean',
+                'TurboBean VSCode extension',
                 serverOptions,
                 clientOptions
             );
             client.start();
-            vscode.window.showInformationMessage('Zigcount language server restarted.');
+            vscode.window.showInformationMessage('TurboBean language server restarted.');
         })
     );
 }

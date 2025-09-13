@@ -18,6 +18,7 @@ An implementation of [Beancount](https://github.com/beancount/beancount) with a 
   - [x] Syntax highlighting via semantic tokens
   - [x] Rename account
 - [ ] Web Viewer
+  - [ ] File Watcher (reloads instantly)
   - [x] Journal
   - [ ] Balance Sheet
   - [ ] Income Statement
@@ -86,18 +87,18 @@ Put this into your nvim-lspconfig's `config` function:
 
 ```lua
     local lspconfig = require 'lspconfig'
-    require('lspconfig.configs').zigcount = {
+    require('lspconfig.configs').turbobean = {
       default_config = {
         cmd = {
           'bash',
           '-c',
-          '/Users/moritz/code/zigcount/zig-out/bin/zigcount --lsp 2> >(tee zigcount.log >&2)',
+          '/Users/moritz/code/turbobean/zig-out/bin/turbobean --lsp 2> >(tee turbobean.log >&2)',
         },
         filetypes = { 'beancount', 'bean' },
-        root_dir = require('lspconfig.util').root_pattern 'zigcount.config',
+        root_dir = require('lspconfig.util').root_pattern 'turbobean.config',
       },
     }
-    lspconfig.zigcount.setup {}
+    lspconfig.turbobean.setup {}
 
 ```
 

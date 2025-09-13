@@ -1,6 +1,6 @@
 .{
-    .name = .zigcount,
-    .fingerprint = 0x1096d79aa1f6fae8,
+    .name = .turbobean,
+    .fingerprint = 0x8380b6b6b2f5bf2b,
     .version = "0.0.0",
 
     .dependencies = .{

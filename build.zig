@@ -15,18 +15,18 @@ pub fn build(b: *std.Build) void {
 
     // Create the executable
     const exe = b.addExecutable(.{
-        .name = "zigcount",
+        .name = "turbobean",
         .root_module = exe_mod,
     });
     b.installArtifact(exe);
 
     {
         const exe_check = b.addExecutable(.{
-            .name = "zigcount",
+            .name = "turbobean",
             .root_module = exe_mod,
         });
 
-        const check = b.step("check", "Check if zigcount compiles");
+        const check = b.step("check", "Check if TurboBean compiles");
         check.dependOn(&exe_check.step);
     }
 

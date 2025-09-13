@@ -136,7 +136,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                 lsp.types.InitializeResult,
                                 .{
                                     .serverInfo = .{
-                                        .name = "zigcount language server",
+                                        .name = "turbobean language server",
                                     },
                                     .capabilities = .{
                                         .positionEncoding = .@"utf-16",
@@ -528,7 +528,7 @@ fn initialize(alloc: std.mem.Allocator, params: lsp.types.InitializeParams, stat
 
     const config = Config.load_from_dir(alloc, root) catch |err| switch (err) {
         error.FileNotFound => return .{
-            .fail_message = try alloc.dupe(u8, "No config found. Make sure to put a `zigcount.config` file in the workspace folder"),
+            .fail_message = try alloc.dupe(u8, "No config found. Make sure to put a `turbobean.config` file in the workspace folder"),
         },
         error.InvalidConfig => return .{
             .fail_message = try alloc.dupe(u8, "Invalid config. The config should contain a line like `root = file.bean` where file.bean is relative to the workspace root"),
@@ -542,7 +542,7 @@ fn initialize(alloc: std.mem.Allocator, params: lsp.types.InitializeParams, stat
     std.log.debug("Loaded config: {any}", .{config});
     state.initialize(alloc, config.root) catch |err| switch (err) {
         error.FileNotFound => return .{
-            .fail_message = try std.fmt.allocPrint(alloc, "Could not open `{s}` defined in your `zigcount.config` file", .{config.root}),
+            .fail_message = try std.fmt.allocPrint(alloc, "Could not open `{s}` defined in your `turbobean.config` file", .{config.root}),
         },
         else => return .{
             .fail_message = try std.fmt.allocPrint(alloc, "Error: {s}", .{@errorName(err)}),
