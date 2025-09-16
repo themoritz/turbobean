@@ -2,6 +2,10 @@ const std = @import("std");
 const GoldenTest = @import("build/GoldenTest.zig");
 
 pub fn build(b: *std.Build) void {
+    const embed_static = b.option(bool, "embed-static", "Embed static assets into the binary") orelse false;
+    const options = b.addOptions();
+    options.addOption(bool, "embed_static", embed_static);
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -12,6 +16,7 @@ pub fn build(b: *std.Build) void {
     });
     exe_mod.addImport("lsp", b.dependency("lsp_codegen", .{}).module("lsp"));
     exe_mod.addImport("zts", b.dependency("zts", .{}).module("zts"));
+    exe_mod.addOptions("config", options);
 
     // Create the executable
     const exe = b.addExecutable(.{
