@@ -1,26 +1,32 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const config = @import("config");
+const assets = @import("assets");
 
 pub const Static = if (config.embed_static) StaticEmbedded else StaticFiles;
 
 pub const StaticEmbedded = struct {
     alloc: Allocator,
-    assets: std.StaticStringMap(Asset) = .initComptime(
-        .{
-            .{
-                "js/index.js", Asset{
-                    .contents = @embedFile("../assets/js/index.js"),
-                    .mime = "application/javascript",
-                },
-            },
-        },
-    ),
+    assets: std.StaticStringMap(Asset) = .initComptime(genMap()),
+
+    const AssetEntry = struct { []const u8, Asset };
 
     const Asset = struct {
         contents: []const u8,
         mime: []const u8,
     };
+
+    fn genMap() [assets.files.len]AssetEntry {
+        var embassets: [assets.files.len]AssetEntry = undefined;
+        comptime var i = 0;
+        inline for (assets.files) |file| {
+            embassets[i][0] = file;
+            embassets[i][1].contents = @embedFile("../assets/" ++ file);
+            embassets[i][1].mime = "todo";
+            i += 1;
+        }
+        return embassets;
+    }
 
     pub fn init(alloc: Allocator) !StaticEmbedded {
         return .{ .alloc = alloc };

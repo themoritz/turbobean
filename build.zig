@@ -23,6 +23,11 @@ pub fn build(b: *std.Build) void {
         .name = "turbobean",
         .root_module = exe_mod,
     });
+
+    addAssetsOption(b, exe, target, optimize) catch |err| {
+        std.log.err("Problem adding assets: {!}", .{err});
+    };
+
     b.installArtifact(exe);
 
     {
@@ -86,4 +91,37 @@ pub fn build(b: *std.Build) void {
         const run_step = b.step("run", "Run the app");
         run_step.dependOn(&run_cmd.step);
     }
+}
+
+/// Credits: https://github.com/ringtailsoftware/zig-embeddir
+pub fn addAssetsOption(b: *std.Build, exe: anytype, target: anytype, optimize: anytype) !void {
+    var options = b.addOptions();
+
+    var files = std.ArrayList([]const u8).init(b.allocator);
+    defer files.deinit();
+
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try std.fs.cwd().realpath("src/assets", buf[0..]);
+
+    var dir = try std.fs.openDirAbsolute(path, .{ .iterate = true });
+    var walker = try dir.walk(b.allocator);
+    defer walker.deinit();
+
+    while (try walker.next()) |file| {
+        if (file.kind != .file) {
+            continue;
+        }
+        std.debug.print("adding {s}\n", .{file.path});
+        try files.append(b.dupe(file.path));
+    }
+    options.addOption([]const []const u8, "files", files.items);
+    exe.step.dependOn(&options.step);
+
+    const assets = b.addModule("assets", .{
+        .root_source_file = options.getOutput(),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe.root_module.addImport("assets", assets);
 }
