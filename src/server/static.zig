@@ -7,22 +7,16 @@ pub const Static = if (config.embed_static) StaticEmbedded else StaticFiles;
 
 pub const StaticEmbedded = struct {
     alloc: Allocator,
-    assets: std.StaticStringMap(Asset) = .initComptime(genMap()),
+    assets: std.StaticStringMap([]const u8) = .initComptime(genMap()),
 
-    const AssetEntry = struct { []const u8, Asset };
+    const Asset = struct { []const u8, []const u8 };
 
-    const Asset = struct {
-        contents: []const u8,
-        mime: []const u8,
-    };
-
-    fn genMap() [assets.files.len]AssetEntry {
-        var embassets: [assets.files.len]AssetEntry = undefined;
+    fn genMap() [assets.files.len]Asset {
+        var embassets: [assets.files.len]Asset = undefined;
         comptime var i = 0;
         inline for (assets.files) |file| {
             embassets[i][0] = file;
-            embassets[i][1].contents = @embedFile("../assets/" ++ file);
-            embassets[i][1].mime = "todo";
+            embassets[i][1] = @embedFile("../assets/" ++ file);
             i += 1;
         }
         return embassets;
@@ -37,40 +31,44 @@ pub const StaticEmbedded = struct {
     }
 
     pub fn handler(self: *StaticEmbedded, req: *std.http.Server.Request) !void {
-        if (std.mem.startsWith(u8, req.head.target, "/static/")) {
-            const sub_path = req.head.target[8..];
-            const asset = self.assets.get(sub_path) orelse return try req.respond("Asset not found\n", .{ .status = .not_found });
-
-            var response_headers = std.ArrayList(std.http.Header).init(self.alloc);
-            defer response_headers.deinit();
-
-            try response_headers.append(.{ .name = "Content-Type", .value = asset.mime });
-
-            // ETag and caching
-            var hash = std.hash.Wyhash.init(0);
-            hash.update(asset.contents);
-            const etag_hash = hash.final();
-
-            const calc_etag = try std.fmt.allocPrint(self.alloc, "\"{d}\"", .{etag_hash});
-            defer self.alloc.free(calc_etag);
-
-            try response_headers.append(.{ .name = "ETag", .value = calc_etag });
-
-            if (getHeader(req, "If-None-Match")) |etag| {
-                if (std.mem.eql(u8, etag, calc_etag)) {
-                    return try req.respond("", .{
-                        .status = .not_modified,
-                    });
-                }
-            }
-
-            try req.respond(asset.contents, .{
-                .status = .ok,
-                .extra_headers = response_headers.items,
-            });
-        } else {
-            try req.respond("Asset not found\n", .{ .status = .not_found });
+        if (!std.mem.startsWith(u8, req.head.target, "/static/")) {
+            return try req.respond("Asset not found\n", .{ .status = .not_found });
         }
+
+        const sub_path = req.head.target[8..];
+        const asset = self.assets.get(sub_path) orelse
+            return try req.respond("Asset not found\n", .{ .status = .not_found });
+
+        var response_headers = std.ArrayList(std.http.Header).init(self.alloc);
+        defer response_headers.deinit();
+
+        try response_headers.append(.{
+            .name = "Content-Type",
+            .value = getMime(sub_path),
+        });
+
+        // ETag and caching
+        var hash = std.hash.Wyhash.init(0);
+        hash.update(asset);
+        const etag_hash = hash.final();
+
+        const calc_etag = try std.fmt.allocPrint(self.alloc, "\"{d}\"", .{etag_hash});
+        defer self.alloc.free(calc_etag);
+
+        try response_headers.append(.{ .name = "ETag", .value = calc_etag });
+
+        if (getHeader(req, "If-None-Match")) |etag| {
+            if (std.mem.eql(u8, etag, calc_etag)) {
+                return try req.respond("", .{
+                    .status = .not_modified,
+                });
+            }
+        }
+
+        try req.respond(asset, .{
+            .status = .ok,
+            .extra_headers = response_headers.items,
+        });
     }
 };
 
@@ -90,62 +88,53 @@ const StaticFiles = struct {
     }
 
     pub fn handler(self: *StaticFiles, req: *std.http.Server.Request) !void {
-        if (std.mem.startsWith(u8, req.head.target, "/static/")) {
-            const sub_path = req.head.target[8..];
-            const file = self.assets.openFile(sub_path, .{ .mode = .read_only }) catch |err| switch (err) {
-                error.FileNotFound => return try req.respond("Asset not found\n", .{ .status = .not_found }),
-                else => return err,
-            };
-            defer file.close();
-
-            const extension_start = std.mem.lastIndexOfScalar(u8, sub_path, '.');
-            const mime: []const u8 = blk: {
-                if (extension_start) |start| {
-                    if (sub_path.len - start == 0) break :blk "application/octet-stream";
-                    if (std.mem.eql(u8, sub_path[start + 1 ..], "css")) break :blk "text/css";
-                    if (std.mem.eql(u8, sub_path[start + 1 ..], "js")) break :blk "application/javascript";
-                    break :blk "application/octet-stream";
-                } else {
-                    break :blk "application/octet-stream";
-                }
-            };
-
-            var response_headers = std.ArrayList(std.http.Header).init(self.alloc);
-            defer response_headers.deinit();
-
-            try response_headers.append(.{ .name = "Content-Type", .value = mime });
-
-            // ETag and caching
-            const meta = try file.metadata();
-
-            var hash = std.hash.Wyhash.init(0);
-            hash.update(std.mem.asBytes(&meta.size()));
-            hash.update(std.mem.asBytes(&meta.modified()));
-            const etag_hash = hash.final();
-
-            const calc_etag = try std.fmt.allocPrint(self.alloc, "\"{d}\"", .{etag_hash});
-            defer self.alloc.free(calc_etag);
-
-            try response_headers.append(.{ .name = "ETag", .value = calc_etag });
-
-            if (getHeader(req, "If-None-Match")) |etag| {
-                if (std.mem.eql(u8, etag, calc_etag)) {
-                    return try req.respond("", .{
-                        .status = .not_modified,
-                    });
-                }
-            }
-
-            const contents = try file.readToEndAlloc(self.alloc, std.math.maxInt(usize));
-            defer self.alloc.free(contents);
-
-            try req.respond(contents, .{
-                .status = .ok,
-                .extra_headers = response_headers.items,
-            });
-        } else {
-            try req.respond("Asset not found\n", .{ .status = .not_found });
+        if (!std.mem.startsWith(u8, req.head.target, "/static/")) {
+            return try req.respond("Asset not found\n", .{ .status = .not_found });
         }
+
+        const sub_path = req.head.target[8..];
+        const file = self.assets.openFile(sub_path, .{ .mode = .read_only }) catch |err| switch (err) {
+            error.FileNotFound => return try req.respond("Asset not found\n", .{ .status = .not_found }),
+            else => return err,
+        };
+        defer file.close();
+
+        var response_headers = std.ArrayList(std.http.Header).init(self.alloc);
+        defer response_headers.deinit();
+
+        try response_headers.append(.{
+            .name = "Content-Type",
+            .value = getMime(sub_path),
+        });
+
+        // ETag and caching
+        const meta = try file.metadata();
+
+        var hash = std.hash.Wyhash.init(0);
+        hash.update(std.mem.asBytes(&meta.size()));
+        hash.update(std.mem.asBytes(&meta.modified()));
+        const etag_hash = hash.final();
+
+        const calc_etag = try std.fmt.allocPrint(self.alloc, "\"{d}\"", .{etag_hash});
+        defer self.alloc.free(calc_etag);
+
+        try response_headers.append(.{ .name = "ETag", .value = calc_etag });
+
+        if (getHeader(req, "If-None-Match")) |etag| {
+            if (std.mem.eql(u8, etag, calc_etag)) {
+                return try req.respond("", .{
+                    .status = .not_modified,
+                });
+            }
+        }
+
+        const contents = try file.readToEndAlloc(self.alloc, std.math.maxInt(usize));
+        defer self.alloc.free(contents);
+
+        try req.respond(contents, .{
+            .status = .ok,
+            .extra_headers = response_headers.items,
+        });
     }
 };
 
@@ -157,4 +146,16 @@ fn getHeader(req: *std.http.Server.Request, name: []const u8) ?[]const u8 {
         }
     }
     return null;
+}
+
+fn getMime(path: []const u8) []const u8 {
+    const extension_start = std.mem.lastIndexOfScalar(u8, path, '.');
+    if (extension_start) |start| {
+        if (path.len - start == 0) return "application/octet-stream";
+        if (std.mem.eql(u8, path[start + 1 ..], "css")) return "text/css";
+        if (std.mem.eql(u8, path[start + 1 ..], "js")) return "application/javascript";
+        return "application/octet-stream";
+    } else {
+        return "application/octet-stream";
+    }
 }

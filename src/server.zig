@@ -60,7 +60,9 @@ fn handle_conn(
         return;
     };
 
-    std.log.info("Request: {s} {s}", .{ @tagName(req.head.method), req.head.target });
+    const decoded = try http.decode_url_alloc(alloc, req.head.target);
+    defer alloc.free(decoded);
+    std.log.info("Request: {s} {s}", .{ @tagName(req.head.method), decoded });
 
     switch (req.head.method) {
         .GET => {

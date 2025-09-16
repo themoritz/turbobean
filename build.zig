@@ -111,7 +111,6 @@ pub fn addAssetsOption(b: *std.Build, exe: anytype, target: anytype, optimize: a
         if (file.kind != .file) {
             continue;
         }
-        std.debug.print("adding {s}\n", .{file.path});
         try files.append(b.dupe(file.path));
     }
     options.addOption([]const []const u8, "files", files.items);
