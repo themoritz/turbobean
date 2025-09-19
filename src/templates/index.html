@@ -5,17 +5,17 @@
     <title>TurboBean</title>
     <meta charset="UTF-8">
     <link rel="icon" href="data:;base64,=">
-    <link rel="stylesheet" href="static/css/index.css">
-    <link rel="icon" type="image/x-icon" href="static/img/logo.png">
+    <link rel="stylesheet" href="/static/css/index.css">
+    <link rel="icon" type="image/x-icon" href="/static/img/logo.png">
     <script src="//unpkg.com/alpinejs" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-    <script src="static/js/index.js"></script>
+    <script src="/static/js/index.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/fuzzysort@3.1.0/fuzzysort.min.js"></script>
 </head>
 
 <body x-data="app" @goto-account.window="establishSSEConnection($event.detail)">
     <header>
-        <img class="logo" :class="loading ? 'wiggle' : ''" src="static/img/logo.png" />
+        <img class="logo" :class="loading ? 'wiggle' : ''" src="/static/img/logo.png" />
         <div class="crumbs" x-text="account"></div>
         <div class="filter">
             <label for="startDate">Start Date:</label>

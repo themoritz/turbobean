@@ -27,9 +27,8 @@ document.addEventListener('alpine:init', () => {
             if (updateUrl) {
                 this.account = account;
                 const url = new URL(window.location);
-                url.pathname = '/journal';
+                url.pathname = `/journal/${account}`;
                 const params = new URLSearchParams();
-                params.set('account', account);
                 if (this.startDate) params.set('startDate', this.startDate);
                 if (this.endDate) params.set('endDate', this.endDate);
                 url.search = params.toString();
@@ -37,10 +36,10 @@ document.addEventListener('alpine:init', () => {
             }
 
             const params = new URLSearchParams();
-            params.set('account', account);
             if (this.startDate) params.set('startDate', this.startDate);
             if (this.endDate) params.set('endDate', this.endDate);
-            this.eventSource = new EventSource(`/sse/journal?${params.toString()}`);
+            const queryString = params.toString() ? `?${params.toString()}` : '';
+            this.eventSource = new EventSource(`/sse/journal/${account}${queryString}`);
 
             this.eventSource.onmessage = (event) => {
                 this.loading = false;
@@ -68,9 +67,10 @@ document.addEventListener('alpine:init', () => {
 
         getAccountFromUrl() {
             const url = new URL(window.location);
-            if (url.pathname === '/journal') {
+            const pathMatch = url.pathname.match(/^\/journal\/(.+)$/);
+            if (pathMatch) {
                 return {
-                    account: url.searchParams.get('account'),
+                    account: decodeURIComponent(pathMatch[1]),
                     startDate: url.searchParams.get('startDate') || '',
                     endDate: url.searchParams.get('endDate') || ''
                 };

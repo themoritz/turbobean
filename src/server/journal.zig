@@ -7,45 +7,21 @@ const Project = @import("../project.zig");
 const Tree = @import("../tree.zig");
 const Date = @import("../date.zig").Date;
 const SSE = @import("SSE.zig");
+const EntryFilter = @import("EntryFilter.zig");
 
-const Params = struct {
+pub fn handler(
+    alloc: std.mem.Allocator,
+    req: *std.http.Server.Request,
+    state: *State,
     account: []const u8,
-    startDate: ?[]const u8 = null,
-    endDate: ?[]const u8 = null,
-
-    pub fn deinit(self: *Params, alloc: std.mem.Allocator) void {
-        alloc.free(self.account);
-        if (self.startDate) |start| alloc.free(start);
-        if (self.endDate) |end| alloc.free(end);
-    }
-};
-
-fn isWithinDateRange(entry_date: Date, start_date: ?[]const u8, end_date: ?[]const u8) bool {
-    if (start_date) |start| {
-        const start_parsed = Date.fromSlice(start) catch return false;
-        if (entry_date.compare(start_parsed) == .after) {
-            return false;
-        }
-    }
-
-    if (end_date) |end| {
-        const end_parsed = Date.fromSlice(end) catch return false;
-        if (entry_date.compare(end_parsed) == .before) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-pub fn handler(alloc: std.mem.Allocator, req: *std.http.Server.Request, state: *State) !void {
+) !void {
     var sse = try SSE.init(alloc, req);
     defer sse.deinit();
 
     var parsed_request = try http.ParsedRequest.parse(alloc, req.head.target);
     defer parsed_request.deinit(alloc);
-    var params = try http.Query(Params).parse(alloc, &parsed_request.params);
-    defer params.deinit(alloc);
+    var filter = try http.Query(EntryFilter).parse(alloc, &parsed_request.params);
+    defer filter.deinit(alloc);
 
     var html = std.ArrayList(u8).init(alloc);
     defer html.deinit();
@@ -62,7 +38,7 @@ pub fn handler(alloc: std.mem.Allocator, req: *std.http.Server.Request, state: *
             state.acquireProject();
             defer state.releaseProject();
 
-            const plot_points = try render(alloc, state.project, params, html_out.any());
+            const plot_points = try render(alloc, state.project, filter, account, html_out.any());
             defer {
                 for (plot_points.items) |*plot_point| plot_point.deinit(alloc);
                 plot_points.deinit();
@@ -98,7 +74,8 @@ const PlotPoint = struct {
 fn render(
     alloc: std.mem.Allocator,
     project: *Project,
-    params: Params,
+    filter: EntryFilter,
+    account: []const u8,
     out: std.io.AnyWriter,
 ) !std.ArrayList(PlotPoint) {
     const t = @embedFile("../templates/journal.html");
@@ -120,10 +97,10 @@ fn render(
         const entry = data.entries.items[sorted_entry.entry];
         switch (entry.payload) {
             .open => |open| {
-                if (std.mem.eql(u8, open.account.slice, params.account)) {
+                if (std.mem.eql(u8, open.account.slice, account)) {
                     // We have to open the account even if it's outside the date filter.
                     _ = try tree.open(open.account.slice, null, open.booking_method);
-                    if (isWithinDateRange(entry.date, params.startDate, params.endDate)) {
+                    if (filter.isWithinDateRange(entry.date)) {
                         try zts.print(t, "open", .{
                             .date = entry.date,
                         }, out);
@@ -133,11 +110,11 @@ fn render(
             .transaction => |tx| {
                 if (tx.dirty) continue;
 
-                if (!isWithinDateRange(entry.date, params.startDate, params.endDate)) continue;
+                if (!filter.isWithinDateRange(entry.date)) continue;
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
                         const p = data.postings.get(i);
-                        if (std.mem.eql(u8, p.account.slice, params.account)) {
+                        if (std.mem.eql(u8, p.account.slice, account)) {
                             // Add i to get different hashes when the same transaction
                             // has multiple postings to the queried account.
                             const hash = entry.hash() + i;
@@ -175,7 +152,7 @@ fn render(
                             }, out);
 
                             try tree.postInventory(entry.date, p);
-                            var sum = try tree.inventoryAggregatedByAccount(alloc, params.account);
+                            var sum = try tree.inventoryAggregatedByAccount(alloc, account);
                             defer sum.deinit();
                             var iter = sum.by_currency.iterator();
                             while (iter.next()) |kv| {

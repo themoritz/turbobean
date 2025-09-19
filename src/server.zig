@@ -64,23 +64,37 @@ fn handle_conn(
     defer alloc.free(decoded);
     std.log.info("Request: {s} {s}", .{ @tagName(req.head.method), decoded });
 
-    switch (req.head.method) {
-        .GET => {
-            if (std.mem.eql(u8, req.head.target, "/") or std.mem.startsWith(u8, req.head.target, "/journal")) {
-                try index.handler(alloc, &req, state);
-            } else if (std.mem.eql(u8, req.head.target, "/shutdown")) {
-                running.store(false, .seq_cst);
-                state.broadcast.stop();
-                try req.respond("Shutdown initiated\n", .{ .status = .ok });
-            } else if (std.mem.startsWith(u8, req.head.target, "/sse/journal")) {
-                journal.handler(alloc, &req, state) catch |err| switch (err) {
-                    error.BrokenPipe => {},
-                    else => return err,
-                };
-            } else {
-                try static.handler(&req);
-            }
-        },
-        else => try req.respond("Method not allowed\n", .{ .status = .method_not_allowed }),
+    try route(alloc, state, static, &req);
+}
+
+fn route(alloc: Allocator, state: *State, static: *Static, request: *std.http.Server.Request) !void {
+    const target = request.head.target;
+    const method = request.head.method;
+
+    if (method != .GET) {
+        return request.respond("Method not allowed\n", .{ .status = .method_not_allowed });
+    }
+
+    if (std.mem.eql(u8, target, "/shutdown")) {
+        running.store(false, .seq_cst);
+        state.broadcast.stop();
+        return request.respond("Shutdown initiated\n", .{ .status = .ok });
+    }
+
+    if (std.mem.startsWith(u8, target, "/static/")) {
+        return static.handler(request);
+    }
+
+    if (std.mem.eql(u8, target, "/") or std.mem.startsWith(u8, target, "/journal")) {
+        return index.handler(alloc, request, state);
+    }
+
+    if (std.mem.startsWith(u8, target, "/sse/journal/")) {
+        const account = try http.decode_url_alloc(alloc, target[13..]);
+        defer alloc.free(account);
+        journal.handler(alloc, request, state, account) catch |err| switch (err) {
+            error.BrokenPipe => {},
+            else => return err,
+        };
     }
 }
