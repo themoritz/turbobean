@@ -1,16 +1,91 @@
+class Filter {
+    constructor() {
+        const url = new URL(window.location);
+        this.startDate = url.searchParams.get('start_date');
+        this.endDate = url.searchParams.get('end_date');
+    }
+
+    getSearchParams() {
+        const params = new URLSearchParams();
+        if (this.startDate) params.set('start_date', this.startDate);
+        if (this.endDate) params.set('end_date', this.endDate);
+        return params;
+    }
+
+    getQueryString() {
+        const params = this.getSearchParams();
+        return params.toString() ? `?${params.toString()}` : '';
+    }
+}
+
+const Routes = {
+    Journal: (account) => ({ type: "Journal", account }),
+};
+
+class Router {
+    constructor() {
+        const url = new URL(window.location);
+        this.setRoute(url.pathname);
+    }
+
+    setRoute(path) {
+        const journalMatch = path.match(/^\/journal\/(.+)$/);
+        if (journalMatch) {
+            this.route = Routes.Journal(decodeURIComponent(journalMatch[1]));
+            return;
+        }
+        this.route = null
+    }
+
+    generatePathname() {
+        switch (this.route.type) {
+            case "Journal":
+                return `/journal/${this.route.account}`;
+            default:
+                return "/";
+        }
+    }
+
+    getCrumbs() {
+        switch (this.route.type) {
+            case "Journal":
+                return this.route.account;
+            default:
+                return "";
+        }
+    }
+}
+
 document.addEventListener('alpine:init', () => {
     Alpine.data('app', () => ({
         loading: false,
-        account: '',
-        startDate: '',
-        endDate: '',
+        router: new Router(),
+        filter: new Filter(),
         eventSource: null,
         plotData: [],
 
         init() {
-            this.initializeFromUrl();
-            this.setupPopstateHandler();
-            this.setupBeforeUnloadHandler();
+            if (this.router.route) {
+                this.establishSSEConnection(this.router.route);
+            }
+
+            window.addEventListener('beforeunload', () => {
+                this.closeExistingConnection();
+            });
+
+            window.addEventListener('popstate', (_event) => {
+                this.router = new Router();
+                this.filter = new Filter();
+                this.establishSSEConnection();
+
+            });
+
+            this.$watch('filter', (value) => {
+                const url = new URL(window.location);
+                url.search = value.getQueryString();
+                history.pushState({}, '', url);
+                this.establishSSEConnection();
+            });
         },
 
         closeExistingConnection() {
@@ -20,26 +95,20 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        establishSSEConnection(account, updateUrl = true) {
+        navigate(path) {
+            this.router.setRoute(path);
+            const url = new URL(window.location);
+            url.pathname = this.router.generatePathname();
+            history.pushState({}, '', url);
+            this.establishSSEConnection();
+        },
+
+        establishSSEConnection() {
+            const source = "/sse" + this.router.generatePathname() + this.filter.getQueryString();
+
             this.closeExistingConnection();
             this.loading = true;
-
-            if (updateUrl) {
-                this.account = account;
-                const url = new URL(window.location);
-                url.pathname = `/journal/${account}`;
-                const params = new URLSearchParams();
-                if (this.startDate) params.set('startDate', this.startDate);
-                if (this.endDate) params.set('endDate', this.endDate);
-                url.search = params.toString();
-                history.pushState({ account: account, startDate: this.startDate, endDate: this.endDate }, '', url);
-            }
-
-            const params = new URLSearchParams();
-            if (this.startDate) params.set('startDate', this.startDate);
-            if (this.endDate) params.set('endDate', this.endDate);
-            const queryString = params.toString() ? `?${params.toString()}` : '';
-            this.eventSource = new EventSource(`/sse/journal/${account}${queryString}`);
+            this.eventSource = new EventSource(source);
 
             this.eventSource.onmessage = (event) => {
                 this.loading = false;
@@ -64,52 +133,6 @@ document.addEventListener('alpine:init', () => {
                 this.closeExistingConnection();
             };
         },
-
-        getAccountFromUrl() {
-            const url = new URL(window.location);
-            const pathMatch = url.pathname.match(/^\/journal\/(.+)$/);
-            if (pathMatch) {
-                return {
-                    account: decodeURIComponent(pathMatch[1]),
-                    startDate: url.searchParams.get('startDate') || '',
-                    endDate: url.searchParams.get('endDate') || ''
-                };
-            }
-            return null;
-        },
-
-        initializeFromUrl() {
-            const urlParams = this.getAccountFromUrl();
-            if (urlParams && urlParams.account) {
-                this.account = urlParams.account;
-                this.startDate = urlParams.startDate;
-                this.endDate = urlParams.endDate;
-                this.establishSSEConnection(urlParams.account, false);
-            }
-        },
-
-        setupPopstateHandler() {
-            window.addEventListener('popstate', (event) => {
-                if (event.state && event.state.account) {
-                    this.account = event.state.account;
-                    this.startDate = event.state.startDate || '';
-                    this.endDate = event.state.endDate || '';
-                    this.establishSSEConnection(event.state.account, false);
-                } else {
-                    this.closeExistingConnection();
-                    this.account = '';
-                    this.startDate = '';
-                    this.endDate = '';
-                    this.content = 'Content';
-                }
-            });
-        },
-
-        setupBeforeUnloadHandler() {
-            window.addEventListener('beforeunload', () => {
-                this.closeExistingConnection();
-            });
-        }
     }));
 
     Alpine.data('d3', () => {
@@ -314,7 +337,7 @@ document.addEventListener('alpine:init', () => {
             });
 
             this.results = results.map((result, i) => ({
-                account: result.obj.target,
+                route: result.obj.route,
                 html: result.highlight('<mark>', '</mark>'),
                 index: i,
             }));

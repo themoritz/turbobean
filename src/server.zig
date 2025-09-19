@@ -90,7 +90,8 @@ fn route(alloc: Allocator, state: *State, static: *Static, request: *std.http.Se
     }
 
     if (std.mem.startsWith(u8, target, "/sse/journal/")) {
-        const account = try http.decode_url_alloc(alloc, target[13..]);
+        const raw_account = if (std.mem.indexOf(u8, target, "?")) |i| target[13..i] else target[13..];
+        const account = try http.decode_url_alloc(alloc, raw_account);
         defer alloc.free(account);
         journal.handler(alloc, request, state, account) catch |err| switch (err) {
             error.BrokenPipe => {},

@@ -13,32 +13,32 @@
     <script src="https://cdn.jsdelivr.net/npm/fuzzysort@3.1.0/fuzzysort.min.js"></script>
 </head>
 
-<body x-data="app" @goto-account.window="establishSSEConnection($event.detail)">
+<body x-data="app" @navigate.window="navigate($event.detail)">
     <header>
         <img class="logo" :class="loading ? 'wiggle' : ''" src="/static/img/logo.png" />
-        <div class="crumbs" x-text="account"></div>
+        <div class="crumbs" x-text="router.getCrumbs()"></div>
         <div class="filter">
             <label for="startDate">Start Date:</label>
-            <input type="date" id="startDate" x-model="startDate">
+            <input type="date" id="startDate" x-model="filter.startDate">
             <label for="endDate">End Date:</label>
-            <input type="date" id="endDate" x-model="endDate">
+            <input type="date" id="endDate" x-model="filter.endDate">
         </div>
     </header>
     <nav @keydown.g.window="open(); $nextTick(() => $refs.input.focus())" x-data="nav([
             {
-                 target: 'income_statement',
+                 route: '/income_statement',
                  text: 'Income Statement',
                  weight: 2,
             },
             {
-                 target: 'balance_sheet',
+                 route: '/balance_sheet',
                  text: 'Balance Sheet',
                  weight: 2,
             },
 
             .nav_account
             {{
-                 target: '{[account]s}',
+                 route: '/journal/{[account]s}',
                  text: '{[account]s}',
                  weight: 1,
             }},
@@ -50,12 +50,12 @@
                 <input type="text" placeholder="Go to..." x-ref="input" x-model="query" @input="search"
                     @keydown.escape.prevent="close()" @keydown.down.prevent="down" @keydown.ctrl.n.prevent="down"
                     @keydown.ctrl.p.prevent="up" @keydown.up.prevent="up"
-                    @keydown.enter.prevent="$dispatch('goto-account', results[index].account); close()">
+                    @keydown.enter.prevent="$dispatch('navigate', results[index].route); close()">
             </div>
             <div class="results">
                 <template x-for="result in results">
                     <div class="result" :class="index === result.index ? 'active' : ''"
-                        @mouseover="index = result.index" @click="$dispatch('goto-account', result.account); close()"
+                        @mouseover="index = result.index" @click="$dispatch('navigate', result.route); close()"
                         x-html="result.html"></div>
                 </template>
             </div>
