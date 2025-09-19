@@ -6,6 +6,7 @@ const Uri = @import("../Uri.zig");
 const Project = @import("../project.zig");
 const Tree = @import("../tree.zig");
 const Date = @import("../date.zig").Date;
+const SSE = @import("SSE.zig");
 
 const Params = struct {
     account: []const u8,
@@ -38,18 +39,8 @@ fn isWithinDateRange(entry_date: Date, start_date: ?[]const u8, end_date: ?[]con
 }
 
 pub fn handler(alloc: std.mem.Allocator, req: *std.http.Server.Request, state: *State) !void {
-    var send_buffer: [98096]u8 = undefined;
-
-    var response = req.respondStreaming(.{
-        .send_buffer = &send_buffer,
-        .respond_options = .{
-            .extra_headers = &.{
-                .{ .name = "Content-Type", .value = "text/event-stream" },
-                .{ .name = "Cache-Control", .value = "no-cache" },
-                .{ .name = "Connection", .value = "keep-alive" },
-            },
-        },
-    });
+    var sse = try SSE.init(alloc, req);
+    defer sse.deinit();
 
     var parsed_request = try http.ParsedRequest.parse(alloc, req.head.target);
     defer parsed_request.deinit(alloc);
@@ -79,22 +70,15 @@ pub fn handler(alloc: std.mem.Allocator, req: *std.http.Server.Request, state: *
             try std.json.stringify(plot_points.items, .{}, json_out);
         }
 
-        var iter = std.mem.splitScalar(u8, html.items, '\n');
-        while (iter.next()) |line| {
-            try std.fmt.format(response.writer(), "data: {s}\n", .{line});
-        }
-        try response.writer().writeByte('\n');
-        try response.flush();
-
-        try std.fmt.format(response.writer(), "event: plot_points\ndata: {s}\n\n", .{json.items});
-        try response.flush();
+        try sse.send(.{ .payload = html.items });
+        try sse.send(.{ .payload = json.items, .event = "plot_points" });
 
         html.clearRetainingCapacity();
         json.clearRetainingCapacity();
 
         if (!listener.waitForNewVersion()) break;
     }
-    try response.end();
+    try sse.end();
 }
 
 const PlotPoint = struct {
