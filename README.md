@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/img/logo.png" alt="Logo" height=100>
+  <img src="src/assets/img/logo.png" alt="Logo" height=100>
 </p>
 <h2 align="center">TurboBean</h2>
 
