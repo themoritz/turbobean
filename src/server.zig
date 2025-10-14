@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Project = @import("project.zig");
 const journal = @import("server/journal.zig");
+const balance_sheet = @import("server/balance_sheet.zig");
 const index = @import("server/index.zig");
 const State = @import("server/State.zig");
 const http = @import("server/http.zig");
@@ -85,8 +86,15 @@ fn route(alloc: Allocator, state: *State, static: *Static, request: *std.http.Se
         return static.handler(request);
     }
 
-    if (std.mem.eql(u8, target, "/") or std.mem.startsWith(u8, target, "/journal")) {
+    if (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/balance_sheet") or std.mem.startsWith(u8, target, "/journal")) {
         return index.handler(alloc, request, state);
+    }
+
+    if (std.mem.eql(u8, target, "/sse/balance_sheet")) {
+        balance_sheet.handler(alloc, request, state) catch |err| switch (err) {
+            error.BrokenPipe => return,
+            else => return err,
+        };
     }
 
     if (std.mem.startsWith(u8, target, "/sse/journal/")) {
@@ -94,7 +102,7 @@ fn route(alloc: Allocator, state: *State, static: *Static, request: *std.http.Se
         const account = try http.decode_url_alloc(alloc, raw_account);
         defer alloc.free(account);
         journal.handler(alloc, request, state, account) catch |err| switch (err) {
-            error.BrokenPipe => {},
+            error.BrokenPipe => return,
             else => return err,
         };
     }

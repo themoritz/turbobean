@@ -277,6 +277,12 @@ pub const LotsInventory = struct {
         }
         return result;
     }
+
+    pub fn clear(self: *LotsInventory) void {
+        var iter = self.by_currency.valueIterator();
+        while (iter.next()) |v| v.deinit(self.alloc);
+        self.by_currency.clearRetainingCapacity();
+    }
 };
 
 /// Just records units by currency.
@@ -346,6 +352,10 @@ pub const PlainInventory = struct {
             .by_currency = try self.by_currency.cloneWithAllocator(alloc),
         };
     }
+
+    pub fn clear(self: *PlainInventory) void {
+        self.by_currency.clearRetainingCapacity();
+    }
 };
 
 pub const Inventory = union(enum) {
@@ -414,6 +424,13 @@ pub const Inventory = union(enum) {
             .plain => |inv| .{ .plain = try inv.clone(alloc) },
             .lots => |inv| .{ .lots = try inv.clone(alloc) },
         };
+    }
+
+    pub fn clear(self: *Inventory) void {
+        switch (self.*) {
+            .plain => |*inv| inv.clear(),
+            .lots => |*inv| inv.clear(),
+        }
     }
 };
 

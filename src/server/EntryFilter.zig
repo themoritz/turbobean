@@ -27,3 +27,23 @@ pub fn isWithinDateRange(self: Self, date: Date) bool {
 
     return true;
 }
+
+pub fn isAfterStart(self: Self, date: Date) bool {
+    if (self.start_date) |start| {
+        const start_parsed = Date.fromSlice(start) catch return false;
+        if (date.compare(start_parsed) == .after) {
+            return false;
+        }
+    }
+    return true;
+}
+
+pub fn isAfterEnd(self: Self, date: Date) bool {
+    if (self.end_date) |end| {
+        const end_parsed = Date.fromSlice(end) catch return false;
+        if (date.compare(end_parsed) == .before) {
+            return true;
+        }
+    }
+    return false;
+}

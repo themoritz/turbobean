@@ -145,6 +145,31 @@ pub fn postInventory(self: *Self, date: Date, posting: Data.Posting) !void {
     }
 }
 
+pub fn clearEarnings(self: *Self, to_account: []const u8) !void {
+    const to_index = self.node_by_name.get(to_account) orelse try self.open(to_account, null, null);
+
+    var iter = self.node_by_name.iterator();
+    while (iter.next()) |kv| {
+        const from_index = kv.value_ptr.*;
+        const relevant = std.mem.startsWith(u8, kv.key_ptr.*, "Income") or std.mem.startsWith(u8, kv.key_ptr.*, "Expenses");
+
+        if (from_index != to_index and relevant) {
+            const from_inv = &self.nodes.items[from_index].inventory;
+            const to_inv = &self.nodes.items[to_index].inventory;
+
+            var summary = try from_inv.summary(self.alloc);
+            defer summary.deinit();
+
+            var cur_iter = summary.by_currency.iterator();
+            while (cur_iter.next()) |cur_kv| {
+                try to_inv.add(cur_kv.key_ptr.*, cur_kv.value_ptr.total_units());
+            }
+
+            from_inv.clear();
+        }
+    }
+}
+
 /// Caller doesn't own returned inventory.
 pub fn inventory(self: *Self, account: []const u8) !*Inventory {
     const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
