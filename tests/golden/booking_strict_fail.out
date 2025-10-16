@@ -6,6 +6,6 @@ tests/golden/booking_strict_fail.bean: [[31mError[0m] Strict booking requires 
 Assets     10 AAPL @ 10 USD {2020-01-02}
            10 AAPL @ 15 USD {2020-01-03}
            -250 USD
-  Stocks   10 AAPL @ 10 USD {2020-01-02}
+├ Stocks   10 AAPL @ 10 USD {2020-01-02}
            10 AAPL @ 15 USD {2020-01-03}
-  Cash     -250 USD
+└ Cash     -250 USD

@@ -221,8 +221,12 @@ pub fn render(self: *Self) ![]const u8 {
 
     const max_width = try self.maxWidth();
 
-    for (self.nodes.items[0].children.items) |child| {
-        try self.renderRec(&buf, child, max_width, 0);
+    var prefix = std.ArrayList(bool).init(self.alloc);
+    defer prefix.deinit();
+
+    for (self.nodes.items[0].children.items, 0..) |child, i| {
+        const is_last = i == self.nodes.items[0].children.items.len - 1;
+        try self.renderRec(&buf, child, max_width, 0, &prefix, is_last);
     }
 
     return buf.toOwnedSlice();
@@ -234,21 +238,61 @@ pub fn print(self: *Self) !void {
     std.debug.print("{s}", .{s});
 }
 
-fn renderRec(self: *Self, buf: *std.ArrayList(u8), node_index: u32, max_width: u32, depth: u32) !void {
+fn renderRec(self: *Self, buf: *std.ArrayList(u8), node_index: u32, max_width: u32, depth: u32, prefix: *std.ArrayList(bool), is_last: bool) !void {
     const node = self.nodes.items[node_index];
-    try buf.appendNTimes(' ', 2 * depth);
+
+    // Draw the prefix (tree structure) based on ancestors
+    var prefix_width: u32 = 0;
+    for (prefix.items) |last| {
+        if (last) {
+            try buf.appendSlice("  ");
+        } else {
+            try buf.appendSlice("│ ");
+        }
+        prefix_width += 2;
+    }
+
+    // Draw the branch connector for current node (if not at root level)
+    if (depth > 0) {
+        if (is_last) {
+            try buf.appendSlice("└ ");
+        } else {
+            try buf.appendSlice("├ ");
+        }
+        prefix_width += 2;
+    }
+
     try buf.appendSlice(node.name);
     var summary = try self.inventoryAggregatedByNode(self.alloc, node_index);
     defer summary.deinit();
     if (!summary.isEmpty()) {
         const name_width: u32 = try unicodeLen(self.nodes.items[node_index].name);
-        const width: u32 = depth * 2 + name_width;
-        try buf.appendNTimes(' ', max_width - width + 3);
+        const width: u32 = prefix_width + name_width;
+        if (width <= max_width + 3) {
+            try buf.appendNTimes(' ', max_width + 3 - width);
+        } else {
+            try buf.append(' ');
+        }
         try summary.treeDisplay(max_width + 3, buf.writer().any());
     }
     try buf.append('\n');
-    for (node.children.items) |child| {
-        try self.renderRec(buf, child, max_width, depth + 1);
+
+    // Render children with updated prefix
+    if (node.children.items.len > 0) {
+        // Add current node's continuation state to prefix for children (if not root level)
+        if (depth > 0) {
+            try prefix.append(is_last);
+        }
+
+        for (node.children.items, 0..) |child, i| {
+            const child_is_last = i == node.children.items.len - 1;
+            try self.renderRec(buf, child, max_width, depth + 1, prefix, child_is_last);
+        }
+
+        // Remove the continuation state we added
+        if (depth > 0) {
+            _ = prefix.pop();
+        }
     }
 }
 
@@ -258,6 +302,7 @@ fn maxWidth(self: *Self) !u32 {
 
 fn maxWidthRec(self: *Self, node_index: u32, depth: u32) !u32 {
     const name_width: u32 = try unicodeLen(self.nodes.items[node_index].name);
+    // Each level adds 2 characters for tree drawing
     var width: u32 = depth * 2 + name_width;
     for (self.nodes.items[node_index].children.items) |child| {
         width = @max(width, try self.maxWidthRec(child, depth + 1));
@@ -282,12 +327,12 @@ test "tree" {
 
     const expected =
         \\Assets
-        \\  Currency
-        \\    Chase
-        \\    BoA
-        \\  Stocks
+        \\├ Currency
+        \\│ ├ Chase
+        \\│ └ BoA
+        \\└ Stocks
         \\Income
-        \\  Dividends
+        \\└ Dividends
         \\
     ;
 
@@ -325,13 +370,13 @@ test "aggregated" {
     const expected =
         \\Assets        1 EUR
         \\              2 USD
-        \\  Currency    1 EUR
+        \\└ Currency    1 EUR
         \\              2 USD
-        \\    Chas𝄞     1 USD
-        \\    BoA       1 EUR
+        \\  ├ Chas𝄞     1 USD
+        \\  └ BoA       1 EUR
         \\              1 USD
         \\Income        1 USD
-        \\  Dividends   1 USD
+        \\└ Dividends   1 USD
         \\
     ;
 

@@ -6,6 +6,6 @@ tests/golden/booking_spec_ambiguous.bean: [[31mError[0m] Ambiguous match. Lot 
 Assets     10 AAPL @ 10 USD {2020-01-02, "magic lot"}
            10 AAPL @ 15 USD {2020-01-03, "magic lot"}
            -250 USD
-  Stocks   10 AAPL @ 10 USD {2020-01-02, "magic lot"}
+├ Stocks   10 AAPL @ 10 USD {2020-01-02, "magic lot"}
            10 AAPL @ 15 USD {2020-01-03, "magic lot"}
-  Cash     -250 USD
+└ Cash     -250 USD

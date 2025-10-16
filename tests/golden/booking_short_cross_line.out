@@ -1,4 +1,4 @@
 Assets     -30 USD
            1 SHORT @ 20 USD {2020-01-03}
-  Stocks   1 SHORT @ 20 USD {2020-01-03}
-  Cash     -30 USD
+├ Stocks   1 SHORT @ 20 USD {2020-01-03}
+└ Cash     -30 USD

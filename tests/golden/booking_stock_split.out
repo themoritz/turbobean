@@ -1,4 +1,4 @@
 Assets     20 AAPL @ 5 USD {2020-01-02}
            -100 USD
-  Stocks   20 AAPL @ 5 USD {2020-01-02}
-  Cash     -100 USD
+├ Stocks   20 AAPL @ 5 USD {2020-01-02}
+└ Cash     -100 USD

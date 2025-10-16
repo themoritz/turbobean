@@ -6,6 +6,6 @@ tests/golden/booking_strict_miss.bean: [[31mError[0m] No matching lot found fo
 Assets     10 AAPL @ 10 USD {2020-01-02}
            10 AAPL @ 15 USD {2020-01-03}
            -250 USD
-  Stocks   10 AAPL @ 10 USD {2020-01-02}
+├ Stocks   10 AAPL @ 10 USD {2020-01-02}
            10 AAPL @ 15 USD {2020-01-03}
-  Cash     -250 USD
+└ Cash     -250 USD
