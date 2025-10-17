@@ -228,13 +228,25 @@ fn renderRec(
 
     // Render children with updated prefix
     if (has_children) {
+        // Sort children by name
+        const sorted_children = try alloc.dupe(u32, node.children.items);
+        defer alloc.free(sorted_children);
+
+        std.mem.sort(u32, sorted_children, tree, struct {
+            fn lessThan(tr: *const Tree, a: u32, b: u32) bool {
+                const name_a = tr.nodes.items[a].name;
+                const name_b = tr.nodes.items[b].name;
+                return std.mem.order(u8, name_a, name_b) == .lt;
+            }
+        }.lessThan);
+
         // Add current node's continuation state to prefix for children (if not root level)
         if (depth > 0) {
             try prefix.append(is_last);
         }
 
-        for (node.children.items, 0..) |child, i| {
-            const child_is_last = i == node.children.items.len - 1;
+        for (sorted_children, 0..) |child, i| {
+            const child_is_last = i == sorted_children.len - 1;
             try renderRec(alloc, out, tree, child, depth + 1, prefix, child_is_last);
         }
 
