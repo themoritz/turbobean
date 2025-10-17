@@ -217,7 +217,11 @@ fn renderRec(
         try zts.write(t, "icon_open", out);
         try zts.write(t, "icon_line", out);
     } else {
-        try zts.write(t, "icon_leaf", out);
+        if (depth > 0) {
+            try zts.write(t, "icon_leaf", out);
+        } else {
+            try zts.write(t, "icon_leaf_root", out);
+        }
     }
     try zts.write(t, "icon_end", out);
 
