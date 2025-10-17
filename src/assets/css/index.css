@@ -116,6 +116,7 @@ nav .modal {
   max-height: 75vh;
   margin: auto;
   background: white;
+  z-index: 10;
 
   display: flex;
   flex-direction: column;

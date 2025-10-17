@@ -1,4 +1,24 @@
-.container {
+.balance_sheet {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+}
+
+.balance_sheet .left {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.balance_sheet .right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.balance_sheet_part {
   border: 1px solid #d3d3d3;
   border-radius: 5px;
   box-shadow:
@@ -12,14 +32,14 @@
   display: grid;
 }
 
-.container .account {
+.balance_sheet_part .account {
   display: contents;
 }
 
-.container .account:nth-child(2n+1) > .icon,
-.container .account:nth-child(2n+1) > .tree,
-.container .account:nth-child(2n+1) > .name,
-.container .account:nth-child(2n+1) > .amount {
+.balance_sheet_part .account:nth-child(2n+1) > .icon,
+.balance_sheet_part .account:nth-child(2n+1) > .tree,
+.balance_sheet_part .account:nth-child(2n+1) > .name,
+.balance_sheet_part .account:nth-child(2n+1) > .balances {
   background-color: #f5f5f5;
 }
 
@@ -33,11 +53,19 @@
 }
 
 .account .name {
-  padding: 0 5px;
 }
 
+.account .balances {
+  padding: 0px 5px;
+}
 
-.container .header .cell {
+.account .balance {
+  font-family: "Fira Mono", mono;
+  text-align: right;
+  white-space: pre;
+}
+
+.balance_sheet_part .header .cell {
   background-color: #f5f5f5;
   border-bottom: 1px solid #d3d3d3;
   padding: 2px 5px;
@@ -45,6 +73,6 @@
   font-style: medium
 }
 
-.container .row .right {
-  justify-content: flex-end;
+.balance_sheet_part .header .right {
+  text-align: right;
 }

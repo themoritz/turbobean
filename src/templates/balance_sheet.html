@@ -1,83 +1,96 @@
-.table
+.balance_sheet
+<div class="balance_sheet">
+    <div class="left">
 
-<div class="container" style="grid-template-columns: repeat(5, calc(14rem / 16)) repeat(2, 1fr);">
-    <div class="account header">
-        <div class="cell" style="grid-column: 1 / 7;"></div>
-        <div class="cell right">Amount</div>
+        .left_end
     </div>
-    <div class="account">
-        <div class="icon">⏷
-            <svg width="1" height="100%" style="position: absolute; left: 5pt; top: 13pt;">
-                <line x1="0" y1="0" x2="0" y2="100%" stroke="hsl(0deg 0% 80%)" stroke-width="1.75" />
-            </svg>
-        </div>
-        <div class="name" style="grid-column: 2 / 7;">Assets</div>
-        <div class="amount">100 EUR</div>
-    </div>
-    <div class="account">
-        <div class="tree">
-            <svg width="1" height="100%" style="position: absolute; left: 5pt; top: 0;">
-                <line x1="0" y1="0" x2="0" y2="100%" stroke="hsl(0deg 0% 80%)" stroke-width="2" />
-            </svg>
-            <!-- Middle -->
-            <svg viewBox="0 0 20 30">
-                <path d="M 10,16 L 20,16" stroke="hsl(0deg 0% 80%)" stroke-width="1.75" fill="none" />
-            </svg>
-        </div>
-        <div class="icon">⏷
-            <svg width="1" height="100%" style="position: absolute; left: 5pt; top: 15pt;">
-                <line x1="0" y1="0" x2="0" y2="100%" stroke="hsl(0deg 0% 80%)" stroke-width="1.75" />
-            </svg>
-        </div>
-        <div class="name" style="grid-column: 3 / 7;">DE</div>
-        <div class="amount">100 EUR<br />10 NZD</div>
-    </div>
-    <div class="account">
-        <div class="tree">
-            <svg width="1" height="100%" style="position: absolute; left: 5pt; top: 0;">
-                <line x1="0" y1="0" x2="0" y2="100%" stroke="hsl(0deg 0% 80%)" stroke-width="1.75" />
-            </svg>
-        </div>
-        <div class="tree">
-            <svg width="1" height="100%" style="position: absolute; left: 5pt; top: 0;">
-                <line x1="0" y1="0" x2="0" y2="100%" stroke="hsl(0deg 0% 80%)" stroke-width="1.75" />
-            </svg>
-            <!-- Middle -->
-            <svg viewBox="0 0 20 30">
-                <path d="M 10,16 L 20,16" stroke="hsl(0deg 0% 80%)" stroke-width="1.75" fill="none" />
-            </svg>
-        </div>
-        <div class="icon">•</div>
-        <div class="name" style="grid-column: 4 / 7;">Giro</div>
-        <div class="amount">100 EUR</div>
-    </div>
-    <div class="account">
-        <div class="tree">
-            <svg width="1" height="100%" style="position: absolute; left: 5pt; top: 0;">
-                <line x1="0" y1="0" x2="0" y2="100%" stroke="hsl(0deg 0% 80%)" stroke-width="1.75" />
-            </svg>
-        </div>
-        <div class="tree">
-            <!-- Last -->
-            <svg viewBox="0 0 20 30">
-                <path d="M 10,0 L 10,16 L 20,16" stroke="hsl(0deg 0% 80%)" stroke-width="1.75" fill="none" />
-            </svg>
-        </div>
-        <div class="icon">•</div>
-        <div class="name" style="grid-column: 4 / 7;">Savings</div>
-        <div class="amount">100 EUR</div>
-    </div>
-    <div class="account">
-        <div class="tree">
-            <!-- Last -->
-            <svg viewBox="0 0 20 30">
-                <path d="M 10,0 L 10,16 L 20,16" stroke="hsl(0deg 0% 80%)" stroke-width="1.75" fill="none" />
-            </svg>
-        </div>
-        <div class="icon">⏵</div>
-        <div class="name" style="grid-column: 3 / 7;">US</div>
-        <div class="amount">100 EUR</div>
+    <div class="right">
+
+        .right_end
     </div>
 </div>
 
-.table_end
+
+.table
+
+<div class="balance_sheet_part" style="grid-template-columns: repeat(5, calc(14rem / 16 * 1.5)) repeat(2, 1fr);">
+    <div class="account header">
+        <div class="cell" style="grid-column: 1 / 7;"></div>
+        <div class="cell right">Other</div>
+    </div>
+
+    .account
+    <div class="account">
+
+        .tree
+        <div class="tree">
+            <!-- Put from below in here -->
+
+            .tree_end
+        </div>
+
+        .icon
+        <div class="icon">
+            <!-- Put from below in here -->
+
+            .icon_end
+        </div>
+
+        .name
+        <div class="name" style="grid-column: {[col_start]d} / 7;">{[name]s}</div>
+
+        .balances
+        <div class="balances">
+
+            .balance
+            <div class="balance">{[units]any:.2} {[cur]s}</div>
+
+            .balances_end
+        </div>
+
+        .account_end
+    </div>
+
+    .table_end
+</div>
+
+
+.icon_open
+<svg viewBox="0 0 20 20">
+    <path d="M 6,8 L 10,12 L 14,8" stroke="hsl(0deg 0% 50%)" stroke-width="2.5" fill="none" />
+    <!-- <polygon points="5,12 15,12 10,18" style="fill:black;" /> -->
+</svg>
+
+.icon_closed
+<svg viewBox="0 0 20 20">
+</svg>
+>
+
+.icon_leaf
+<svg viewBox="0 0 20 20">
+    <circle r="2.5" cx="10" cy="10" fill="hsl(0deg 0% 50%)" />
+</svg>
+
+.icon_line
+<svg height="100%" viewBox="0 0 20 20" preserveAspectRatio="none"
+    style="position: absolute; top: calc(14rem / 16 * 1.5 - 1pt);">
+    <path d="M 10,0 L 10,20" stroke="hsl(0deg 0% 80%)" stroke-width="1.5" fill="none" />
+</svg>
+
+.tree_node_middle
+<svg height="100%" viewBox="0 0 20 20" preserveAspectRatio="none" style="position: absolute;">
+    <path d="M 10,0 L 10,20" stroke="hsl(0deg 0% 80%)" stroke-width="1.5" fill="none" />
+</svg>
+<svg viewBox="0 0 20 20">
+    <path d="M 10,10 L 20,10" stroke="hsl(0deg 0% 80%)" stroke-width="1.5" fill="none" />
+</svg>
+
+.tree_node_last
+<svg viewBox="0 0 20 20">
+    <path d="M 10,0 L 10,10 L 20,10" stroke="hsl(0deg 0% 80%)" stroke-width="1.5" fill="none" />
+</svg>
+
+.tree_prefix
+<svg height="100%" viewBox="0 0 20 20" preserveAspectRatio="none" style="position: absolute;">
+    <path d="M 10,0 L 10,20" stroke="hsl(0deg 0% 80%)" stroke-width="1.5" fill="none" />
+</svg>

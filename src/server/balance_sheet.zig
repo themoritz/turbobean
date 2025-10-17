@@ -8,6 +8,7 @@ const Tree = @import("../tree.zig");
 const Date = @import("../date.zig").Date;
 const SSE = @import("SSE.zig");
 const EntryFilter = @import("EntryFilter.zig");
+const t = @embedFile("../templates/balance_sheet.html");
 
 pub fn handler(
     alloc: std.mem.Allocator,
@@ -76,8 +77,6 @@ fn render(
     filter: EntryFilter,
     out: std.io.AnyWriter,
 ) !std.ArrayList(PlotPoint) {
-    const t = @embedFile("../templates/balance_sheet.html");
-
     var tree = try Tree.init(alloc);
     defer tree.deinit();
 
@@ -136,9 +135,112 @@ fn render(
     try tree.clearEarnings("Equity:Earnings:Current");
 
     // Render Tree
-    try zts.write(t, "table", out);
-
-    try zts.write(t, "table_end", out);
+    try zts.write(t, "balance_sheet", out);
+    try renderTable(alloc, out, &tree, "Assets");
+    try zts.write(t, "left_end", out);
+    try renderTable(alloc, out, &tree, "Liabilities");
+    try renderTable(alloc, out, &tree, "Equity");
+    try zts.write(t, "right_end", out);
 
     return plot_points;
+}
+
+fn renderTable(
+    alloc: std.mem.Allocator,
+    out: std.io.AnyWriter,
+    tree: *const Tree,
+    title: []const u8,
+) !void {
+    for (tree.nodes.items[0].children.items) |i| {
+        if (std.mem.eql(u8, tree.nodes.items[i].name, title)) {
+            try zts.print(t, "table", .{}, out);
+
+            var prefix = std.ArrayList(bool).init(alloc);
+            defer prefix.deinit();
+
+            try renderRec(alloc, out, tree, i, 0, &prefix, true);
+
+            try zts.write(t, "table_end", out);
+        }
+    }
+}
+
+fn renderRec(
+    alloc: std.mem.Allocator,
+    out: std.io.AnyWriter,
+    tree: *const Tree,
+    node_index: u32,
+    depth: u32,
+    prefix: *std.ArrayList(bool),
+    is_last: bool,
+) !void {
+    const node = tree.nodes.items[node_index];
+    const has_children = node.children.items.len > 0;
+    // var summary = try tree.inventoryAggregatedByNode(alloc, node_index);
+    var summary = try node.inventory.summary(alloc);
+    defer summary.deinit();
+
+    try zts.write(t, "account", out);
+
+    for (prefix.items) |last| {
+        try zts.write(t, "tree", out);
+        if (!last) {
+            try zts.write(t, "tree_prefix", out);
+        }
+        try zts.write(t, "tree_end", out);
+    }
+
+    if (depth > 0) {
+        try zts.write(t, "tree", out);
+        if (is_last) {
+            try zts.write(t, "tree_node_last", out);
+        } else {
+            try zts.write(t, "tree_node_middle", out);
+        }
+        try zts.write(t, "tree_end", out);
+    }
+
+    try zts.write(t, "icon", out);
+    if (has_children) {
+        try zts.write(t, "icon_open", out);
+        try zts.write(t, "icon_line", out);
+    } else {
+        try zts.write(t, "icon_leaf", out);
+    }
+    try zts.write(t, "icon_end", out);
+
+    try zts.print(t, "name", .{ .name = node.name, .col_start = depth + 2 }, out);
+
+    try zts.write(t, "balances", out);
+    var iter = summary.by_currency.iterator();
+    while (iter.next()) |kv| {
+        const units = kv.value_ptr.total_units();
+        if (!units.is_zero()) {
+            try zts.print(t, "balance", .{
+                .units = units,
+                .cur = kv.key_ptr.*,
+            }, out);
+        }
+    }
+    try zts.write(t, "balances_end", out);
+
+    try zts.write(t, "account_end", out);
+
+    // Render children with updated prefix
+    if (has_children) {
+        // Add current node's continuation state to prefix for children (if not root level)
+        if (depth > 0) {
+            try prefix.append(is_last);
+        }
+
+        for (node.children.items, 0..) |child, i| {
+            const child_is_last = i == node.children.items.len - 1;
+            try renderRec(alloc, out, tree, child, depth + 1, prefix, child_is_last);
+        }
+
+        // Remove the continuation state we added
+        if (depth > 0) {
+            _ = prefix.pop();
+        }
+    }
 }

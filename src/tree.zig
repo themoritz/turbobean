@@ -176,7 +176,7 @@ pub fn inventory(self: *Self, account: []const u8) !*Inventory {
     return &self.nodes.items[index].inventory;
 }
 
-pub fn findNode(self: *Self, account: []const u8) ?u32 {
+pub fn findNode(self: *const Self, account: []const u8) ?u32 {
     var result: ?u32 = null;
     for (self.nodes.items, 0..) |node, index| {
         if (std.mem.eql(u8, node.name, account)) {
@@ -188,13 +188,13 @@ pub fn findNode(self: *Self, account: []const u8) ?u32 {
 }
 
 /// Caller owns returned inventory.
-pub fn inventoryAggregatedByAccount(self: *Self, alloc: Allocator, account: []const u8) !Summary {
+pub fn inventoryAggregatedByAccount(self: *const Self, alloc: Allocator, account: []const u8) !Summary {
     const node = self.node_by_name.get(account) orelse self.findNode(account) orelse return error.AccountDoesNotExist;
     return self.inventoryAggregatedByNode(alloc, node);
 }
 
 /// Caller owns returned inventory.
-pub fn inventoryAggregatedByNode(self: *Self, alloc: Allocator, node: u32) !Summary {
+pub fn inventoryAggregatedByNode(self: *const Self, alloc: Allocator, node: u32) !Summary {
     var summary = Summary.init(alloc);
     errdefer summary.deinit();
 
