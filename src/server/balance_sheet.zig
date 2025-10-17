@@ -170,7 +170,11 @@ fn renderTable(
             var prefix = std.ArrayList(bool).init(alloc);
             defer prefix.deinit();
 
-            try renderRec(alloc, out, tree, i, 0, &prefix, true);
+            var name_prefix = std.ArrayList(u8).init(alloc);
+            defer name_prefix.deinit();
+            try name_prefix.appendSlice(title);
+
+            try renderRec(alloc, out, tree, i, 0, &prefix, &name_prefix, true);
 
             try zts.write(t, "table_end", out);
         }
@@ -184,6 +188,7 @@ fn renderRec(
     node_index: u32,
     depth: u32,
     prefix: *std.ArrayList(bool),
+    name_prefix: *std.ArrayList(u8),
     is_last: bool,
 ) !void {
     const node = tree.nodes.items[node_index];
@@ -225,7 +230,17 @@ fn renderRec(
     }
     try zts.write(t, "icon_end", out);
 
-    try zts.print(t, "name", .{ .name = node.name, .col_start = depth + 2 }, out);
+    const name_prefix_len = name_prefix.items.len;
+    if (depth > 0) {
+        try name_prefix.append(':');
+        try name_prefix.appendSlice(node.name);
+    }
+
+    try zts.print(t, "name", .{
+        .name = node.name,
+        .full_name = name_prefix.items,
+        .col_start = depth + 2,
+    }, out);
 
     try zts.write(t, "balances", out);
     var iter = summary.by_currency.iterator();
@@ -263,7 +278,16 @@ fn renderRec(
 
         for (sorted_children, 0..) |child, i| {
             const child_is_last = i == sorted_children.len - 1;
-            try renderRec(alloc, out, tree, child, depth + 1, prefix, child_is_last);
+            try renderRec(
+                alloc,
+                out,
+                tree,
+                child,
+                depth + 1,
+                prefix,
+                name_prefix,
+                child_is_last,
+            );
         }
 
         // Remove the continuation state we added
@@ -271,4 +295,6 @@ fn renderRec(
             _ = prefix.pop();
         }
     }
+
+    name_prefix.shrinkRetainingCapacity(name_prefix_len);
 }

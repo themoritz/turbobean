@@ -37,7 +37,9 @@
         </div>
 
         .name
-        <div class="name" style="grid-column: {[col_start]d} / 7;">{[name]s}</div>
+        <div class="name" style="grid-column: {[col_start]d} / 7;">
+            <a @click="$dispatch('navigate', '/journal/{[full_name]s}');">{[name]s}</a>
+        </div>
 
         .balances
         <div class="balances">

@@ -53,7 +53,13 @@
   overflow: hidden;
 }
 
-.account .name {
+.account .name a {
+  cursor: pointer;
+  color: #0279c8;
+}
+
+.account .name a:hover {
+  text-decoration: underline;
 }
 
 .account .balances {
