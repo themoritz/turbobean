@@ -47,3 +47,11 @@ pub fn isAfterEnd(self: Self, date: Date) bool {
     }
     return false;
 }
+
+pub fn hasStartDate(self: Self) bool {
+    return self.start_date != null;
+}
+
+pub fn hasEndDate(self: Self) bool {
+    return self.end_date != null;
+}

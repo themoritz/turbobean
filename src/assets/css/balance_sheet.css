@@ -50,6 +50,7 @@
 .account .icon {
   text-align: center;
   position: relative;
+  overflow: hidden;
 }
 
 .account .name {

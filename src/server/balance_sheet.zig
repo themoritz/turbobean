@@ -71,6 +71,8 @@ const PlotPoint = struct {
     }
 };
 
+const DateState = enum { before, within };
+
 fn render(
     alloc: std.mem.Allocator,
     project: *Project,
@@ -88,19 +90,29 @@ fn render(
         plot_points.deinit();
     }
 
-    var before_start = true;
+    var date_state = DateState.before;
 
     for (project.sorted_entries.items) |sorted_entry| {
         const data = project.files.items[sorted_entry.file];
         const entry = data.entries.items[sorted_entry.entry];
 
-        if (filter.isAfterStart(entry.date)) {
-            try tree.clearEarnings("Equity:Earnings:Previous");
-            before_start = false;
-        }
-
-        if (!before_start and filter.isAfterEnd(entry.date)) {
-            break;
+        state: switch (date_state) {
+            .before => {
+                if (filter.hasStartDate()) {
+                    if (filter.isAfterStart(entry.date)) {
+                        try tree.clearEarnings("Equity:Earnings:Previous");
+                        continue :state .within;
+                    }
+                } else {
+                    continue :state .within;
+                }
+            },
+            .within => {
+                date_state = .within;
+                if (filter.isAfterEnd(entry.date)) {
+                    break;
+                }
+            },
         }
 
         switch (entry.payload) {

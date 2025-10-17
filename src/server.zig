@@ -86,11 +86,11 @@ fn route(alloc: Allocator, state: *State, static: *Static, request: *std.http.Se
         return static.handler(request);
     }
 
-    if (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/balance_sheet") or std.mem.startsWith(u8, target, "/journal")) {
+    if (std.mem.eql(u8, target, "/") or std.mem.startsWith(u8, target, "/balance_sheet") or std.mem.startsWith(u8, target, "/journal")) {
         return index.handler(alloc, request, state);
     }
 
-    if (std.mem.eql(u8, target, "/sse/balance_sheet")) {
+    if (std.mem.startsWith(u8, target, "/sse/balance_sheet")) {
         balance_sheet.handler(alloc, request, state) catch |err| switch (err) {
             error.BrokenPipe => return,
             else => return err,
