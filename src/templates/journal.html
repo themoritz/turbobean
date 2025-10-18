@@ -61,7 +61,9 @@
 
                 .tree_end
             </div>
-            <div class="account">{[account]s}</div>
+            <div class="account">
+                <a @click="$dispatch('navigate', '/journal/{[account]s}');">{[account]s}</a>
+            </div>
             <div class="posting_change">{[change_units]any:.2} {[change_cur]s}</div>
 
             .transaction_end

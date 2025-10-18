@@ -18,6 +18,15 @@ content {
   height: 100%;
 }
 
+a {
+  cursor: pointer;
+  color: #0279c8;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
 /*********************** HEADER *************************/
 
 header {
