@@ -19,25 +19,24 @@ pub const Node = struct {
     parent: ?u32,
     children: std.ArrayList(u32),
 
-    pub fn init(alloc: Allocator, name: []const u8, parent: ?u32, inv: Inventory) Node {
+    pub fn init(name: []const u8, parent: ?u32, inv: Inventory) Node {
         return Node{
             .name = name,
             .inventory = inv,
             .parent = parent,
-            .children = std.ArrayList(u32).init(alloc),
+            .children = .{},
         };
     }
 
-    pub fn deinit(self: *Node) void {
-        self.children.deinit();
+    pub fn deinit(self: *Node, alloc: Allocator) void {
+        self.children.deinit(alloc);
         self.inventory.deinit();
     }
 };
 
 pub fn init(alloc: Allocator) !Self {
-    var nodes = std.ArrayList(Node).init(alloc);
-    try nodes.append(Node.init(
-        alloc,
+    var nodes = std.ArrayList(Node){};
+    try nodes.append(alloc, Node.init(
         "",
         null,
         try Inventory.init(alloc, null, null),
@@ -52,9 +51,9 @@ pub fn init(alloc: Allocator) !Self {
 pub fn deinit(self: *Self) void {
     self.node_by_name.deinit();
     for (self.nodes.items) |*node| {
-        node.deinit();
+        node.deinit(self.alloc);
     }
-    self.nodes.deinit();
+    self.nodes.deinit(self.alloc);
 }
 
 pub fn open(
@@ -80,13 +79,12 @@ pub fn open(
 
         const new_index: u32 = @intCast(self.nodes.items.len);
         const new_node = Node.init(
-            self.alloc,
             part,
             current_index,
             try Inventory.init(self.alloc, booking_method, currencies),
         );
-        try self.nodes.append(new_node);
-        try self.nodes.items[current_index].children.append(new_index);
+        try self.nodes.append(self.alloc, new_node);
+        try self.nodes.items[current_index].children.append(self.alloc, new_index);
         current_index = new_index;
     }
 
@@ -198,10 +196,10 @@ pub fn inventoryAggregatedByNode(self: *const Self, alloc: Allocator, node: u32)
     var summary = Summary.init(alloc);
     errdefer summary.deinit();
 
-    var stack = std.ArrayList(usize).init(alloc);
-    defer stack.deinit();
+    var stack = std.ArrayList(usize){};
+    defer stack.deinit(self.alloc);
 
-    try stack.append(node);
+    try stack.append(self.alloc, node);
     while (stack.items.len > 0) {
         const index = stack.pop().?;
         var n = self.nodes.items[index];
@@ -209,19 +207,19 @@ pub fn inventoryAggregatedByNode(self: *const Self, alloc: Allocator, node: u32)
         defer n_summary.deinit();
         try summary.combine(n_summary);
         for (n.children.items) |child| {
-            try stack.append(child);
+            try stack.append(self.alloc, child);
         }
     }
     return summary;
 }
 
 pub fn render(self: *Self) ![]const u8 {
-    var buf = std.ArrayList(u8).init(self.alloc);
+    var buf = std.array_list.Managed(u8).init(self.alloc);
     defer buf.deinit();
 
     const max_width = try self.maxWidth();
 
-    var prefix = std.ArrayList(bool).init(self.alloc);
+    var prefix = std.array_list.Managed(bool).init(self.alloc);
     defer prefix.deinit();
 
     for (self.nodes.items[0].children.items, 0..) |child, i| {
@@ -238,7 +236,15 @@ pub fn print(self: *Self) !void {
     std.debug.print("{s}", .{s});
 }
 
-fn renderRec(self: *Self, buf: *std.ArrayList(u8), node_index: u32, max_width: u32, depth: u32, prefix: *std.ArrayList(bool), is_last: bool) !void {
+fn renderRec(
+    self: *Self,
+    buf: *std.array_list.Managed(u8),
+    node_index: u32,
+    max_width: u32,
+    depth: u32,
+    prefix: *std.array_list.Managed(bool),
+    is_last: bool,
+) !void {
     const node = self.nodes.items[node_index];
 
     // Draw the prefix (tree structure) based on ancestors

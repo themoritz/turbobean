@@ -99,26 +99,26 @@ const StaticFiles = struct {
         };
         defer file.close();
 
-        var response_headers = std.ArrayList(std.http.Header).init(self.alloc);
-        defer response_headers.deinit();
+        var response_headers = std.ArrayList(std.http.Header){};
+        defer response_headers.deinit(self.alloc);
 
-        try response_headers.append(.{
+        try response_headers.append(self.alloc, .{
             .name = "Content-Type",
             .value = getMime(sub_path),
         });
 
         // ETag and caching
-        const meta = try file.metadata();
+        const stat = try file.stat();
 
         var hash = std.hash.Wyhash.init(0);
-        hash.update(std.mem.asBytes(&meta.size()));
-        hash.update(std.mem.asBytes(&meta.modified()));
+        hash.update(std.mem.asBytes(&stat.size));
+        hash.update(std.mem.asBytes(&stat.mtime));
         const etag_hash = hash.final();
 
         const calc_etag = try std.fmt.allocPrint(self.alloc, "\"{d}\"", .{etag_hash});
         defer self.alloc.free(calc_etag);
 
-        try response_headers.append(.{ .name = "ETag", .value = calc_etag });
+        try response_headers.append(self.alloc, .{ .name = "ETag", .value = calc_etag });
 
         if (getHeader(req, "If-None-Match")) |etag| {
             if (std.mem.eql(u8, etag, calc_etag)) {

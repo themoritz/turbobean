@@ -11,8 +11,8 @@ const Static = @import("server/static.zig").Static;
 var running: std.atomic.Value(bool) = .init(true);
 
 pub fn loop(alloc: std.mem.Allocator, project: *Project) !void {
-    var threads = std.ArrayList(std.Thread).init(alloc);
-    defer threads.deinit();
+    var threads = std.ArrayList(std.Thread){};
+    defer threads.deinit(alloc);
 
     const state = try State.init(alloc, project);
     defer state.deinit();
@@ -25,12 +25,12 @@ pub fn loop(alloc: std.mem.Allocator, project: *Project) !void {
         var net_server = try address.listen(.{ .reuse_address = true });
         defer net_server.deinit();
 
-        std.log.info("Listening on {any}", .{address});
+        std.log.info("Listening on {f}", .{address});
 
         while (running.load(.seq_cst)) {
             const conn = try net_server.accept();
             const thread = try std.Thread.spawn(.{}, handle_conn, .{ alloc, conn, state, &static });
-            try threads.append(thread);
+            try threads.append(alloc, thread);
             // Wait 1 ms in case this connection is a shutdown request.
             std.Thread.sleep(1_000_000);
         }
@@ -50,8 +50,11 @@ fn handle_conn(
     // Don't reuse connection because we don't want to block forever on receiveHead.
     defer conn.stream.close();
 
-    var read_buffer: [8096]u8 = undefined;
-    var server = std.http.Server.init(conn, &read_buffer);
+    var recv_buffer: [4096]u8 = undefined;
+    var send_buffer: [4096]u8 = undefined;
+    var conn_reader = conn.stream.reader(&recv_buffer);
+    var conn_writer = conn.stream.writer(&send_buffer);
+    var server = std.http.Server.init(conn_reader.interface(), &conn_writer.interface);
 
     var req = server.receiveHead() catch |err| {
         switch (err) {
@@ -92,7 +95,7 @@ fn route(alloc: Allocator, state: *State, static: *Static, request: *std.http.Se
 
     if (std.mem.startsWith(u8, target, "/sse/balance_sheet")) {
         balance_sheet.handler(alloc, request, state) catch |err| switch (err) {
-            error.BrokenPipe => return,
+            error.WriteFailed => return, // TODO: Broken pipe?
             else => return err,
         };
     }
@@ -102,7 +105,7 @@ fn route(alloc: Allocator, state: *State, static: *Static, request: *std.http.Se
         const account = try http.decode_url_alloc(alloc, raw_account);
         defer alloc.free(account);
         journal.handler(alloc, request, state, account) catch |err| switch (err) {
-            error.BrokenPipe => return,
+            error.WriteFailed => return, // TODO: Broken pipe?
             else => return err,
         };
     }

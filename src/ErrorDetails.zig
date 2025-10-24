@@ -90,20 +90,20 @@ pub const Tag = enum {
 };
 
 pub fn message(e: Self, alloc: Allocator) ![]const u8 {
-    var buffer = std.ArrayList(u8).init(alloc);
+    var buffer = std.ArrayList(u8){};
     switch (e.tag) {
         .expected_token => {
-            try std.fmt.format(
-                buffer.writer(),
+            try buffer.print(
+                alloc,
                 "Expected {s}, found {s}\n",
                 .{ @tagName(e.expected.?), @tagName(e.token.tag) },
             );
         },
         else => {
-            try std.fmt.format(buffer.writer(), "{s}\n", .{e.tag.message()});
+            try buffer.print(alloc, "{s}\n", .{e.tag.message()});
         },
     }
-    return buffer.toOwnedSlice();
+    return buffer.toOwnedSlice(alloc);
 }
 
 pub fn print(e: Self, alloc: Allocator, colors: bool) !void {
@@ -119,8 +119,8 @@ pub fn dump(e: Self, alloc: Allocator, colors: bool) ![]const u8 {
     } else "";
     const color_off = if (colors) "\x1b[0m" else "";
 
-    var buffer = std.ArrayList(u8).init(alloc);
-    defer buffer.deinit();
+    var buffer = std.ArrayList(u8){};
+    defer buffer.deinit(alloc);
 
     // Calculate line and col from token.loc
     const loc = e.token.slice;
@@ -178,25 +178,25 @@ pub fn dump(e: Self, alloc: Allocator, colors: bool) ![]const u8 {
     const relative = try e.uri.relative(alloc);
     defer alloc.free(relative);
 
-    try std.fmt.format(
-        buffer.writer(),
+    try buffer.print(
+        alloc,
         "{s}: [{s}{s}{s}] {s}\n",
         .{ relative, color_on, severity, color_off, msg },
     );
 
-    try std.fmt.format(
-        buffer.writer(),
+    try buffer.print(
+        alloc,
         "{d:>5} | {s}\n",
         .{ line_start + 1, e.source[line_pos..line_pos_end] },
     );
-    for (0..col_start + 8) |_| try buffer.append(' ');
-    try buffer.appendSlice(color_on);
-    try buffer.appendNTimes('^', col_end - col_start);
-    try buffer.appendSlice(color_off);
+    for (0..col_start + 8) |_| try buffer.append(alloc, ' ');
+    try buffer.appendSlice(alloc, color_on);
+    try buffer.appendNTimes(alloc, '^', col_end - col_start);
+    try buffer.appendSlice(alloc, color_off);
 
-    try buffer.append('\n');
+    try buffer.append(alloc, '\n');
 
-    return buffer.toOwnedSlice();
+    return buffer.toOwnedSlice(alloc);
 }
 
 test "render" {

@@ -4,12 +4,12 @@ const Data = @import("data.zig");
 const Render = @This();
 const Lexer = @import("lexer.zig");
 
-buffer: std.ArrayList(u8),
+buffer: std.array_list.Managed(u8),
 data: *Data,
 
 pub fn init(alloc: Allocator, data: *Data) !Render {
     return .{
-        .buffer = std.ArrayList(u8).init(alloc),
+        .buffer = std.array_list.Managed(u8).init(alloc),
         .data = data,
     };
 }
@@ -62,7 +62,7 @@ fn render(r: *Render) !void {
 }
 
 fn renderEntry(r: *Render, entry: Data.Entry) !void {
-    try r.format("{} ", .{entry.date});
+    try r.format("{f} ", .{entry.date});
     switch (entry.payload) {
         .transaction => |tx| {
             try r.slice(tx.flag.slice);
@@ -113,9 +113,9 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
             try r.slice(balance.account.slice);
             try r.space();
             if (balance.tolerance) |tolerance| {
-                try r.format("{}", .{balance.amount.number.?});
+                try r.format("{f}", .{balance.amount.number.?});
                 try r.slice(" ~ ");
-                try r.format("{}", .{tolerance});
+                try r.format("{f}", .{tolerance});
                 try r.space();
                 try r.slice(balance.amount.currency.?);
             } else {
@@ -197,7 +197,7 @@ fn renderPosting(r: *Render, posting: Data.Posting) !void {
         }
         if (lot_spec.date) |date| {
             if (!first) try r.slice(", ");
-            try r.format("{}", .{date});
+            try r.format("{f}", .{date});
             first = false;
         }
         if (lot_spec.label) |label| {
@@ -235,7 +235,7 @@ fn renderMeta(r: *Render, range: Data.Range, num_indent: usize) !void {
 
 fn renderAmount(r: *Render, amount: Data.Amount) !void {
     if (amount.number) |number| {
-        try r.format("{}", .{number});
+        try r.format("{f}", .{number});
     }
     if (amount.isComplete()) {
         try r.space();

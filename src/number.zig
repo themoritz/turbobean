@@ -107,17 +107,35 @@ pub const Number = struct {
         const float_val = self.toFloat();
 
         var buf: [64]u8 = undefined;
-        const used = try std.fmt.formatFloat(&buf, float_val, .{
+
+        const used = try std.fmt.float.render(&buf, float_val, .{
             .mode = .decimal,
             .precision = self.precision,
         });
         return try allocator.dupe(u8, used);
     }
 
-    pub fn format(self: Number, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
+    pub const WithPrecision = struct {
+        inner: Number,
+        precision: u32,
 
-        const precision: usize = options.precision orelse @intCast(self.precision);
+        pub fn format(self: WithPrecision, writer: *std.Io.Writer) !void {
+            try self.inner.formatWithPrecision(writer, self.precision);
+        }
+    };
+
+    pub fn withPrecision(self: Number, precision: u32) WithPrecision {
+        return .{
+            .inner = self,
+            .precision = precision,
+        };
+    }
+
+    pub fn format(self: Number, writer: *std.Io.Writer) !void {
+        try self.formatWithPrecision(writer, self.precision);
+    }
+
+    pub fn formatWithPrecision(self: Number, writer: *std.Io.Writer, precision: u32) !void {
         const rounded = self.roundTo(@intCast(precision));
 
         const abs_value: i64 = @intCast(@abs(rounded.value));
@@ -327,7 +345,7 @@ test "format" {
 }
 
 fn testFormat(num: Number, expected: []const u8) !void {
-    const formatted = try std.fmt.allocPrint(std.testing.allocator, "{any:.2}", .{num});
+    const formatted = try std.fmt.allocPrint(std.testing.allocator, "{f}", .{num.withPrecision(2)});
     defer std.testing.allocator.free(formatted);
     try std.testing.expectEqualStrings(expected, formatted);
 }
