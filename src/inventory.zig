@@ -502,7 +502,7 @@ pub const Summary = struct {
                     try writer.writeByte('\n');
                     try writer.writeByteNTimes(' ', indent);
                 }
-                try writer.print("{any} {s}", .{ kv.value_ptr.plain, kv.key_ptr.* });
+                try writer.print("{f} {s}", .{ kv.value_ptr.plain, kv.key_ptr.* });
                 first = false;
             }
             if (kv.value_ptr.lots.items.len > 0) {
@@ -511,7 +511,7 @@ pub const Summary = struct {
                         try writer.writeByte('\n');
                         try writer.writeByteNTimes(' ', indent);
                     }
-                    try writer.print("{} {s} @ {} {s} {{{}", .{
+                    try writer.print("{f} {s} @ {f} {s} {{{f}", .{
                         lot.units,
                         kv.key_ptr.*,
                         lot.cost.price,
@@ -528,15 +528,15 @@ pub const Summary = struct {
         }
     }
 
-    pub fn hoverDisplay(self: *const Summary, writer: std.io.AnyWriter) !void {
+    pub fn hoverDisplay(self: *const Summary, writer: *std.Io.Writer) !void {
         var iter = self.by_currency.iterator();
         while (iter.next()) |kv| {
             if (!kv.value_ptr.plain.is_zero()) {
-                try writer.print("• {any} {s}\n", .{ kv.value_ptr.plain, kv.key_ptr.* });
+                try writer.print("• {f} {s}\n", .{ kv.value_ptr.plain, kv.key_ptr.* });
             }
             if (kv.value_ptr.lots.items.len > 0) {
                 for (kv.value_ptr.lots.items) |lot| {
-                    try writer.print("• {} {s} @ {} {s} {{{}", .{
+                    try writer.print("• {f} {s} @ {f} {s} {{{f}", .{
                         lot.units,
                         kv.key_ptr.*,
                         lot.cost.price,

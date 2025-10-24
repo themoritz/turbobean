@@ -5,7 +5,7 @@ const State = @import("State.zig");
 
 pub fn handler(alloc: Allocator, req: *std.http.Server.Request, state: *State) !void {
     const t = @embedFile("../templates/index.html");
-    var body = std.ArrayList(u8).init(alloc);
+    var body = std.array_list.Managed(u8).init(alloc);
     defer body.deinit();
     try zts.writeHeader(t, body.writer());
 

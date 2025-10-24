@@ -42,15 +42,15 @@ const FileLine = struct {
 pub fn load(alloc: Allocator, name: []const u8) !Self {
     var self = Self{
         .alloc = alloc,
-        .files = std.ArrayList(Data).init(alloc),
-        .uris = std.ArrayList(Uri).init(alloc),
+        .files = .{},
+        .uris = .{},
         .files_by_uri = std.StringHashMap(usize).init(alloc),
-        .sorted_entries = std.ArrayList(SortedEntry).init(alloc),
+        .sorted_entries = .{},
 
-        .synthetic_entries = std.ArrayList(Data.Entry).init(alloc),
+        .synthetic_entries = .{},
         .synthetic_postings = .{},
 
-        .errors = std.ArrayList(ErrorDetails).init(alloc),
+        .errors = .{},
 
         .accounts = std.StringHashMap(FileLine).init(alloc),
         .tags = std.StringHashMap(void).init(alloc),
@@ -64,19 +64,19 @@ pub fn load(alloc: Allocator, name: []const u8) !Self {
 
 pub fn deinit(self: *Self) void {
     for (self.files.items) |*data| data.deinit();
-    self.files.deinit();
+    self.files.deinit(self.alloc);
 
     for (self.uris.items) |*uri| uri.deinit(self.alloc);
-    self.uris.deinit();
+    self.uris.deinit(self.alloc);
 
     self.files_by_uri.deinit();
 
-    self.sorted_entries.deinit();
+    self.sorted_entries.deinit(self.alloc);
 
-    self.synthetic_entries.deinit();
+    self.synthetic_entries.deinit(self.alloc);
     self.synthetic_postings.deinit(self.alloc);
 
-    self.errors.deinit();
+    self.errors.deinit(self.alloc);
 
     self.accounts.deinit();
     self.tags.deinit();
@@ -98,14 +98,14 @@ fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
 /// Parses a file and balances all transactions.
 fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Data.Imports.Slice {
     const uri = try Uri.from_relative_to_cwd(self.alloc, name);
-    try self.uris.append(uri);
+    try self.uris.append(self.alloc, uri);
 
     const null_terminated = try uri.load_nullterminated(self.alloc);
 
     var data, const imports = try Data.loadSource(self.alloc, uri, null_terminated, is_root);
     try data.balanceTransactions();
 
-    try self.files.append(data);
+    try self.files.append(self.alloc, data);
 
     try self.files_by_uri.put(uri.value, self.files.items.len - 1);
 
@@ -136,19 +136,19 @@ pub fn collectErrors(self: *const Self, alloc: Allocator) !std.StringHashMap(std
     var errors = std.StringHashMap(std.ArrayList(ErrorDetails)).init(alloc);
     errdefer {
         var iter = errors.valueIterator();
-        while (iter.next()) |v| v.deinit();
+        while (iter.next()) |v| v.deinit(alloc);
         errors.deinit();
     }
     for (self.uris.items) |uri| {
-        try errors.put(uri.value, std.ArrayList(ErrorDetails).init(alloc));
+        try errors.put(uri.value, std.ArrayList(ErrorDetails){});
     }
     for (self.files.items) |data| {
         for (data.errors.items) |err| {
-            try errors.getPtr(err.uri.value).?.append(err);
+            try errors.getPtr(err.uri.value).?.append(alloc, err);
         }
     }
     for (self.errors.items) |err| {
-        try errors.getPtr(err.uri.value).?.append(err);
+        try errors.getPtr(err.uri.value).?.append(alloc, err);
     }
     return errors;
 }
@@ -157,7 +157,7 @@ pub fn printErrors(self: *Self) !void {
     var errors = try self.collectErrors(self.alloc);
     defer {
         var iter = errors.valueIterator();
-        while (iter.next()) |v| v.deinit();
+        while (iter.next()) |v| v.deinit(self.alloc);
         errors.deinit();
     }
 
@@ -187,7 +187,7 @@ pub fn sortEntries(self: *Self) !void {
     self.sorted_entries.clearRetainingCapacity();
     for (self.files.items, 0..) |data, f| {
         for (0..data.entries.items.len) |e| {
-            try self.sorted_entries.append(SortedEntry{
+            try self.sorted_entries.append(self.alloc, SortedEntry{
                 .file = @intCast(f),
                 .entry = @intCast(e),
             });
@@ -328,7 +328,7 @@ pub fn check(self: *Self) !void {
                         .meta = null,
                     };
                     const tx_index: u32 = @intCast(self.synthetic_entries.items.len);
-                    try self.synthetic_entries.append(synthetic_entry);
+                    try self.synthetic_entries.append(self.alloc, synthetic_entry);
                     last_pad.synthetic_index_ptr.* = tx_index;
 
                     // Remove last pad
@@ -336,7 +336,7 @@ pub fn check(self: *Self) !void {
                 } else {
                     // Balance check in case of no padding
                     if (!expected.is_within_tolerance(accumulated)) {
-                        std.debug.print("Balance assertion failed: Expected {any}, accumulated {any}\n", .{ expected, accumulated });
+                        std.debug.print("Balance assertion failed: Expected {f}, accumulated {f}\n", .{ expected, accumulated });
                         try self.addError(entry.main_token, sorted.file, .balance_assertion_failed);
                     }
                 }
@@ -692,7 +692,7 @@ pub fn printTree(self: *Self) !void {
 fn addErrorDetails(self: *Self, token: Token, file_id: u8, tag: ErrorDetails.Tag, severity: ErrorDetails.Severity) !void {
     const uri = self.uris.items[@intCast(file_id)];
     const source = self.files.items[file_id].source;
-    try self.errors.append(ErrorDetails{
+    try self.errors.append(self.alloc, ErrorDetails{
         .tag = tag,
         .severity = severity,
         .token = token,

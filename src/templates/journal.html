@@ -11,7 +11,7 @@
     <!-- TRANSACTION -->
     .transaction
     <div class="row">
-        <div class="cell nowrap date">{[date]any}</div>
+        <div class="cell nowrap date">{[date]f}</div>
         <div class="cell nowrap flag {[highlight]s}">{[flag]s}</div>
         <div class="cell payee-narration">
             <div class="payee-narration-inner">
@@ -35,11 +35,11 @@
                 .transaction_legs_end
             </div>
         </div>
-        <div class="cell nowrap change right">{[change_units]any:.2} {[change_cur]s}</div>
+        <div class="cell nowrap change right">{[change_units]f} {[change_cur]s}</div>
         <div class="cell nowrap right">
             <div class="balances">
                 .transaction_balance_cur
-                <div class="balance">{[units]any:.2} {[cur]s}</div>
+                <div class="balance">{[units]f} {[cur]s}</div>
 
                 .transaction_balance_end
             </div>
@@ -64,7 +64,7 @@
             <div class="account">
                 <a @click="$dispatch('navigate', '/journal/{[account]s}');">{[account]s}</a>
             </div>
-            <div class="posting_change">{[change_units]any:.2} {[change_cur]s}</div>
+            <div class="posting_change">{[change_units]f} {[change_cur]s}</div>
 
             .transaction_end
         </div>
@@ -73,7 +73,7 @@
     <!-- OPEN -->
     .open
     <div class="row">
-        <div class="cell nowrap date">{[date]any}</div>
+        <div class="cell nowrap date">{[date]f}</div>
         <div class="cell flag special">open</div>
         <div class="cell colspan3-6"></div>
     </div>

@@ -37,7 +37,7 @@ pub fn myLogFn(
     // Print the message to stderr, silently ignoring any errors
     std.debug.lockStdErr();
     defer std.debug.unlockStdErr();
-    const stderr = std.io.getStdErr().writer();
+    const stderr = std.fs.File.stderr().deprecatedWriter();
     nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
 }
 

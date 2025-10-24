@@ -23,13 +23,12 @@ pub fn handler(
     var filter = try http.Query(EntryFilter).parse(alloc, &parsed_request.params);
     defer filter.deinit(alloc);
 
-    var html = std.ArrayList(u8).init(alloc);
+    var html = std.Io.Writer.Allocating.init(alloc);
     defer html.deinit();
-    const html_out = html.writer();
 
-    var json = std.ArrayList(u8).init(alloc);
+    var json = std.Io.Writer.Allocating.init(alloc);
     defer json.deinit();
-    const json_out = json.writer();
+    var stringify = std.json.Stringify{ .writer = &json.writer };
 
     var listener = state.broadcast.newListener();
 
@@ -38,16 +37,16 @@ pub fn handler(
             state.acquireProject();
             defer state.releaseProject();
 
-            const plot_points = try render(alloc, state.project, filter, account, html_out.any());
+            var plot_points = try render(alloc, state.project, filter, account, &html.writer);
             defer {
                 for (plot_points.items) |*plot_point| plot_point.deinit(alloc);
-                plot_points.deinit();
+                plot_points.deinit(alloc);
             }
-            try std.json.stringify(plot_points.items, .{}, json_out);
+            try stringify.write(plot_points.items);
         }
 
-        try sse.send(.{ .payload = html.items });
-        try sse.send(.{ .payload = json.items, .event = "plot_points" });
+        try sse.send(.{ .payload = html.writer.buffered() });
+        try sse.send(.{ .payload = json.writer.buffered(), .event = "plot_points" });
 
         html.clearRetainingCapacity();
         json.clearRetainingCapacity();
@@ -76,18 +75,18 @@ fn render(
     project: *Project,
     filter: EntryFilter,
     account: []const u8,
-    out: std.io.AnyWriter,
+    out: *std.Io.Writer,
 ) !std.ArrayList(PlotPoint) {
     const t = @embedFile("../templates/journal.html");
 
     var tree = try Tree.init(alloc);
     defer tree.deinit();
-    var plot_points = std.ArrayList(PlotPoint).init(alloc);
+    var plot_points = std.ArrayList(PlotPoint){};
     errdefer {
         for (plot_points.items) |*plot_point| {
             plot_point.deinit(alloc);
         }
-        plot_points.deinit();
+        plot_points.deinit(alloc);
     }
 
     try zts.write(t, "table", out);
@@ -147,7 +146,7 @@ fn render(
                             }
 
                             try zts.print(t, "transaction_legs_end", .{
-                                .change_units = p.amount.number.?,
+                                .change_units = p.amount.number.?.withPrecision(2),
                                 .change_cur = p.amount.currency.?,
                             }, out);
 
@@ -159,7 +158,7 @@ fn render(
                                 const units = kv.value_ptr.total_units();
                                 if (!units.is_zero()) {
                                     try zts.print(t, "transaction_balance_cur", .{
-                                        .units = units,
+                                        .units = units.withPrecision(2),
                                         .cur = kv.key_ptr.*,
                                     }, out);
                                 }
@@ -180,7 +179,7 @@ fn render(
 
                                 try zts.print(t, "tree_end", .{
                                     .account = p2.account.slice,
-                                    .change_units = p2.amount.number.?,
+                                    .change_units = p2.amount.number.?.withPrecision(2),
                                     .change_cur = p2.amount.currency.?,
                                 }, out);
                             }
@@ -188,12 +187,12 @@ fn render(
                             try zts.write(t, "transaction_end", out);
 
                             const balance = sum.by_currency.get(p.amount.currency.?).?.total_units();
-                            try plot_points.append(.{
+                            try plot_points.append(alloc, .{
                                 .hash = hash,
-                                .date = try std.fmt.allocPrint(alloc, "{any}", .{entry.date}),
+                                .date = try std.fmt.allocPrint(alloc, "{f}", .{entry.date}),
                                 .currency = try alloc.dupe(u8, p.amount.currency.?),
                                 .balance = balance.toFloat(),
-                                .balance_rendered = try std.fmt.allocPrint(alloc, "{any:.2}", .{balance}),
+                                .balance_rendered = try std.fmt.allocPrint(alloc, "{f}", .{balance.withPrecision(2)}),
                             });
                         }
                     }

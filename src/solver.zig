@@ -106,13 +106,13 @@ pub const Solver = struct {
     pub fn init(alloc: Allocator) Solver {
         return Solver{
             .alloc = alloc,
-            .triples = std.ArrayList(Triple).init(alloc),
+            .triples = .{},
             .sum_by_currency = std.StringHashMap(Sum).init(alloc),
         };
     }
 
     pub fn deinit(p: *Solver) void {
-        p.triples.deinit();
+        p.triples.deinit(p.alloc);
         p.sum_by_currency.deinit();
     }
 
@@ -159,7 +159,7 @@ pub const Solver = struct {
         const m_currency = MaybeCurrency{ .currency = currency, .variable = currency_var };
 
         const triple = Triple{ .price = m_price, .number = m_number, .currency = m_currency };
-        try p.triples.append(triple);
+        try p.triples.append(p.alloc, triple);
     }
 
     pub const SolverError = error{

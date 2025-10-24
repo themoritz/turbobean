@@ -103,8 +103,8 @@ fn tagToTokenType(token: Token.Tag) ?TokenType {
 }
 
 pub fn tokensToData(alloc: std.mem.Allocator, tokens: []Token) !std.ArrayList(u32) {
-    var result = std.ArrayList(u32).init(alloc);
-    errdefer result.deinit();
+    var result = std.ArrayList(u32){};
+    errdefer result.deinit(alloc);
 
     var last_line: u32 = 0;
     var last_char: u32 = 0;
@@ -124,7 +124,7 @@ pub fn tokensToData(alloc: std.mem.Allocator, tokens: []Token) !std.ArrayList(u3
                         .end_col = char + 1,
                     };
                     char += 1;
-                    try addToken(tok, .operator, &last_line, &last_char, &result);
+                    try addToken(alloc, tok, .operator, &last_line, &last_char, &result);
                 }
 
                 const width: u16 = @intCast(try std.unicode.calcUtf16LeLen(piece));
@@ -136,16 +136,17 @@ pub fn tokensToData(alloc: std.mem.Allocator, tokens: []Token) !std.ArrayList(u3
                     .end_col = char + width,
                 };
                 char += width;
-                try addToken(tok, if (i == 0) .escapeSequence else null, &last_line, &last_char, &result);
+                try addToken(alloc, tok, if (i == 0) .escapeSequence else null, &last_line, &last_char, &result);
             }
         } else {
-            try addToken(token, null, &last_line, &last_char, &result);
+            try addToken(alloc, token, null, &last_line, &last_char, &result);
         }
     }
     return result;
 }
 
 fn addToken(
+    alloc: std.mem.Allocator,
     token: Token,
     overwrite_type: ?TokenType,
     last_line: *u32,
@@ -162,7 +163,7 @@ fn addToken(
         buf[2] = token.end_col - token.start_col;
         buf[3] = @intFromEnum(overwrite_type orelse tag);
         buf[4] = 0;
-        try result.appendSlice(&buf);
+        try result.appendSlice(alloc, &buf);
     }
 }
 
@@ -177,17 +178,17 @@ fn testGoTokens(source: [:0]const u8, expected: []const u32) !void {
     const alloc = std.testing.allocator;
     var lexer = Lexer.init(source);
 
-    var tokens = std.ArrayList(Token).init(alloc);
-    defer tokens.deinit();
+    var tokens = std.ArrayList(Token){};
+    defer tokens.deinit(alloc);
 
     while (true) {
         const token = lexer.next();
-        try tokens.append(token);
+        try tokens.append(alloc, token);
         if (token.tag == .eof) break;
     }
 
     var actual = try tokensToData(alloc, tokens.items);
-    defer actual.deinit();
+    defer actual.deinit(alloc);
 
     try std.testing.expectEqualSlices(u32, expected, actual.items);
 }

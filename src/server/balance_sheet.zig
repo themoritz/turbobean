@@ -23,13 +23,12 @@ pub fn handler(
     var filter = try http.Query(EntryFilter).parse(alloc, &parsed_request.params);
     defer filter.deinit(alloc);
 
-    var html = std.ArrayList(u8).init(alloc);
+    var html = std.Io.Writer.Allocating.init(alloc);
     defer html.deinit();
-    const html_out = html.writer();
 
-    var json = std.ArrayList(u8).init(alloc);
+    var json = std.Io.Writer.Allocating.init(alloc);
     defer json.deinit();
-    const json_out = json.writer();
+    var stringify = std.json.Stringify{ .writer = &json.writer };
 
     var listener = state.broadcast.newListener();
 
@@ -38,16 +37,16 @@ pub fn handler(
             state.acquireProject();
             defer state.releaseProject();
 
-            const plot_points = try render(alloc, state.project, filter, html_out.any());
+            const plot_points = try render(alloc, state.project, filter, &html.writer);
             defer {
                 for (plot_points.items) |*plot_point| plot_point.deinit(alloc);
                 plot_points.deinit();
             }
-            try std.json.stringify(plot_points.items, .{}, json_out);
+            try stringify.write(plot_points.items);
         }
 
-        try sse.send(.{ .payload = html.items });
-        try sse.send(.{ .payload = json.items, .event = "plot_points" });
+        try sse.send(.{ .payload = html.writer.buffered() });
+        try sse.send(.{ .payload = json.writer.buffered(), .event = "plot_points" });
 
         html.clearRetainingCapacity();
         json.clearRetainingCapacity();
@@ -77,12 +76,12 @@ fn render(
     alloc: std.mem.Allocator,
     project: *Project,
     filter: EntryFilter,
-    out: std.io.AnyWriter,
-) !std.ArrayList(PlotPoint) {
+    out: *std.Io.Writer,
+) !std.array_list.Managed(PlotPoint) {
     var tree = try Tree.init(alloc);
     defer tree.deinit();
 
-    var plot_points = std.ArrayList(PlotPoint).init(alloc);
+    var plot_points = std.array_list.Managed(PlotPoint).init(alloc);
     errdefer {
         for (plot_points.items) |*plot_point| {
             plot_point.deinit(alloc);
@@ -159,7 +158,7 @@ fn render(
 
 fn renderTable(
     alloc: std.mem.Allocator,
-    out: std.io.AnyWriter,
+    out: *std.Io.Writer,
     tree: *const Tree,
     title: []const u8,
 ) !void {
@@ -167,10 +166,10 @@ fn renderTable(
         if (std.mem.eql(u8, tree.nodes.items[i].name, title)) {
             try zts.print(t, "table", .{}, out);
 
-            var prefix = std.ArrayList(bool).init(alloc);
+            var prefix = std.array_list.Managed(bool).init(alloc);
             defer prefix.deinit();
 
-            var name_prefix = std.ArrayList(u8).init(alloc);
+            var name_prefix = std.array_list.Managed(u8).init(alloc);
             defer name_prefix.deinit();
             try name_prefix.appendSlice(title);
 
@@ -183,12 +182,12 @@ fn renderTable(
 
 fn renderRec(
     alloc: std.mem.Allocator,
-    out: std.io.AnyWriter,
+    out: *std.Io.Writer,
     tree: *const Tree,
     node_index: u32,
     depth: u32,
-    prefix: *std.ArrayList(bool),
-    name_prefix: *std.ArrayList(u8),
+    prefix: *std.array_list.Managed(bool),
+    name_prefix: *std.array_list.Managed(u8),
     is_last: bool,
 ) !void {
     const node = tree.nodes.items[node_index];
@@ -248,7 +247,7 @@ fn renderRec(
         const units = kv.value_ptr.total_units();
         if (!units.is_zero()) {
             try zts.print(t, "balance", .{
-                .units = units,
+                .units = units.withPrecision(2),
                 .cur = kv.key_ptr.*,
             }, out);
         }

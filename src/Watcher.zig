@@ -2,6 +2,7 @@ const std = @import("std");
 const Self = @This();
 const log = std.log.scoped(.watcher);
 
+alloc: std.mem.Allocator,
 watch_entries: std.ArrayList(WatchItem),
 kq: i32,
 onChange: *const fn (self: *anyopaque, path: []const u8) void,
@@ -17,11 +18,12 @@ const WatchItem = struct {
 
 pub fn init(comptime T: type, ctx: *T, alloc: std.mem.Allocator) !Self {
     return .{
-        .watch_entries = std.ArrayList(WatchItem).init(alloc),
+        .alloc = alloc,
+        .watch_entries = std.ArrayList(WatchItem){},
         .kq = try std.posix.kqueue(),
         .onChange = struct {
             fn onChange(ctx_opaque: *anyopaque, path: []const u8) void {
-                T.onChange(@alignCast(@ptrCast(ctx_opaque)), path);
+                T.onChange(@ptrCast(@alignCast(ctx_opaque)), path);
             }
         }.onChange,
         .ctx = ctx,
@@ -43,7 +45,7 @@ pub fn deinit(self: *Self) void {
     for (self.watch_entries.items) |item| {
         item.fd.close();
     }
-    self.watch_entries.deinit();
+    self.watch_entries.deinit(self.alloc);
     std.posix.close(self.kq);
 }
 
@@ -71,7 +73,7 @@ pub fn addFile(self: *Self, path: []const u8) !void {
         null,
     );
 
-    try self.watch_entries.append(.{ .path = path, .fd = fd });
+    try self.watch_entries.append(self.alloc, .{ .path = path, .fd = fd });
 }
 
 fn threadMain(self: *Self) !void {

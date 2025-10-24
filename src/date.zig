@@ -56,10 +56,8 @@ pub const Date = struct {
         };
     }
 
-    pub fn format(self: Date, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
-        try std.fmt.format(writer, "{d:0>4}-{d:0>2}-{d:0>2}", .{ self.year, self.month, self.day });
+    pub fn format(self: Date, writer: *std.Io.Writer) !void {
+        try writer.print("{d:0>4}-{d:0>2}-{d:0>2}", .{ self.year, self.month, self.day });
     }
 };
 

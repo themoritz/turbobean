@@ -47,7 +47,7 @@ errors: *std.ArrayList(ErrorDetails),
 
 fn addEntry(p: *Self, entry: Data.Entry) !usize {
     const result = p.entries.items.len;
-    try p.entries.append(entry);
+    try p.entries.append(p.alloc, entry);
     return result;
 }
 
@@ -71,7 +71,7 @@ fn addKeyValue(p: *Self, keyvalue: Data.KeyValue) !usize {
 
 fn addCurrency(p: *Self, currency: []const u8) !usize {
     const result = p.currencies.items.len;
-    try p.currencies.append(currency);
+    try p.currencies.append(p.alloc, currency);
     return result;
 }
 
@@ -100,12 +100,12 @@ fn failAt(p: *Self, token: Lexer.Token, msg: ErrorDetails.Tag) Error {
 }
 
 fn failMsg(p: *Self, err: ErrorDetails) Error {
-    try p.errors.append(err);
+    try p.errors.append(p.alloc, err);
     return error.ParseError;
 }
 
 fn warnAt(p: *Self, token: Lexer.Token, msg: ErrorDetails.Tag) !void {
-    try p.errors.append(.{
+    try p.errors.append(p.alloc, .{
         .tag = msg,
         .token = token,
         .uri = p.uri,
@@ -445,7 +445,7 @@ fn parseDirective(p: *Self) !?void {
         .keyword_include => {
             _ = p.advanceToken();
             const file = try p.expectToken(.string);
-            try p.imports.append(file.slice[1 .. file.slice.len - 1]);
+            try p.imports.append(p.alloc, file.slice[1 .. file.slice.len - 1]);
         },
         .keyword_plugin => {
             _ = p.advanceToken();

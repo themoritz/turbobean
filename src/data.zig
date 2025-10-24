@@ -114,19 +114,21 @@ pub const Entry = struct {
 };
 
 pub const Config = struct {
+    alloc: Allocator,
     options: std.StringHashMap([]const u8),
     plugins: std.ArrayList([]const u8),
 
     pub fn init(alloc: Allocator) Config {
         return .{
+            .alloc = alloc,
             .options = std.StringHashMap([]const u8).init(alloc),
-            .plugins = std.ArrayList([]const u8).init(alloc),
+            .plugins = .{},
         };
     }
 
     pub fn deinit(self: *Config) void {
         self.options.deinit();
-        self.plugins.deinit();
+        self.plugins.deinit(self.alloc);
     }
 
     pub fn addOption(self: *Config, key: []const u8, value: []const u8) !void {
@@ -136,7 +138,7 @@ pub const Config = struct {
     }
 
     pub fn addPlugin(self: *Config, plugin: []const u8) !void {
-        try self.plugins.append(plugin);
+        try self.plugins.append(self.alloc, plugin);
     }
 };
 
@@ -250,13 +252,13 @@ pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: boo
         .postings = .{},
         .tagslinks = .{},
         .meta = .{},
-        .currencies = Currencies.init(alloc),
-        .tokens = Tokens.init(alloc),
-        .entries = Entries.init(alloc),
+        .currencies = .{},
+        .tokens = .{},
+        .entries = .{},
         .source = source,
         .uri = uri,
         .config = Config.init(alloc),
-        .errors = std.ArrayList(ErrorDetails).init(alloc),
+        .errors = .{},
     };
     errdefer self.deinit();
 
@@ -264,7 +266,7 @@ pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: boo
 
     while (true) {
         const token = lexer.next();
-        try self.tokens.append(token);
+        try self.tokens.append(alloc, token);
         if (token.tag == .eof) break;
     }
 
@@ -281,18 +283,18 @@ pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: boo
         .meta = &self.meta,
         .currencies = &self.currencies,
         .config = &self.config,
-        .imports = Imports.init(self.alloc),
-        .active_tags = std.StringHashMap(void).init(self.alloc),
-        .active_meta = std.StringHashMap([]const u8).init(self.alloc),
+        .imports = .{},
+        .active_tags = std.StringHashMap(void).init(alloc),
+        .active_meta = std.StringHashMap([]const u8).init(alloc),
         .errors = &self.errors,
     };
-    defer parser.imports.deinit();
+    defer parser.imports.deinit(alloc);
     defer parser.active_tags.deinit();
     defer parser.active_meta.deinit();
 
     try parser.parse();
 
-    return .{ self, try parser.imports.toOwnedSlice() };
+    return .{ self, try parser.imports.toOwnedSlice(alloc) };
 }
 
 pub fn balanceTransactions(self: *Self) !void {
@@ -341,7 +343,7 @@ pub fn balanceTransactions(self: *Self) !void {
 }
 
 fn addError(self: *Self, token: Lexer.Token, uri: Uri, tag: ErrorDetails.Tag) !void {
-    try self.errors.append(ErrorDetails{
+    try self.errors.append(self.alloc, ErrorDetails{
         .tag = tag,
         .token = token,
         .uri = uri,
@@ -353,13 +355,13 @@ fn addError(self: *Self, token: Lexer.Token, uri: Uri, tag: ErrorDetails.Tag) !v
 pub fn deinit(self: *Self) void {
     self.alloc.free(self.source);
 
-    self.tokens.deinit();
-    self.entries.deinit();
-    self.currencies.deinit();
+    self.tokens.deinit(self.alloc);
+    self.entries.deinit(self.alloc);
+    self.currencies.deinit(self.alloc);
     self.postings.deinit(self.alloc);
     self.tagslinks.deinit(self.alloc);
     self.meta.deinit(self.alloc);
     self.config.deinit();
 
-    self.errors.deinit();
+    self.errors.deinit(self.alloc);
 }

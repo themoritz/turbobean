@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe_mod.addImport("lsp", b.dependency("lsp_codegen", .{}).module("lsp"));
+    exe_mod.addImport("lsp", b.dependency("lsp_kit", .{}).module("lsp"));
     exe_mod.addImport("zts", b.dependency("zts", .{}).module("zts"));
     exe_mod.addOptions("config", options);
 
@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
     });
 
     addAssetsOption(b, exe, target, optimize) catch |err| {
-        std.log.err("Problem adding assets: {!}", .{err});
+        std.log.err("Problem adding assets: {t}", .{err});
     };
 
     b.installArtifact(exe);
@@ -43,9 +43,11 @@ pub fn build(b: *std.Build) void {
     {
         // Add a unit test step
         const unit_tests = b.addTest(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/main.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
         });
 
         const run_unit_tests = b.addRunArtifact(unit_tests);
@@ -97,7 +99,7 @@ pub fn build(b: *std.Build) void {
 pub fn addAssetsOption(b: *std.Build, exe: anytype, target: anytype, optimize: anytype) !void {
     var options = b.addOptions();
 
-    var files = std.ArrayList([]const u8).init(b.allocator);
+    var files = std.array_list.Managed([]const u8).init(b.allocator);
     defer files.deinit();
 
     var buf: [std.fs.max_path_bytes]u8 = undefined;
