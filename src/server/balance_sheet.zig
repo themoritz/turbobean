@@ -6,8 +6,11 @@ const Uri = @import("../Uri.zig");
 const Project = @import("../project.zig");
 const Tree = @import("../tree.zig");
 const Date = @import("../date.zig").Date;
+const Number = @import("../number.zig").Number;
+const Data = @import("../data.zig");
 const SSE = @import("SSE.zig");
 const EntryFilter = @import("EntryFilter.zig");
+const PlainInventory = @import("../inventory.zig").PlainInventory;
 const t = @embedFile("../templates/balance_sheet.html");
 
 pub fn handler(
@@ -39,10 +42,10 @@ pub fn handler(
 
             const plot_points = try render(alloc, state.project, filter, &html.writer);
             defer {
-                for (plot_points.items) |*plot_point| plot_point.deinit(alloc);
-                plot_points.deinit();
+                for (plot_points) |*plot_point| plot_point.deinit(alloc);
+                alloc.free(plot_points);
             }
-            try stringify.write(plot_points.items);
+            try stringify.write(plot_points);
         }
 
         try sse.send(.{ .payload = html.writer.buffered() });
@@ -57,7 +60,6 @@ pub fn handler(
 }
 
 const PlotPoint = struct {
-    hash: u64,
     date: []const u8,
     currency: []const u8,
     balance: f64,
@@ -70,6 +72,69 @@ const PlotPoint = struct {
     }
 };
 
+const NetWorth = struct {
+    alloc: std.mem.Allocator,
+    inv: PlainInventory,
+    next_emit_date: ?Date,
+    plot_points: std.ArrayList(PlotPoint),
+
+    pub fn init(alloc: std.mem.Allocator) !NetWorth {
+        return .{
+            .alloc = alloc,
+            .inv = try PlainInventory.init(alloc, null),
+            .next_emit_date = null,
+            .plot_points = .{},
+        };
+    }
+
+    pub fn deinit(self: *NetWorth) void {
+        self.inv.deinit();
+        for (self.plot_points.items) |*plot_point| plot_point.deinit(self.alloc);
+        self.plot_points.deinit(self.alloc);
+    }
+
+    pub fn newEntry(self: *NetWorth, date: Date) !void {
+        if (self.next_emit_date == null) {
+            self.next_emit_date = date.nextSunday();
+            return;
+        }
+        if (self.next_emit_date.?.compare(date) == .after) {
+            var iter = self.inv.by_currency.iterator();
+            while (iter.next()) |kv| {
+                const balance = kv.value_ptr.*;
+                try self.plot_points.append(self.alloc, .{
+                    .date = try std.fmt.allocPrint(self.alloc, "{f}", .{self.next_emit_date.?}),
+                    .currency = try self.alloc.dupe(u8, kv.key_ptr.*),
+                    .balance = balance.toFloat(),
+                    .balance_rendered = try std.fmt.allocPrint(self.alloc, "{f}", .{balance.withPrecision(2)}),
+                });
+            }
+            self.next_emit_date = self.next_emit_date.?.nextSunday();
+        }
+    }
+
+    pub fn updateWithPosting(self: *NetWorth, posting: Data.Posting) !void {
+        if (std.mem.startsWith(u8, posting.account.slice, "Assets") or
+            std.mem.startsWith(u8, posting.account.slice, "Liabilities"))
+        {
+            const currency = posting.amount.currency.?;
+            const amount = posting.amount.number.?;
+            try self.inv.add(currency, amount);
+        }
+    }
+
+    pub fn snapshot(self: *const NetWorth, alloc: std.mem.Allocator) !std.StringHashMap(Number) {
+        var result = std.StringHashMap(Number).init(alloc);
+        errdefer result.deinit();
+
+        var iter = self.inv.by_currency.iterator();
+        while (iter.next()) |kv| {
+            try result.put(kv.key_ptr.*, kv.value_ptr.*);
+        }
+        return result;
+    }
+};
+
 const DateState = enum { before, within };
 
 fn render(
@@ -77,17 +142,12 @@ fn render(
     project: *Project,
     filter: EntryFilter,
     out: *std.Io.Writer,
-) !std.array_list.Managed(PlotPoint) {
+) ![]PlotPoint {
     var tree = try Tree.init(alloc);
     defer tree.deinit();
 
-    var plot_points = std.array_list.Managed(PlotPoint).init(alloc);
-    errdefer {
-        for (plot_points.items) |*plot_point| {
-            plot_point.deinit(alloc);
-        }
-        plot_points.deinit();
-    }
+    var net_worth = try NetWorth.init(alloc);
+    defer net_worth.deinit();
 
     var date_state = DateState.before;
 
@@ -125,6 +185,7 @@ fn render(
                     for (postings.start..postings.end) |i| {
                         const p = data.postings.get(i);
                         try tree.postInventory(entry.date, p);
+                        try net_worth.updateWithPosting(p);
                     }
                 }
             },
@@ -136,10 +197,16 @@ fn render(
                 const tx = synthetic_entry.payload.transaction;
                 const postings = tx.postings.?;
                 for (postings.start..postings.end) |i| {
-                    try tree.postInventory(entry.date, project.synthetic_postings.get(i));
+                    const p = project.synthetic_postings.get(i);
+                    try tree.postInventory(entry.date, p);
+                    try net_worth.updateWithPosting(p);
                 }
             },
             else => {},
+        }
+
+        if (date_state == .within) {
+            try net_worth.newEntry(entry.date);
         }
     }
 
@@ -153,7 +220,7 @@ fn render(
     try renderTable(alloc, out, &tree, "Equity");
     try zts.write(t, "right_end", out);
 
-    return plot_points;
+    return net_worth.plot_points.toOwnedSlice(alloc);
 }
 
 fn renderTable(

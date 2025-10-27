@@ -13,9 +13,9 @@
 
 .table
 
-<div class="balance_sheet_part" style="grid-template-columns: repeat(5, calc(14rem / 16 * 1.5)) repeat(2, 1fr);">
+<div class="balance_sheet_part" style="grid-template-columns: repeat(8, calc(14rem / 16 * 1.5)) repeat(2, 1fr);">
     <div class="account header">
-        <div class="cell" style="grid-column: 1 / 7;"></div>
+        <div class="cell" style="grid-column: 1 / 10;"></div>
         <div class="cell right">Other</div>
     </div>
 
@@ -37,7 +37,7 @@
         </div>
 
         .name
-        <div class="name" style="grid-column: {[col_start]d} / 7;">
+        <div class="name" style="grid-column: {[col_start]d} / 10;">
             <a @click="$dispatch('navigate', '/journal/{[full_name]s}');">{[name]s}</a>
         </div>
 
