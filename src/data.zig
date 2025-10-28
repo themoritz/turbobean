@@ -115,30 +115,45 @@ pub const Entry = struct {
 
 pub const Config = struct {
     alloc: Allocator,
-    options: std.StringHashMap([]const u8),
+    options: std.ArrayList(OptionPair),
     plugins: std.ArrayList([]const u8),
+
+    pub const OptionPair = struct {
+        key: []const u8,
+        value: []const u8,
+    };
 
     pub fn init(alloc: Allocator) Config {
         return .{
             .alloc = alloc,
-            .options = std.StringHashMap([]const u8).init(alloc),
+            .options = .{},
             .plugins = .{},
         };
     }
 
     pub fn deinit(self: *Config) void {
-        self.options.deinit();
+        self.options.deinit(self.alloc);
         self.plugins.deinit(self.alloc);
     }
 
     pub fn addOption(self: *Config, key: []const u8, value: []const u8) !void {
-        if (!self.options.contains(key)) {
-            try self.options.put(key, value);
-        }
+        try self.options.append(self.alloc, OptionPair{ .key = key, .value = value });
     }
 
     pub fn addPlugin(self: *Config, plugin: []const u8) !void {
         try self.plugins.append(self.alloc, plugin);
+    }
+
+    /// Caller owns returned slice, but not the entries.
+    pub fn getOperatingCurrencies(self: *const Config, alloc: Allocator) [][]const u8 {
+        var result = std.ArrayList([]const u8){};
+        defer result.deinit(alloc);
+        for (self.options.items) |option| {
+            if (std.mem.eql(u8, option.key, "operating_currency")) {
+                try result.append(alloc, option.value);
+            }
+        }
+        return result.toOwnedSlice(alloc);
     }
 };
 
