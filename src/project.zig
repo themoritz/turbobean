@@ -112,6 +112,12 @@ fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Data.Imports.Sl
     return imports;
 }
 
+pub fn getConfig(self: *const Self) *Data.Config {
+    // Config is always the first file since it's the entry point for loading
+    // a project.
+    return &self.files.items[0].config;
+}
+
 pub fn hasErrors(self: *Self) bool {
     for (self.files.items) |data| {
         if (data.errors.items.len > 0) return true;

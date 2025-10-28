@@ -145,12 +145,14 @@ pub const Config = struct {
     }
 
     /// Caller owns returned slice, but not the entries.
-    pub fn getOperatingCurrencies(self: *const Config, alloc: Allocator) [][]const u8 {
+    pub fn getOperatingCurrencies(self: *const Config, alloc: Allocator) ![][]const u8 {
         var result = std.ArrayList([]const u8){};
         defer result.deinit(alloc);
         for (self.options.items) |option| {
-            if (std.mem.eql(u8, option.key, "operating_currency")) {
-                try result.append(alloc, option.value);
+            const stripped_key = std.mem.trim(u8, option.key, "\"");
+            const stripped_value = std.mem.trim(u8, option.value, "\"");
+            if (std.mem.eql(u8, stripped_key, "operating_currency")) {
+                try result.append(alloc, stripped_value);
             }
         }
         return result.toOwnedSlice(alloc);

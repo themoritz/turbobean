@@ -11,7 +11,10 @@ const Data = @import("../data.zig");
 const SSE = @import("SSE.zig");
 const EntryFilter = @import("EntryFilter.zig");
 const PlainInventory = @import("../inventory.zig").PlainInventory;
+const Prices = @import("../Prices.zig");
 const t = @embedFile("../templates/balance_sheet.html");
+
+const MAX_TREE_DEPTH = 10;
 
 pub fn handler(
     alloc: std.mem.Allocator,
@@ -74,13 +77,21 @@ const PlotPoint = struct {
 
 const NetWorth = struct {
     alloc: std.mem.Allocator,
+    prices: *Prices,
+    operating_currencies: []const []const u8,
     inv: PlainInventory,
     next_emit_date: ?Date,
     plot_points: std.ArrayList(PlotPoint),
 
-    pub fn init(alloc: std.mem.Allocator) !NetWorth {
+    pub fn init(
+        alloc: std.mem.Allocator,
+        prices: *Prices,
+        operating_currencies: []const []const u8,
+    ) !NetWorth {
         return .{
             .alloc = alloc,
+            .prices = prices,
+            .operating_currencies = operating_currencies,
             .inv = try PlainInventory.init(alloc, null),
             .next_emit_date = null,
             .plot_points = .{},
@@ -99,8 +110,21 @@ const NetWorth = struct {
             return;
         }
         if (self.next_emit_date.?.compare(date) == .after) {
+            var tmp_inv = try PlainInventory.init(self.alloc, null);
+            defer tmp_inv.deinit();
+
             var iter = self.inv.by_currency.iterator();
             while (iter.next()) |kv| {
+                const balance = kv.value_ptr.*;
+                if (self.prices.convert(balance, kv.key_ptr.*, "EUR")) |converted| {
+                    try tmp_inv.add("EUR", converted);
+                } else {
+                    try tmp_inv.add(kv.key_ptr.*, balance);
+                }
+            }
+
+            var tmp_iter = tmp_inv.by_currency.iterator();
+            while (tmp_iter.next()) |kv| {
                 const balance = kv.value_ptr.*;
                 try self.plot_points.append(self.alloc, .{
                     .date = try std.fmt.allocPrint(self.alloc, "{f}", .{self.next_emit_date.?}),
@@ -146,7 +170,13 @@ fn render(
     var tree = try Tree.init(alloc);
     defer tree.deinit();
 
-    var net_worth = try NetWorth.init(alloc);
+    const operating_currencies = try project.getConfig().getOperatingCurrencies(alloc);
+    defer alloc.free(operating_currencies);
+
+    var prices = Prices.init(alloc);
+    defer prices.deinit();
+
+    var net_worth = try NetWorth.init(alloc, &prices, operating_currencies);
     defer net_worth.deinit();
 
     var date_state = DateState.before;
@@ -202,6 +232,9 @@ fn render(
                     try net_worth.updateWithPosting(p);
                 }
             },
+            .price => |price| {
+                try prices.setPrice(price);
+            },
             else => {},
         }
 
@@ -214,10 +247,10 @@ fn render(
 
     // Render Tree
     try zts.write(t, "balance_sheet", out);
-    try renderTable(alloc, out, &tree, "Assets");
+    try renderTable(alloc, out, &tree, operating_currencies, "Assets");
     try zts.write(t, "left_end", out);
-    try renderTable(alloc, out, &tree, "Liabilities");
-    try renderTable(alloc, out, &tree, "Equity");
+    try renderTable(alloc, out, &tree, operating_currencies, "Liabilities");
+    try renderTable(alloc, out, &tree, operating_currencies, "Equity");
     try zts.write(t, "right_end", out);
 
     return net_worth.plot_points.toOwnedSlice(alloc);
@@ -227,11 +260,31 @@ fn renderTable(
     alloc: std.mem.Allocator,
     out: *std.Io.Writer,
     tree: *const Tree,
+    operating_currencies: []const []const u8,
     title: []const u8,
 ) !void {
     for (tree.nodes.items[0].children.items) |i| {
         if (std.mem.eql(u8, tree.nodes.items[i].name, title)) {
-            try zts.print(t, "table", .{}, out);
+            try zts.print(t, "table", .{
+                .fixed_columns = MAX_TREE_DEPTH,
+                .variable_columns = operating_currencies.len + 1,
+                .after_name_line = MAX_TREE_DEPTH + 2,
+            }, out);
+
+            for (operating_currencies, 0..) |currency, j| {
+                try zts.print(t, "header_title", .{
+                    .title = currency,
+                    .from_line = MAX_TREE_DEPTH + 2 + j,
+                    .to_line = MAX_TREE_DEPTH + 2 + j + 1,
+                }, out);
+            }
+            try zts.print(t, "header_title", .{
+                .title = "Other",
+                .from_line = MAX_TREE_DEPTH + 2 + operating_currencies.len,
+                .to_line = MAX_TREE_DEPTH + 2 + operating_currencies.len + 1,
+            }, out);
+
+            try zts.write(t, "header_title_end", out);
 
             var prefix = std.array_list.Managed(bool).init(alloc);
             defer prefix.deinit();
@@ -240,7 +293,7 @@ fn renderTable(
             defer name_prefix.deinit();
             try name_prefix.appendSlice(title);
 
-            try renderRec(alloc, out, tree, i, 0, &prefix, &name_prefix, true);
+            try renderRec(alloc, out, operating_currencies, tree, i, 0, &prefix, &name_prefix, true);
 
             try zts.write(t, "table_end", out);
         }
@@ -250,6 +303,7 @@ fn renderTable(
 fn renderRec(
     alloc: std.mem.Allocator,
     out: *std.Io.Writer,
+    operating_currencies: []const []const u8,
     tree: *const Tree,
     node_index: u32,
     depth: u32,
@@ -305,12 +359,38 @@ fn renderRec(
     try zts.print(t, "name", .{
         .name = node.name,
         .full_name = name_prefix.items,
-        .col_start = depth + 2,
+        .from_line = depth + 2,
+        .to_line = MAX_TREE_DEPTH + 2,
     }, out);
 
-    try zts.write(t, "balances", out);
+    for (operating_currencies, 0..) |currency, j| {
+        try zts.print(t, "balances", .{
+            .from_line = MAX_TREE_DEPTH + 2 + j,
+            .to_line = MAX_TREE_DEPTH + 2 + j + 1,
+        }, out);
+        if (summary.by_currency.get(currency)) |balance| {
+            const units = balance.total_units();
+            if (!units.is_zero()) {
+                try zts.print(t, "balance", .{
+                    .units = units.withPrecision(2),
+                    .cur = "",
+                }, out);
+            }
+        }
+        try zts.write(t, "balances_end", out);
+    }
+
+    try zts.print(t, "balances", .{
+        .from_line = MAX_TREE_DEPTH + 2 + operating_currencies.len,
+        .to_line = MAX_TREE_DEPTH + 2 + operating_currencies.len + 1,
+    }, out);
     var iter = summary.by_currency.iterator();
-    while (iter.next()) |kv| {
+    currency: while (iter.next()) |kv| {
+        for (operating_currencies) |cur| {
+            if (std.mem.eql(u8, cur, kv.key_ptr.*)) {
+                continue :currency;
+            }
+        }
         const units = kv.value_ptr.total_units();
         if (!units.is_zero()) {
             try zts.print(t, "balance", .{
@@ -347,6 +427,7 @@ fn renderRec(
             try renderRec(
                 alloc,
                 out,
+                operating_currencies,
                 tree,
                 child,
                 depth + 1,

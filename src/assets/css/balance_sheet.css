@@ -55,12 +55,13 @@
 
 .account .balances {
   padding: 0px 5px;
+  border-left: 1px solid #e3e3e3;
 }
 
 .account .balance {
   font-family: "Fira Mono", mono;
   text-align: right;
-  white-space: pre;
+  /* white-space: pre; */
 }
 
 .balance_sheet_part .header .cell {
@@ -73,4 +74,5 @@
 
 .balance_sheet_part .header .right {
   text-align: right;
+  border-left: 1px solid #d3d3d3;
 }

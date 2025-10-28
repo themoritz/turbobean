@@ -57,9 +57,11 @@ pub fn setPricePlain(self: *Self, from: []const u8, to: []const u8, rate: Number
     try self.latest_prices.put(pair, rate);
 
     // Store the inverse rate
-    const inverse_rate = try Number.fromInt(1).div(rate);
-    const inverse_pair = CurrencyPair{ .from = to, .to = from };
-    try self.latest_prices.put(inverse_pair, inverse_rate);
+    if (!rate.is_zero()) {
+        const inverse_rate = try Number.fromInt(1).div(rate);
+        const inverse_pair = CurrencyPair{ .from = to, .to = from };
+        try self.latest_prices.put(inverse_pair, inverse_rate);
+    }
 }
 
 /// Assumes a `PriceDecl` has already been validated and contains a valid amount.
@@ -147,4 +149,14 @@ test "convert returns same amount for same currency" {
     const amount = Number.fromFloat(100);
     const result = prices.convert(amount, "USD", "USD").?;
     try std.testing.expectEqual(amount, result);
+}
+
+test "no inverse of zero rate" {
+    var prices = init(std.testing.allocator);
+    defer prices.deinit();
+
+    try prices.setPricePlain("USD", "EUR", Number.fromFloat(0));
+
+    const result = prices.convert(Number.fromFloat(100), "EUR", "USD");
+    try std.testing.expect(result == null);
 }

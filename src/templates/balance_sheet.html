@@ -13,10 +13,15 @@
 
 .table
 
-<div class="balance_sheet_part" style="grid-template-columns: repeat(8, calc(14rem / 16 * 1.5)) repeat(2, 1fr);">
+<div class="balance_sheet_part"
+    style="grid-template-columns: repeat({[fixed_columns]d}, calc(14rem / 16 * 1.5)) repeat({[variable_columns]d}, 1fr);">
     <div class="account header">
-        <div class="cell" style="grid-column: 1 / 10;"></div>
-        <div class="cell right">Other</div>
+        <div class="cell" style="grid-column: 1 / {[after_name_line]d};"></div>
+
+        .header_title
+        <div class="cell right" style="grid-column: {[from_line]d} / {[to_line]d};">{[title]s}</div>
+
+        .header_title_end
     </div>
 
     .account
@@ -37,12 +42,12 @@
         </div>
 
         .name
-        <div class="name" style="grid-column: {[col_start]d} / 10;">
+        <div class="name" style="grid-column: {[from_line]d} / {[to_line]d};">
             <a @click="$dispatch('navigate', '/journal/{[full_name]s}');">{[name]s}</a>
         </div>
 
         .balances
-        <div class="balances">
+        <div class="balances" style="grid-column: {[from_line]d} / {[to_line]d};">
 
             .balance
             <div class="balance">{[units]f} {[cur]s}</div>
