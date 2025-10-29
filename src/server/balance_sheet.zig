@@ -239,8 +239,15 @@ fn render(
 
     try tree.clearEarnings("Equity:Earnings:Current");
 
-    // Render Tree
     try zts.write(t, "settings", out);
+    for (operating_currencies) |cur| {
+        try zts.print(t, "operating_currency", .{
+            .currency = cur,
+        }, out);
+    }
+    try zts.write(t, "end_conversions", out);
+
+    // Render Tree
     try zts.write(t, "balance_sheet", out);
     try renderTable(alloc, out, &tree, operating_currencies, display.conversion, &prices, "Assets");
     try zts.write(t, "left_end", out);

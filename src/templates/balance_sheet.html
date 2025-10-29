@@ -1,18 +1,19 @@
 .settings
-<label for="conversion">Convert:</label>
 <select name="conversion" x-model="filter.conversion">
-    <option value="units">Units</option>
-    <option value="USD">USD</option>
-    <option value="EUR">EUR</option>
+    <option value="units">Show Units</option>
+
+    .operating_currency
+    <option value="{[currency]s}">Convert to {[currency]s}</option>
+
+    .end_conversions
 </select>
 
-<label for="interval">Inverval:</label>
 <select name="interval" x-model="filter.interval">
-    <option value="day">Day</option>
-    <option value="week">Week</option>
-    <option value="month">Month</option>
-    <option value="quarter">Quarter</option>
-    <option value="year">Year</option>
+    <option value="day">Daily</option>
+    <option value="week">Weekly</option>
+    <option value="month">Monthly</option>
+    <option value="quarter">Quarterly</option>
+    <option value="year">Yearly</option>
 </select>
 
 
