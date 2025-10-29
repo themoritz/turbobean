@@ -86,10 +86,15 @@ pub const Number = struct {
     }
 
     pub fn mul(self: Number, other: Number) Number {
-        return Number{
-            .value = self.value * other.value,
-            .precision = self.precision + other.precision,
-        };
+        // Use float in case of too high precision to avoid overflows
+        if (self.precision + other.precision > MAX_PRECISION) {
+            return Number.fromFloat(self.toFloat() * other.toFloat());
+        } else {
+            return Number{
+                .value = self.value * other.value,
+                .precision = self.precision + other.precision,
+            };
+        }
     }
 
     pub fn negate(self: Number) Number {
