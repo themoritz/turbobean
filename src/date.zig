@@ -105,12 +105,66 @@ pub const Date = struct {
         return Date.fromEpochDay(epoch_day);
     }
 
-    pub fn nextSunday(self: Date) Date {
+    pub fn nextDay(self: Date) Date {
+        return self.addDays(1);
+    }
+
+    pub fn nextWeek(self: Date) Date {
         const days_until_sunday = (7 - @intFromEnum(self.weekday())) % 7;
         if (days_until_sunday == 0) {
             return self.addDays(7);
         }
         return self.addDays(days_until_sunday);
+    }
+
+    pub fn nextYear(self: Date) Date {
+        if (self.month == 12 and self.day == 31) {
+            return Date{ .year = self.year + 1, .month = 12, .day = 31 };
+        }
+        return Date{ .year = self.year, .month = 12, .day = 31 };
+    }
+
+    pub fn nextQuarter(self: Date) Date {
+        if (self.month >= 10) {
+            // Q4: target is Dec 31
+            if (self.month == 12 and self.day == 31) {
+                return Date{ .year = self.year + 1, .month = 3, .day = 31 };
+            }
+            return Date{ .year = self.year, .month = 12, .day = 31 };
+        } else if (self.month >= 7) {
+            // Q3: target is Sep 30
+            if (self.month == 9 and self.day == 30) {
+                return Date{ .year = self.year, .month = 12, .day = 31 };
+            }
+            return Date{ .year = self.year, .month = 9, .day = 30 };
+        } else if (self.month >= 4) {
+            // Q2: target is Jun 30
+            if (self.month == 6 and self.day == 30) {
+                return Date{ .year = self.year, .month = 9, .day = 30 };
+            }
+            return Date{ .year = self.year, .month = 6, .day = 30 };
+        } else {
+            // Q1: target is Mar 31
+            if (self.month == 3 and self.day == 31) {
+                return Date{ .year = self.year, .month = 6, .day = 30 };
+            }
+            return Date{ .year = self.year, .month = 3, .day = 31 };
+        }
+    }
+
+    pub fn nextMonth(self: Date) Date {
+        const days_in_month = std.time.epoch.getDaysInMonth(@intCast(self.year), @enumFromInt(self.month));
+        if (self.day == days_in_month) {
+            // Already on last day of month, go to next month
+            if (self.month == 12) {
+                const next_days = std.time.epoch.getDaysInMonth(@intCast(self.year + 1), @enumFromInt(1));
+                return Date{ .year = self.year + 1, .month = 1, .day = next_days };
+            } else {
+                const next_days = std.time.epoch.getDaysInMonth(@intCast(self.year), @enumFromInt(self.month + 1));
+                return Date{ .year = self.year, .month = self.month + 1, .day = next_days };
+            }
+        }
+        return Date{ .year = self.year, .month = self.month, .day = days_in_month };
     }
 };
 
@@ -151,17 +205,17 @@ test "epochDay" {
     try std.testing.expectEqual(Date.fromEpochDay(date.toEpochDay()), date);
 }
 
-test "nextSunday" {
+test "nextWeek" {
     try std.testing.expectEqual(
-        (Date{ .year = 2025, .month = 10, .day = 27 }).nextSunday(),
+        (Date{ .year = 2025, .month = 10, .day = 27 }).nextWeek(),
         Date{ .year = 2025, .month = 11, .day = 2 },
     );
     try std.testing.expectEqual(
-        (Date{ .year = 2025, .month = 10, .day = 26 }).nextSunday(),
+        (Date{ .year = 2025, .month = 10, .day = 26 }).nextWeek(),
         Date{ .year = 2025, .month = 11, .day = 2 },
     );
     try std.testing.expectEqual(
-        (Date{ .year = 2025, .month = 10, .day = 25 }).nextSunday(),
+        (Date{ .year = 2025, .month = 10, .day = 25 }).nextWeek(),
         Date{ .year = 2025, .month = 10, .day = 26 },
     );
 }
@@ -171,4 +225,101 @@ test "weekday" {
     try std.testing.expectEqual(.monday, date1.weekday());
     const date2 = Date{ .year = 2014, .month = 1, .day = 1 };
     try std.testing.expectEqual(.wednesday, date2.weekday());
+}
+
+test "nextYear" {
+    // Regular day should return Dec 31 of current year
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 10, .day = 27 }).nextYear(),
+        Date{ .year = 2025, .month = 12, .day = 31 },
+    );
+    // Already on Dec 31, should return Dec 31 of next year
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 12, .day = 31 }).nextYear(),
+        Date{ .year = 2026, .month = 12, .day = 31 },
+    );
+    // Dec 30 should return Dec 31 of current year
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 12, .day = 30 }).nextYear(),
+        Date{ .year = 2025, .month = 12, .day = 31 },
+    );
+}
+
+test "nextQuarter" {
+    // Q1 (Jan-Mar) -> Mar 31
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 1, .day = 15 }).nextQuarter(),
+        Date{ .year = 2025, .month = 3, .day = 31 },
+    );
+    // Q1 already on Mar 31 -> Jun 30
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 3, .day = 31 }).nextQuarter(),
+        Date{ .year = 2025, .month = 6, .day = 30 },
+    );
+
+    // Q2 (Apr-Jun) -> Jun 30
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 5, .day = 15 }).nextQuarter(),
+        Date{ .year = 2025, .month = 6, .day = 30 },
+    );
+    // Q2 already on Jun 30 -> Sep 30
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 6, .day = 30 }).nextQuarter(),
+        Date{ .year = 2025, .month = 9, .day = 30 },
+    );
+
+    // Q3 (Jul-Sep) -> Sep 30
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 8, .day = 15 }).nextQuarter(),
+        Date{ .year = 2025, .month = 9, .day = 30 },
+    );
+    // Q3 already on Sep 30 -> Dec 31
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 9, .day = 30 }).nextQuarter(),
+        Date{ .year = 2025, .month = 12, .day = 31 },
+    );
+
+    // Q4 (Oct-Dec) -> Dec 31
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 11, .day = 15 }).nextQuarter(),
+        Date{ .year = 2025, .month = 12, .day = 31 },
+    );
+    // Q4 already on Dec 31 -> Mar 31 next year
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 12, .day = 31 }).nextQuarter(),
+        Date{ .year = 2026, .month = 3, .day = 31 },
+    );
+}
+
+test "nextMonth" {
+    // Regular day in October -> Oct 31
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 10, .day = 27 }).nextMonth(),
+        Date{ .year = 2025, .month = 10, .day = 31 },
+    );
+    // Already on Oct 31 -> Nov 30
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 10, .day = 31 }).nextMonth(),
+        Date{ .year = 2025, .month = 11, .day = 30 },
+    );
+    // Feb 28 (non-leap) -> Feb 28
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 2, .day = 15 }).nextMonth(),
+        Date{ .year = 2025, .month = 2, .day = 28 },
+    );
+    // Feb 28 (non-leap year, already on last day) -> Mar 31
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 2, .day = 28 }).nextMonth(),
+        Date{ .year = 2025, .month = 3, .day = 31 },
+    );
+    // Feb 29 (leap year, already on last day) -> Mar 31
+    try std.testing.expectEqual(
+        (Date{ .year = 2024, .month = 2, .day = 29 }).nextMonth(),
+        Date{ .year = 2024, .month = 3, .day = 31 },
+    );
+    // Dec 31 -> Jan 31 next year
+    try std.testing.expectEqual(
+        (Date{ .year = 2025, .month = 12, .day = 31 }).nextMonth(),
+        Date{ .year = 2026, .month = 1, .day = 31 },
+    );
 }

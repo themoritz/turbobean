@@ -2,6 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Number = @import("number.zig").Number;
 const PriceDecl = @import("data.zig").PriceDecl;
+const PlainInventory = @import("inventory.zig").PlainInventory;
+const Summary = @import("inventory.zig").Summary;
 
 const Self = @This();
 
@@ -71,20 +73,47 @@ pub fn setPrice(self: *Self, decl: PriceDecl) !void {
 
 /// Get the conversion rate from one currency to another. Returns `null` if no
 /// price is available.
-pub fn getPrice(self: *Self, from: []const u8, to: []const u8) ?Number {
+pub fn getPrice(self: *const Self, from: []const u8, to: []const u8) ?Number {
     const pair = CurrencyPair{ .from = from, .to = to };
     return self.latest_prices.get(pair);
 }
 
 /// Convert an amount from one currency to another. Returns null if no price is
 /// available.
-pub fn convert(self: *Self, amount: Number, from: []const u8, to: []const u8) ?Number {
+pub fn convert(self: *const Self, amount: Number, from: []const u8, to: []const u8) ?Number {
     if (std.mem.eql(u8, from, to)) {
         return amount;
     }
 
     const rate = self.getPrice(from, to) orelse return null;
     return amount.mul(rate).normalize();
+}
+
+/// Convert everything to the `to` currency if possible according to this price
+/// table.
+///
+/// Caller owns returned inventory.
+pub fn convertInventory(
+    self: *const Self,
+    alloc: Allocator,
+    inventory: *const PlainInventory,
+    to: []const u8,
+) !PlainInventory {
+    var result = try PlainInventory.init(alloc, null);
+    errdefer result.deinit();
+
+    var iter = inventory.by_currency.iterator();
+    while (iter.next()) |kv| {
+        const from = kv.key_ptr.*;
+        const balance = kv.value_ptr.*;
+        if (self.convert(balance, from, to)) |converted| {
+            try result.add(to, converted);
+        } else {
+            try result.add(from, balance);
+        }
+    }
+
+    return result;
 }
 
 test "setPrice stores both forward and inverse rates" {

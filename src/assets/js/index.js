@@ -3,12 +3,22 @@ class Filter {
         const url = new URL(window.location);
         this.startDate = url.searchParams.get('start_date');
         this.endDate = url.searchParams.get('end_date');
+
+        this.conversion = url.searchParams.get('conversion');
+        if (!this.conversion) this.conversion = 'units';
+        this.interval = url.searchParams.get('interval');
+        if (!this.interval) this.interval = 'week';
     }
 
     getSearchParams() {
         const params = new URLSearchParams();
+
         if (this.startDate) params.set('start_date', this.startDate);
         if (this.endDate) params.set('end_date', this.endDate);
+
+        if (this.conversion) params.set('conversion', this.conversion);
+        if (this.interval) params.set('interval', this.interval);
+
         return params;
     }
 

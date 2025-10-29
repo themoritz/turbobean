@@ -261,6 +261,18 @@ pub const LotsInventory = struct {
         };
     }
 
+    pub fn toPlain(self: *const LotsInventory, alloc: Allocator) !PlainInventory {
+        var inv = try PlainInventory.init(alloc, null);
+        errdefer inv.deinit();
+
+        var iter = self.by_currency.iterator();
+        while (iter.next()) |kv| {
+            try inv.add(kv.key_ptr.*, kv.value_ptr.balance());
+        }
+
+        return inv;
+    }
+
     pub fn clone(self: *const LotsInventory, alloc: Allocator) !LotsInventory {
         var result = LotsInventory{
             .alloc = alloc,
@@ -416,6 +428,14 @@ pub const Inventory = union(enum) {
         return switch (self.*) {
             .plain => |inv| inv.summary(alloc),
             .lots => |inv| inv.summary(alloc),
+        };
+    }
+
+    /// Flatten the inventory to a PlainInventory
+    pub fn toPlain(self: *const Inventory, alloc: Allocator) !PlainInventory {
+        return switch (self.*) {
+            .plain => |inv| inv.clone(alloc),
+            .lots => |inv| inv.toPlain(alloc),
         };
     }
 

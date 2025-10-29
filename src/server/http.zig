@@ -69,7 +69,13 @@ fn parse_from(allocator: std.mem.Allocator, comptime T: type, comptime name: []c
         else => switch (T) {
             []const u8 => try allocator.dupe(u8, value),
             [:0]const u8 => try allocator.dupeZ(u8, value),
-            else => std.debug.panic("Unsupported field type \"{s}\"", .{@typeName(T)}),
+            else => {
+                if (@hasDecl(T, "from_url_param")) {
+                    return try T.from_url_param(value);
+                } else {
+                    std.debug.panic("Unsupported field type \"{s}\"", .{@typeName(T)});
+                }
+            },
         },
     };
 }
