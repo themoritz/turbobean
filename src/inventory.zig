@@ -571,6 +571,18 @@ pub const Summary = struct {
             }
         }
     }
+
+    pub fn toPlain(self: *const Summary, alloc: Allocator) !PlainInventory {
+        var result = try PlainInventory.init(alloc, null);
+        errdefer result.deinit();
+
+        var iter = self.by_currency.iterator();
+        while (iter.next()) |entry| {
+            try result.add(entry.key_ptr.*, entry.value_ptr.total_units());
+        }
+
+        return result;
+    }
 };
 
 test "cost weight" {

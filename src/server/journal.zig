@@ -6,6 +6,7 @@ const Uri = @import("../Uri.zig");
 const Project = @import("../project.zig");
 const Tree = @import("../tree.zig");
 const Date = @import("../date.zig").Date;
+const Number = @import("../number.zig").Number;
 const SSE = @import("SSE.zig");
 const DisplaySettings = @import("DisplaySettings.zig");
 const t = @import("templates.zig");
@@ -155,17 +156,34 @@ fn render(
                                 try zts.write(tpl, "transaction_leg", out);
                             }
 
+                            const conv_units, const conv_cur = tryConvert(
+                                &prices,
+                                display.conversion,
+                                p.amount.number.?,
+                                p.amount.currency.?,
+                            );
                             try zts.print(tpl, "transaction_legs_end", .{
-                                .change_units = p.amount.number.?.withPrecision(2),
-                                .change_cur = p.amount.currency.?,
+                                .change_units = conv_units.withPrecision(2),
+                                .change_cur = conv_cur,
                             }, out);
 
                             try tree.postInventory(entry.date, p);
+
                             var sum = try tree.inventoryAggregatedByAccount(alloc, account);
                             defer sum.deinit();
-                            var iter = sum.by_currency.iterator();
+
+                            var plain = try sum.toPlain(alloc);
+                            defer plain.deinit();
+
+                            var conv_inv = switch (display.conversion) {
+                                .units => try plain.clone(alloc),
+                                .currency => |to| try prices.convertInventory(alloc, &plain, to),
+                            };
+                            defer conv_inv.deinit();
+
+                            var iter = conv_inv.by_currency.iterator();
                             while (iter.next()) |kv| {
-                                const units = kv.value_ptr.total_units();
+                                const units = kv.value_ptr.*;
                                 if (!units.is_zero()) {
                                     try zts.print(tpl, "transaction_balance_cur", .{
                                         .units = units.withPrecision(2),
@@ -173,6 +191,7 @@ fn render(
                                     }, out);
                                 }
                             }
+
                             try zts.print(tpl, "transaction_balance_end", .{
                                 .hash = hash,
                             }, out);
@@ -189,20 +208,28 @@ fn render(
                                 try zts.write(tpl, "tree_icon", out);
                                 try zts.write(t.tree, "icon_leaf", out);
 
-                                try zts.print(tpl, "tree_end", .{
-                                    .account = p2.account.slice,
-                                    .change_units = p2.amount.number.?.withPrecision(2),
-                                    .change_cur = p2.amount.currency.?,
-                                }, out);
+                                {
+                                    const units, const cur = tryConvert(
+                                        &prices,
+                                        display.conversion,
+                                        p2.amount.number.?,
+                                        p2.amount.currency.?,
+                                    );
+                                    try zts.print(tpl, "tree_end", .{
+                                        .account = p2.account.slice,
+                                        .change_units = units.withPrecision(2),
+                                        .change_cur = cur,
+                                    }, out);
+                                }
                             }
 
                             try zts.write(tpl, "transaction_end", out);
 
-                            const balance = sum.by_currency.get(p.amount.currency.?).?.total_units();
+                            const balance = conv_inv.by_currency.get(conv_cur).?;
                             try plot_points.append(alloc, .{
                                 .hash = hash,
                                 .date = try std.fmt.allocPrint(alloc, "{f}", .{entry.date}),
-                                .currency = try alloc.dupe(u8, p.amount.currency.?),
+                                .currency = try alloc.dupe(u8, conv_cur),
                                 .balance = balance.toFloat(),
                                 .balance_rendered = try std.fmt.allocPrint(alloc, "{f}", .{balance.withPrecision(2)}),
                             });
@@ -220,4 +247,19 @@ fn render(
     try zts.write(tpl, "table_end", out);
 
     return plot_points;
+}
+
+fn tryConvert(
+    prices: *const Prices,
+    conversion: DisplaySettings.Conversion,
+    amount: Number,
+    from: []const u8,
+) struct { Number, []const u8 } {
+    return switch (conversion) {
+        .units => .{ amount, from },
+        .currency => |to| if (prices.convert(amount, from, to)) |result|
+            .{ result, to }
+        else
+            .{ amount, from },
+    };
 }
