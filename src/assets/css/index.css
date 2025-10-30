@@ -79,6 +79,34 @@ header .filter {
   gap: 5px;
 }
 
+/************************ PLOT AREA **********************/
+
+.plot_header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.plot_header #legend {
+  margin-left: 10px;
+  flex-grow: 1;
+  display: flex;
+  gap: 15px;
+}
+
+.plot_header #legend .legend-item {
+  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+plot_header .settings {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 /************************ D3 *****************************/
 
 .tooltip {
@@ -339,7 +367,12 @@ nav .modal .result.active {
   padding: 0px 5px;
 }
 
-.journal .postings .tree {
-   width: calc(14rem / 16);
-   height: calc(14rem / 16 * 1.5);
+.journal .postings .tree_container {
+  display: flex;
+}
+
+.journal .postings .tree_container .tree {
+  position: relative;
+  width: calc(14rem / 16 * 1.5);
+  height: calc(14rem / 16 * 1.5);
 }

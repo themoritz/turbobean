@@ -1,0 +1,30 @@
+<div class="plot_header">
+    <div id="legend">
+    </div>
+
+    .settings
+    <div class="settings">
+        <select name="conversion" x-model="filter.conversion">
+            <option value="units">Show Units</option>
+
+            .operating_currency
+            <option value="{[currency]s}">Convert to {[currency]s}</option>
+
+            .end_conversions
+        </select>
+
+        <select name="interval" x-model="filter.interval">
+            <option value="day">Daily</option>
+            <option value="week">Weekly</option>
+            <option value="month">Monthly</option>
+            <option value="quarter">Quarterly</option>
+            <option value="year">Yearly</option>
+        </select>
+    </div>
+</div>
+
+.plot
+<div id="d3" x-data="d3">
+    <svg viewBox="0,0 5,1"></svg>
+    <div class="tooltip"></div>
+</div>

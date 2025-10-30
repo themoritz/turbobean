@@ -2,9 +2,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const zts = @import("zts");
 const State = @import("State.zig");
+const t = @import("templates.zig").index;
 
 pub fn handler(alloc: Allocator, req: *std.http.Server.Request, state: *State) !void {
-    const t = @embedFile("../templates/index.html");
     var body = std.array_list.Managed(u8).init(alloc);
     defer body.deinit();
     try zts.writeHeader(t, body.writer());

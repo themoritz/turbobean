@@ -8,6 +8,10 @@ const Tree = @import("../tree.zig");
 const Date = @import("../date.zig").Date;
 const SSE = @import("SSE.zig");
 const EntryFilter = @import("EntryFilter.zig");
+const t = @import("templates.zig");
+const tpl = t.journal;
+const common = @import("common.zig");
+const Prices = @import("../Prices.zig");
 
 pub fn handler(
     alloc: std.mem.Allocator,
@@ -77,10 +81,15 @@ fn render(
     account: []const u8,
     out: *std.Io.Writer,
 ) !std.ArrayList(PlotPoint) {
-    const t = @embedFile("../templates/journal.html");
-
     var tree = try Tree.init(alloc);
     defer tree.deinit();
+
+    const operating_currencies = try project.getConfig().getOperatingCurrencies(alloc);
+    defer alloc.free(operating_currencies);
+
+    var prices = Prices.init(alloc);
+    defer prices.deinit();
+
     var plot_points = std.ArrayList(PlotPoint){};
     errdefer {
         for (plot_points.items) |*plot_point| {
@@ -89,7 +98,8 @@ fn render(
         plot_points.deinit(alloc);
     }
 
-    try zts.write(t, "table", out);
+    try common.renderPlotArea(operating_currencies, out);
+    try zts.write(tpl, "table", out);
 
     for (project.sorted_entries.items) |sorted_entry| {
         const data = project.files.items[sorted_entry.file];
@@ -100,7 +110,7 @@ fn render(
                     // We have to open the account even if it's outside the date filter.
                     _ = try tree.open(open.account.slice, null, open.booking_method);
                     if (filter.isWithinDateRange(entry.date)) {
-                        try zts.print(t, "open", .{
+                        try zts.print(tpl, "open", .{
                             .date = entry.date,
                         }, out);
                     }
@@ -118,7 +128,7 @@ fn render(
                             // has multiple postings to the queried account.
                             const hash = entry.hash() + i;
 
-                            try zts.print(t, "transaction", .{
+                            try zts.print(tpl, "transaction", .{
                                 .date = entry.date,
                                 .flag = tx.flag.slice,
                                 .highlight = switch (tx.flag.slice[0]) {
@@ -128,24 +138,24 @@ fn render(
                             }, out);
 
                             if (tx.payee) |payee| {
-                                try zts.print(t, "transaction_payee", .{
+                                try zts.print(tpl, "transaction_payee", .{
                                     .payee = payee[1 .. payee.len - 1],
                                 }, out);
-                                if (tx.narration) |n| if (n.len > 2) try zts.write(t, "transaction_separator", out);
+                                if (tx.narration) |n| if (n.len > 2) try zts.write(tpl, "transaction_separator", out);
                             }
-                            if (tx.narration) |n| if (n.len > 2) try zts.print(t, "transaction_narration", .{
+                            if (tx.narration) |n| if (n.len > 2) try zts.print(tpl, "transaction_narration", .{
                                 .narration = n[1 .. n.len - 1],
                             }, out);
 
-                            try zts.print(t, "transaction_legs", .{
+                            try zts.print(tpl, "transaction_legs", .{
                                 .hash = hash,
                             }, out);
 
                             for (postings.start..postings.end) |_| {
-                                try zts.write(t, "transaction_leg", out);
+                                try zts.write(tpl, "transaction_leg", out);
                             }
 
-                            try zts.print(t, "transaction_legs_end", .{
+                            try zts.print(tpl, "transaction_legs_end", .{
                                 .change_units = p.amount.number.?.withPrecision(2),
                                 .change_cur = p.amount.currency.?,
                             }, out);
@@ -157,34 +167,36 @@ fn render(
                             while (iter.next()) |kv| {
                                 const units = kv.value_ptr.total_units();
                                 if (!units.is_zero()) {
-                                    try zts.print(t, "transaction_balance_cur", .{
+                                    try zts.print(tpl, "transaction_balance_cur", .{
                                         .units = units.withPrecision(2),
                                         .cur = kv.key_ptr.*,
                                     }, out);
                                 }
                             }
-                            try zts.print(t, "transaction_balance_end", .{
+                            try zts.print(tpl, "transaction_balance_end", .{
                                 .hash = hash,
                             }, out);
 
                             for (postings.start..postings.end) |j| {
                                 const p2 = data.postings.get(j);
-                                try zts.write(t, "transaction_posting", out);
+                                try zts.write(tpl, "transaction_posting", out);
 
                                 if (j < postings.end - 1) {
-                                    try zts.write(t, "tree_middle", out);
+                                    try zts.write(t.tree, "tree_node_middle", out);
                                 } else {
-                                    try zts.write(t, "tree_last", out);
+                                    try zts.write(t.tree, "tree_node_last", out);
                                 }
+                                try zts.write(tpl, "tree_icon", out);
+                                try zts.write(t.tree, "icon_leaf", out);
 
-                                try zts.print(t, "tree_end", .{
+                                try zts.print(tpl, "tree_end", .{
                                     .account = p2.account.slice,
                                     .change_units = p2.amount.number.?.withPrecision(2),
                                     .change_cur = p2.amount.currency.?,
                                 }, out);
                             }
 
-                            try zts.write(t, "transaction_end", out);
+                            try zts.write(tpl, "transaction_end", out);
 
                             const balance = sum.by_currency.get(p.amount.currency.?).?.total_units();
                             try plot_points.append(alloc, .{
@@ -198,11 +210,14 @@ fn render(
                     }
                 }
             },
+            .price => |price| {
+                try prices.setPrice(price);
+            },
             else => {},
         }
     }
 
-    try zts.write(t, "table_end", out);
+    try zts.write(tpl, "table_end", out);
 
     return plot_points;
 }

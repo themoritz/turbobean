@@ -47,19 +47,15 @@
 
         <div class="postings" x-show="$store.txOpen.open['{[hash]d}']">
             .transaction_posting
-            <div class="tree">
-                .tree_middle
-                <svg viewBox="0 0 20 30">
-                    <path d="M 10,0 L 10,30 M 10,16 L 20,16" stroke="hsl(0deg 0% 80%)" stroke-width="1.75"
-                        fill="none" />
-                </svg>
+            <div class="tree_container">
+                <div class="tree">
 
-                .tree_last
-                <svg viewBox="0 0 20 30">
-                    <path d="M 10,0 L 10,16 L 20,16" stroke="hsl(0deg 0% 80%)" stroke-width="1.75" fill="none" />
-                </svg>
+                    .tree_icon
+                </div>
+                <div class="tree">
 
-                .tree_end
+                    .tree_end
+                </div>
             </div>
             <div class="account">
                 <a @click="$dispatch('navigate', '/journal/{[account]s}');">{[account]s}</a>

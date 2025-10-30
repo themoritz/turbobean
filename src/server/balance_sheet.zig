@@ -13,7 +13,9 @@ const EntryFilter = @import("EntryFilter.zig");
 const DisplaySettings = @import("DisplaySettings.zig");
 const PlainInventory = @import("../inventory.zig").PlainInventory;
 const Prices = @import("../Prices.zig");
-const t = @embedFile("../templates/balance_sheet.html");
+const t = @import("templates.zig");
+const tpl = t.balance_sheet;
+const common = @import("common.zig");
 
 const MAX_TREE_DEPTH = 10;
 
@@ -239,21 +241,15 @@ fn render(
 
     try tree.clearEarnings("Equity:Earnings:Current");
 
-    try zts.write(t, "settings", out);
-    for (operating_currencies) |cur| {
-        try zts.print(t, "operating_currency", .{
-            .currency = cur,
-        }, out);
-    }
-    try zts.write(t, "end_conversions", out);
+    try common.renderPlotArea(operating_currencies, out);
 
     // Render Tree
-    try zts.write(t, "balance_sheet", out);
+    try zts.write(tpl, "balance_sheet", out);
     try renderTable(alloc, out, &tree, operating_currencies, display.conversion, &prices, "Assets");
-    try zts.write(t, "left_end", out);
+    try zts.write(tpl, "left_end", out);
     try renderTable(alloc, out, &tree, operating_currencies, display.conversion, &prices, "Liabilities");
     try renderTable(alloc, out, &tree, operating_currencies, display.conversion, &prices, "Equity");
-    try zts.write(t, "right_end", out);
+    try zts.write(tpl, "right_end", out);
 
     return net_worth.plot_points.toOwnedSlice(alloc);
 }
@@ -269,26 +265,26 @@ fn renderTable(
 ) !void {
     for (tree.nodes.items[0].children.items) |i| {
         if (std.mem.eql(u8, tree.nodes.items[i].name, title)) {
-            try zts.print(t, "table", .{
+            try zts.print(tpl, "table", .{
                 .fixed_columns = MAX_TREE_DEPTH,
                 .variable_columns = operating_currencies.len + 1,
                 .after_name_line = MAX_TREE_DEPTH + 2,
             }, out);
 
             for (operating_currencies, 0..) |currency, j| {
-                try zts.print(t, "header_title", .{
+                try zts.print(tpl, "header_title", .{
                     .title = currency,
                     .from_line = MAX_TREE_DEPTH + 2 + j,
                     .to_line = MAX_TREE_DEPTH + 2 + j + 1,
                 }, out);
             }
-            try zts.print(t, "header_title", .{
+            try zts.print(tpl, "header_title", .{
                 .title = "Other",
                 .from_line = MAX_TREE_DEPTH + 2 + operating_currencies.len,
                 .to_line = MAX_TREE_DEPTH + 2 + operating_currencies.len + 1,
             }, out);
 
-            try zts.write(t, "header_title_end", out);
+            try zts.write(tpl, "header_title_end", out);
 
             var prefix = std.array_list.Managed(bool).init(alloc);
             defer prefix.deinit();
@@ -299,7 +295,7 @@ fn renderTable(
 
             try renderRec(alloc, out, operating_currencies, conversion, prices, tree, i, 0, &prefix, &name_prefix, true);
 
-            try zts.write(t, "table_end", out);
+            try zts.write(tpl, "table_end", out);
         }
     }
 }
@@ -329,38 +325,38 @@ fn renderRec(
     };
     defer inv.deinit();
 
-    try zts.write(t, "account", out);
+    try zts.write(tpl, "account", out);
 
     for (prefix.items) |last| {
-        try zts.write(t, "tree", out);
+        try zts.write(tpl, "tree", out);
         if (!last) {
-            try zts.write(t, "tree_prefix", out);
+            try zts.write(t.tree, "tree_prefix", out);
         }
-        try zts.write(t, "tree_end", out);
+        try zts.write(tpl, "tree_end", out);
     }
 
     if (depth > 0) {
-        try zts.write(t, "tree", out);
+        try zts.write(tpl, "tree", out);
         if (is_last) {
-            try zts.write(t, "tree_node_last", out);
+            try zts.write(t.tree, "tree_node_last", out);
         } else {
-            try zts.write(t, "tree_node_middle", out);
+            try zts.write(t.tree, "tree_node_middle", out);
         }
-        try zts.write(t, "tree_end", out);
+        try zts.write(tpl, "tree_end", out);
     }
 
-    try zts.write(t, "icon", out);
+    try zts.write(tpl, "icon", out);
     if (has_children) {
-        try zts.write(t, "icon_open", out);
-        try zts.write(t, "icon_line", out);
+        try zts.write(t.tree, "icon_open", out);
+        try zts.write(t.tree, "icon_line", out);
     } else {
         if (depth > 0) {
-            try zts.write(t, "icon_leaf", out);
+            try zts.write(t.tree, "icon_leaf", out);
         } else {
-            try zts.write(t, "icon_leaf_root", out);
+            try zts.write(t.tree, "icon_leaf_root", out);
         }
     }
-    try zts.write(t, "icon_end", out);
+    try zts.write(tpl, "icon_end", out);
 
     const name_prefix_len = name_prefix.items.len;
     if (depth > 0) {
@@ -368,7 +364,7 @@ fn renderRec(
         try name_prefix.appendSlice(node.name);
     }
 
-    try zts.print(t, "name", .{
+    try zts.print(tpl, "name", .{
         .name = node.name,
         .full_name = name_prefix.items,
         .from_line = depth + 2,
@@ -376,22 +372,22 @@ fn renderRec(
     }, out);
 
     for (operating_currencies, 0..) |currency, j| {
-        try zts.print(t, "balances", .{
+        try zts.print(tpl, "balances", .{
             .from_line = MAX_TREE_DEPTH + 2 + j,
             .to_line = MAX_TREE_DEPTH + 2 + j + 1,
         }, out);
         if (inv.by_currency.get(currency)) |balance| {
             if (!balance.is_zero()) {
-                try zts.print(t, "balance", .{
+                try zts.print(tpl, "balance", .{
                     .units = balance.withPrecision(2),
                     .cur = "",
                 }, out);
             }
         }
-        try zts.write(t, "balances_end", out);
+        try zts.write(tpl, "balances_end", out);
     }
 
-    try zts.print(t, "balances", .{
+    try zts.print(tpl, "balances", .{
         .from_line = MAX_TREE_DEPTH + 2 + operating_currencies.len,
         .to_line = MAX_TREE_DEPTH + 2 + operating_currencies.len + 1,
     }, out);
@@ -404,15 +400,15 @@ fn renderRec(
         }
         const units = kv.value_ptr.*;
         if (!units.is_zero()) {
-            try zts.print(t, "balance", .{
+            try zts.print(tpl, "balance", .{
                 .units = units.withPrecision(2),
                 .cur = kv.key_ptr.*,
             }, out);
         }
     }
-    try zts.write(t, "balances_end", out);
+    try zts.write(tpl, "balances_end", out);
 
-    try zts.write(t, "account_end", out);
+    try zts.write(tpl, "account_end", out);
 
     // Render children with updated prefix
     if (has_children) {

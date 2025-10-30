@@ -156,9 +156,9 @@ document.addEventListener('alpine:init', () => {
 
     Alpine.data('d3', () => {
         const margin = {
-            top: 20,
+            top: 10,
             right: 30,
-            bottom: 55,
+            bottom: 30,
             left: 50
         };
 
@@ -169,9 +169,6 @@ document.addEventListener('alpine:init', () => {
         const yGroup = svg.append("g").attr("class", "mono");
 
         const chart = svg.append("g");
-
-        // Legend group
-        const legend = svg.append("g").attr("class", "legend");
 
         // Grid lines group
         const grid = svg.append("g").attr("class", "grid");
@@ -246,7 +243,7 @@ document.addEventListener('alpine:init', () => {
                 });
 
                 // Update legend
-                updateLegend(legend, width, height, currencies, colorScale);
+                updateLegend(currencies, colorScale);
 
                 const circles = d3.selectAll(".circle");
 
@@ -399,46 +396,30 @@ document.addEventListener('alpine:init', () => {
     });
 });
 
-function updateLegend(legend, width, height, currencies, colorScale) {
-    const legendItemHeight = 20;
-    const legendItemSpacing = 5;
-    const legendItemWidth = 60;
-    const circleRadius = 4;
-    const textOffset = 15;
+function updateLegend(currencies, colorScale) {
+    const legend = d3.select("#legend");
 
-    // Clear existing legend
-    legend.selectAll("*").remove();
+    legend.selectAll(".legend-item").remove();
+    legend.selectAll(".legend-item")
+        .data(currencies)
+        .enter()
+        .append("div")
+        .attr("class", "legend-item")
+        .attr("font-size", "12px")
+        .each(function(d) {
+            d3.select(this)
+                .append("span")
+                .attr("class", "legend-value")
+                .style("border-radius", "4px")
+                .style("width", "8px")
+                .style("height", "8px")
+                .style("background-color", colorScale(d));
 
-    // Position legend at top right
-    legend.attr("transform", `translate(${legendItemSpacing}, ${height + 25})`);
-
-    currencies.forEach((currency, i) => {
-        const legendItem = legend
-            .append("g")
-            .attr("class", "legend-item")
-            .attr("transform", `translate(${i * (legendItemWidth + legendItemSpacing)}, 0)`);
-
-        // Add colored circle
-        legendItem
-            .append("circle")
-            .attr("cx", circleRadius)
-            .attr("cy", legendItemHeight / 2)
-            .attr("r", circleRadius)
-            .attr("fill", colorScale(currency))
-            .attr("stroke", colorScale(currency))
-            .attr("stroke-width", 1);
-
-        // Add currency label
-        legendItem
-            .append("text")
-            .attr("x", textOffset)
-            .attr("y", legendItemHeight / 2)
-            .attr("dy", "0.35em")
-            .attr("font-family", "Fira Sans, sans-serif")
-            .attr("font-size", "12px")
-            .attr("fill", "currentColor")
-            .text(currency);
-    });
+            d3.select(this)
+                .append("span")
+                .attr("class", "legend-label")
+                .text(d);
+        });
 }
 
 function updateCurrency(currency, color, chart, data, x, y) {
