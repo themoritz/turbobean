@@ -9,7 +9,6 @@ const Date = @import("../date.zig").Date;
 const Number = @import("../number.zig").Number;
 const Data = @import("../data.zig");
 const SSE = @import("SSE.zig");
-const EntryFilter = @import("EntryFilter.zig");
 const DisplaySettings = @import("DisplaySettings.zig");
 const PlainInventory = @import("../inventory.zig").PlainInventory;
 const Prices = @import("../Prices.zig");
@@ -29,10 +28,8 @@ pub fn handler(
 
     var parsed_request = try http.ParsedRequest.parse(alloc, req.head.target);
     defer parsed_request.deinit(alloc);
-    var filter = try http.Query(EntryFilter).parse(alloc, &parsed_request.params);
-    defer filter.deinit(alloc);
     var display = try http.Query(DisplaySettings).parse(alloc, &parsed_request.params);
-    defer display.deinit();
+    defer display.deinit(alloc);
 
     var html = std.Io.Writer.Allocating.init(alloc);
     defer html.deinit();
@@ -48,7 +45,7 @@ pub fn handler(
             state.acquireProject();
             defer state.releaseProject();
 
-            const plot_points = try render(alloc, state.project, filter, display, &html.writer);
+            const plot_points = try render(alloc, state.project, display, &html.writer);
             defer {
                 for (plot_points) |*plot_point| plot_point.deinit(alloc);
                 alloc.free(plot_points);
@@ -159,7 +156,6 @@ const DateState = enum { before, within };
 fn render(
     alloc: std.mem.Allocator,
     project: *Project,
-    filter: EntryFilter,
     display: DisplaySettings,
     out: *std.Io.Writer,
 ) ![]PlotPoint {
@@ -183,8 +179,8 @@ fn render(
 
         state: switch (date_state) {
             .before => {
-                if (filter.hasStartDate()) {
-                    if (filter.isAfterStart(entry.date)) {
+                if (display.hasStartDate()) {
+                    if (display.isAfterStart(entry.date)) {
                         try tree.clearEarnings("Equity:Earnings:Previous");
                         continue :state .within;
                     }
@@ -194,7 +190,7 @@ fn render(
             },
             .within => {
                 date_state = .within;
-                if (filter.isAfterEnd(entry.date)) {
+                if (display.isAfterEnd(entry.date)) {
                     break;
                 }
             },

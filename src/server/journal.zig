@@ -7,7 +7,7 @@ const Project = @import("../project.zig");
 const Tree = @import("../tree.zig");
 const Date = @import("../date.zig").Date;
 const SSE = @import("SSE.zig");
-const EntryFilter = @import("EntryFilter.zig");
+const DisplaySettings = @import("DisplaySettings.zig");
 const t = @import("templates.zig");
 const tpl = t.journal;
 const common = @import("common.zig");
@@ -24,8 +24,8 @@ pub fn handler(
 
     var parsed_request = try http.ParsedRequest.parse(alloc, req.head.target);
     defer parsed_request.deinit(alloc);
-    var filter = try http.Query(EntryFilter).parse(alloc, &parsed_request.params);
-    defer filter.deinit(alloc);
+    var display = try http.Query(DisplaySettings).parse(alloc, &parsed_request.params);
+    defer display.deinit(alloc);
 
     var html = std.Io.Writer.Allocating.init(alloc);
     defer html.deinit();
@@ -41,7 +41,7 @@ pub fn handler(
             state.acquireProject();
             defer state.releaseProject();
 
-            var plot_points = try render(alloc, state.project, filter, account, &html.writer);
+            var plot_points = try render(alloc, state.project, display, account, &html.writer);
             defer {
                 for (plot_points.items) |*plot_point| plot_point.deinit(alloc);
                 plot_points.deinit(alloc);
@@ -77,7 +77,7 @@ const PlotPoint = struct {
 fn render(
     alloc: std.mem.Allocator,
     project: *Project,
-    filter: EntryFilter,
+    display: DisplaySettings,
     account: []const u8,
     out: *std.Io.Writer,
 ) !std.ArrayList(PlotPoint) {
@@ -109,7 +109,7 @@ fn render(
                 if (std.mem.eql(u8, open.account.slice, account)) {
                     // We have to open the account even if it's outside the date filter.
                     _ = try tree.open(open.account.slice, null, open.booking_method);
-                    if (filter.isWithinDateRange(entry.date)) {
+                    if (display.isWithinDateRange(entry.date)) {
                         try zts.print(tpl, "open", .{
                             .date = entry.date,
                         }, out);
@@ -119,7 +119,7 @@ fn render(
             .transaction => |tx| {
                 if (tx.dirty) continue;
 
-                if (!filter.isWithinDateRange(entry.date)) continue;
+                if (!display.isWithinDateRange(entry.date)) continue;
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
                         const p = data.postings.get(i);
