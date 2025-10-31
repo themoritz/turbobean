@@ -394,6 +394,41 @@ document.addEventListener('alpine:init', () => {
             localStorage.setItem('txOpen', JSON.stringify(this.open));
         }
     });
+
+    Alpine.store('accountCollapsed', {
+        init() {
+            const saved = localStorage.getItem('accountCollapsed');
+            if (saved) this.collapsed = new Set(JSON.parse(saved));
+            Alpine.effect(() => {
+                localStorage.setItem('accountCollapsed', JSON.stringify([...this.collapsed]));
+            });
+        },
+
+        collapsed: new Set(),
+
+        toggle(account) {
+            if (this.collapsed.has(account)) {
+                this.collapsed.delete(account);
+            } else {
+                this.collapsed.add(account);
+            }
+        },
+
+        isExpanded(account) {
+            return !this.collapsed.has(account);
+        },
+
+        isVisible(account) {
+            const parts = account.split(':');
+            for (let i = 1; i < parts.length; i++) {
+                const prefix = parts.slice(0, i).join(':');
+                if (this.collapsed.has(prefix)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    })
 });
 
 function updateLegend(currencies, colorScale) {

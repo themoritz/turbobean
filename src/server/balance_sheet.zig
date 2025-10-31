@@ -337,7 +337,13 @@ fn renderRec(
     };
     defer inv.deinit();
 
-    try zts.write(tpl, "account", out);
+    const name_prefix_len = name_prefix.items.len;
+    if (depth > 0) {
+        try name_prefix.append(':');
+        try name_prefix.appendSlice(node.name);
+    }
+
+    try zts.print(tpl, "account", .{ .full_name = name_prefix.items }, out);
 
     for (prefix.items) |last| {
         try zts.write(tpl, "tree", out);
@@ -357,10 +363,9 @@ fn renderRec(
         try zts.write(tpl, "tree_end", out);
     }
 
-    try zts.write(tpl, "icon", out);
+    try zts.print(tpl, "icon", .{ .full_name = name_prefix.items }, out);
     if (has_children) {
-        try zts.write(t.tree, "icon_open", out);
-        try zts.write(t.tree, "icon_line", out);
+        try zts.print(t.tree, "icon_toggle", .{ .full_name = name_prefix.items }, out);
     } else {
         if (depth > 0) {
             try zts.write(t.tree, "icon_leaf", out);
@@ -369,12 +374,6 @@ fn renderRec(
         }
     }
     try zts.write(tpl, "icon_end", out);
-
-    const name_prefix_len = name_prefix.items.len;
-    if (depth > 0) {
-        try name_prefix.append(':');
-        try name_prefix.appendSlice(node.name);
-    }
 
     try zts.print(tpl, "name", .{
         .name = node.name,

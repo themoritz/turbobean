@@ -25,7 +25,7 @@
     </div>
 
     .account
-    <div class="account">
+    <div class="account" :class="{{'hidden': !$store.accountCollapsed.isVisible('{[full_name]s}')}}">
 
         .tree
         <div class="tree">
@@ -35,7 +35,7 @@
         </div>
 
         .icon
-        <div class="icon">
+        <div class="icon" @click="$store.accountCollapsed.toggle('{[full_name]s}')">
             <!-- Put from tree.html in here -->
 
             .icon_end

@@ -36,10 +36,14 @@
   display: contents;
 }
 
-.balance_sheet_part .account:nth-child(2n+1) > .icon,
-.balance_sheet_part .account:nth-child(2n+1) > .tree,
-.balance_sheet_part .account:nth-child(2n+1) > .name,
-.balance_sheet_part .account:nth-child(2n+1) > .balances {
+.balance_sheet_part .hidden {
+  display: none;
+}
+
+.balance_sheet_part .account:nth-child(odd of :not(.hidden)) > .icon,
+.balance_sheet_part .account:nth-child(odd of :not(.hidden)) > .tree,
+.balance_sheet_part .account:nth-child(odd of :not(.hidden)) > .name,
+.balance_sheet_part .account:nth-child(odd of :not(.hidden)) > .balances {
   background-color: #f5f5f5;
 }
 
@@ -51,6 +55,14 @@
   text-align: center;
   position: relative;
   overflow: hidden;
+}
+
+.account .icon svg.toggle {
+  cursor: pointer;
+}
+
+.account .icon svg.toggle:hover path {
+  stroke: hsl(0deg 0% 0%)
 }
 
 .account .balances {
