@@ -1,3 +1,55 @@
+.table
+
+<div class="balance_sheet_part"
+    style="grid-template-columns: repeat({[fixed_columns]d}, calc(14rem / 16 * 1.5)) repeat({[variable_columns]d}, 1fr);">
+    <div class="account header">
+        <div class="cell" style="grid-column: 1 / {[after_name_line]d};"></div>
+
+        .header_title
+        <div class="cell right" style="grid-column: {[from_line]d} / {[to_line]d};">{[title]s}</div>
+
+        .header_title_end
+    </div>
+
+    .account
+    <div class="account" :class="{{'hidden': !$store.accountCollapsed.isVisible('{[full_name]s}')}}">
+
+        .tree
+        <div class="tree">
+            <!-- Put from tree.html in here -->
+
+            .tree_end
+        </div>
+
+        .icon
+        <div class="icon" @click="$store.accountCollapsed.toggle('{[full_name]s}')">
+            <!-- Put from tree.html in here -->
+
+            .icon_end
+        </div>
+
+        .name
+        <div class="name" style="grid-column: {[from_line]d} / {[to_line]d};">
+            <a @click="$dispatch('navigate', '/journal/{[full_name]s}');">{[name]s}</a>
+        </div>
+
+        .balances
+        <div class="balances" style="grid-column: {[from_line]d} / {[to_line]d};">
+
+            .balance
+            <div class="balance">{[units]f} {[cur]s}</div>
+
+            .balances_end
+        </div>
+
+        .account_end
+    </div>
+
+    .table_end
+</div>
+
+<!-- ICONS -->
+
 .icon_toggle
 <svg viewBox="0 0 20 20" x-show="$store.accountCollapsed.isExpanded('{[full_name]s}')" class="toggle">
     <path d="M 6,8 L 10,12 L 14,8" stroke="hsl(0deg 0% 50%)" stroke-width="2" fill="none" />

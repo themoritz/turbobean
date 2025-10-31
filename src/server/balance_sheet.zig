@@ -16,8 +16,6 @@ const t = @import("templates.zig");
 const tpl = t.balance_sheet;
 const common = @import("common.zig");
 
-const MAX_TREE_DEPTH = 10;
-
 pub fn handler(
     alloc: std.mem.Allocator,
     req: *std.http.Server.Request,
@@ -256,212 +254,21 @@ fn render(
     try common.renderPlotArea(operating_currencies, out);
 
     // Render Tree
+    const treeRenderer = common.TreeRenderer{
+        .alloc = alloc,
+        .out = out,
+        .tree = &tree,
+        .operating_currencies = operating_currencies,
+        .conversion = display.conversion,
+        .prices = &prices,
+    };
+
     try zts.write(tpl, "balance_sheet", out);
-    try renderTable(alloc, out, &tree, operating_currencies, display.conversion, &prices, "Assets");
+    try treeRenderer.renderTable("Assets");
     try zts.write(tpl, "left_end", out);
-    try renderTable(alloc, out, &tree, operating_currencies, display.conversion, &prices, "Liabilities");
-    try renderTable(alloc, out, &tree, operating_currencies, display.conversion, &prices, "Equity");
+    try treeRenderer.renderTable("Liabilities");
+    try treeRenderer.renderTable("Equity");
     try zts.write(tpl, "right_end", out);
 
     return net_worth.plot_points.toOwnedSlice(alloc);
-}
-
-fn renderTable(
-    alloc: std.mem.Allocator,
-    out: *std.Io.Writer,
-    tree: *const Tree,
-    operating_currencies: []const []const u8,
-    conversion: DisplaySettings.Conversion,
-    prices: *Prices,
-    title: []const u8,
-) !void {
-    for (tree.nodes.items[0].children.items) |i| {
-        if (std.mem.eql(u8, tree.nodes.items[i].name, title)) {
-            try zts.print(tpl, "table", .{
-                .fixed_columns = MAX_TREE_DEPTH,
-                .variable_columns = operating_currencies.len + 1,
-                .after_name_line = MAX_TREE_DEPTH + 2,
-            }, out);
-
-            for (operating_currencies, 0..) |currency, j| {
-                try zts.print(tpl, "header_title", .{
-                    .title = currency,
-                    .from_line = MAX_TREE_DEPTH + 2 + j,
-                    .to_line = MAX_TREE_DEPTH + 2 + j + 1,
-                }, out);
-            }
-            try zts.print(tpl, "header_title", .{
-                .title = "Other",
-                .from_line = MAX_TREE_DEPTH + 2 + operating_currencies.len,
-                .to_line = MAX_TREE_DEPTH + 2 + operating_currencies.len + 1,
-            }, out);
-
-            try zts.write(tpl, "header_title_end", out);
-
-            var prefix = std.array_list.Managed(bool).init(alloc);
-            defer prefix.deinit();
-
-            var name_prefix = std.array_list.Managed(u8).init(alloc);
-            defer name_prefix.deinit();
-            try name_prefix.appendSlice(title);
-
-            try renderRec(alloc, out, operating_currencies, conversion, prices, tree, i, 0, &prefix, &name_prefix, true);
-
-            try zts.write(tpl, "table_end", out);
-        }
-    }
-}
-
-fn renderRec(
-    alloc: std.mem.Allocator,
-    out: *std.Io.Writer,
-    operating_currencies: []const []const u8,
-    conversion: DisplaySettings.Conversion,
-    prices: *Prices,
-    tree: *const Tree,
-    node_index: u32,
-    depth: u32,
-    prefix: *std.array_list.Managed(bool),
-    name_prefix: *std.array_list.Managed(u8),
-    is_last: bool,
-) !void {
-    const node = tree.nodes.items[node_index];
-    const has_children = node.children.items.len > 0;
-
-    var unconverted_inv = try node.inventory.toPlain(alloc);
-    defer unconverted_inv.deinit();
-
-    var inv = switch (conversion) {
-        .units => try unconverted_inv.clone(alloc),
-        .currency => |cur| try prices.convertInventory(alloc, &unconverted_inv, cur),
-    };
-    defer inv.deinit();
-
-    const name_prefix_len = name_prefix.items.len;
-    if (depth > 0) {
-        try name_prefix.append(':');
-        try name_prefix.appendSlice(node.name);
-    }
-
-    try zts.print(tpl, "account", .{ .full_name = name_prefix.items }, out);
-
-    for (prefix.items) |last| {
-        try zts.write(tpl, "tree", out);
-        if (!last) {
-            try zts.write(t.tree, "tree_prefix", out);
-        }
-        try zts.write(tpl, "tree_end", out);
-    }
-
-    if (depth > 0) {
-        try zts.write(tpl, "tree", out);
-        if (is_last) {
-            try zts.write(t.tree, "tree_node_last", out);
-        } else {
-            try zts.write(t.tree, "tree_node_middle", out);
-        }
-        try zts.write(tpl, "tree_end", out);
-    }
-
-    try zts.print(tpl, "icon", .{ .full_name = name_prefix.items }, out);
-    if (has_children) {
-        try zts.print(t.tree, "icon_toggle", .{ .full_name = name_prefix.items }, out);
-    } else {
-        if (depth > 0) {
-            try zts.write(t.tree, "icon_leaf", out);
-        } else {
-            try zts.write(t.tree, "icon_leaf_root", out);
-        }
-    }
-    try zts.write(tpl, "icon_end", out);
-
-    try zts.print(tpl, "name", .{
-        .name = node.name,
-        .full_name = name_prefix.items,
-        .from_line = depth + 2,
-        .to_line = MAX_TREE_DEPTH + 2,
-    }, out);
-
-    for (operating_currencies, 0..) |currency, j| {
-        try zts.print(tpl, "balances", .{
-            .from_line = MAX_TREE_DEPTH + 2 + j,
-            .to_line = MAX_TREE_DEPTH + 2 + j + 1,
-        }, out);
-        if (inv.by_currency.get(currency)) |balance| {
-            if (!balance.is_zero()) {
-                try zts.print(tpl, "balance", .{
-                    .units = balance.withPrecision(2),
-                    .cur = "",
-                }, out);
-            }
-        }
-        try zts.write(tpl, "balances_end", out);
-    }
-
-    try zts.print(tpl, "balances", .{
-        .from_line = MAX_TREE_DEPTH + 2 + operating_currencies.len,
-        .to_line = MAX_TREE_DEPTH + 2 + operating_currencies.len + 1,
-    }, out);
-    var iter = inv.by_currency.iterator();
-    currency: while (iter.next()) |kv| {
-        for (operating_currencies) |cur| {
-            if (std.mem.eql(u8, cur, kv.key_ptr.*)) {
-                continue :currency;
-            }
-        }
-        const units = kv.value_ptr.*;
-        if (!units.is_zero()) {
-            try zts.print(tpl, "balance", .{
-                .units = units.withPrecision(2),
-                .cur = kv.key_ptr.*,
-            }, out);
-        }
-    }
-    try zts.write(tpl, "balances_end", out);
-
-    try zts.write(tpl, "account_end", out);
-
-    // Render children with updated prefix
-    if (has_children) {
-        // Sort children by name
-        const sorted_children = try alloc.dupe(u32, node.children.items);
-        defer alloc.free(sorted_children);
-
-        std.mem.sort(u32, sorted_children, tree, struct {
-            fn lessThan(tr: *const Tree, a: u32, b: u32) bool {
-                const name_a = tr.nodes.items[a].name;
-                const name_b = tr.nodes.items[b].name;
-                return std.mem.order(u8, name_a, name_b) == .lt;
-            }
-        }.lessThan);
-
-        // Add current node's continuation state to prefix for children (if not root level)
-        if (depth > 0) {
-            try prefix.append(is_last);
-        }
-
-        for (sorted_children, 0..) |child, i| {
-            const child_is_last = i == sorted_children.len - 1;
-            try renderRec(
-                alloc,
-                out,
-                operating_currencies,
-                conversion,
-                prices,
-                tree,
-                child,
-                depth + 1,
-                prefix,
-                name_prefix,
-                child_is_last,
-            );
-        }
-
-        // Remove the continuation state we added
-        if (depth > 0) {
-            _ = prefix.pop();
-        }
-    }
-
-    name_prefix.shrinkRetainingCapacity(name_prefix_len);
 }
