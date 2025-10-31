@@ -68,7 +68,7 @@ function initPlotComponent() {
                 // Create color scale for accounts
                 const currencyColorScale = d3.scaleOrdinal()
                     .domain(currencies)
-                    .range(d3.schemeSet2);
+                    .range(["#808080"]);
 
                 // Create color scale for accounts
                 const accountColorScale = d3.scaleOrdinal()
@@ -144,7 +144,7 @@ function initPlotComponent() {
                 const x = d3.scaleBand()
                     .domain(periods.map(p => p.getTime()))
                     .range([0, width])
-                    .padding(0.2);
+                    .padding(0.15);
 
                 // Calculate y domain to include all stacked values
                 const allY = stackedData.flatMap(d => [d.y0, d.y1]);
@@ -158,37 +158,92 @@ function initPlotComponent() {
 
                 // Draw striped background bands
                 periods.forEach((period) => {
+                    // Get sums for this period
+                    const periodSums = stackedData.filter(d =>
+                        d.account === '__sum__' &&
+                        d.period.getTime() === period.getTime()
+                    );
+
                     chart.append("rect")
                         .attr("x", x(period.getTime()))
                         .attr("y", 0)
                         .attr("width", x.bandwidth())
                         .attr("height", height)
                         .attr("fill", "#d3d3d3")
-                        .attr("opacity", 0.2);
+                        .attr("opacity", 0.2)
+                        .on("mouseover", function(event) {
+                            // Build tooltip text with all currency balances
+                            const tooltipText = periodSums
+                                .map(s => `${s.sum.toFixed(2)} ${s.currency}`)
+                                .join(', ');
+
+                            tooltip
+                                .style("display", "block")
+                                .style("left", `${event.pageX + 10}px`)
+                                .style("top", `${event.pageY - 10}px`)
+                                .text(`${period.toISOString().split('T')[0]}: ${tooltipText}`);
+                        })
+                        .on("mousemove", function(event) {
+                            tooltip
+                                .style("left", `${event.pageX + 10}px`)
+                                .style("top", `${event.pageY - 10}px`);
+                        })
+                        .on("mouseout", function() {
+                            tooltip.style("display", "none");
+                        });
                 });
 
                 // Calculate bar width per currency
-                const barWidth = x.bandwidth() / currencies.length;
+                const barWidth = 0.8 * x.bandwidth() / currencies.length;
+                const start = 0.1 * x.bandwidth()
+                const gap = 0.05 * x.bandwidth()
 
                 // Draw stacked rectangles
                 stackedData.filter(d => d.account !== '__sum__').forEach(d => {
                     const currencyIndex = currencies.indexOf(d.currency);
-                    const xPos = x(d.period.getTime()) + currencyIndex * barWidth;
+                    const xPos = x(d.period.getTime()) + start + currencyIndex * barWidth;
 
                     chart.append("rect")
-                        .attr("x", xPos + 1)
+                        .attr("class", `account-rect account-${d.account.replace(/[^a-zA-Z0-9]/g, '-')}`)
+                        .attr("data-account", d.account)
+                        .attr("x", xPos + gap)
                         .attr("y", y(d.y1))
-                        .attr("width", barWidth - 2)
+                        .attr("width", barWidth - 2 * gap)
                         .attr("height", Math.abs(y(d.y0) - y(d.y1)))
                         .attr("fill", accountColorScale(d.account))
-                        .append("title")
-                        .text(`${d.account}: ${d.balance_rendered} ${d.currency}`);
+                        .on("mouseover", function(event) {
+                            const account = d.account;
+
+                            // Highlight all rectangles for this account
+                            chart.selectAll(`.account-rect[data-account="${account}"]`)
+                                .attr("opacity", 0.4);
+
+                            // Show tooltip
+                            tooltip
+                                .style("display", "block")
+                                .style("left", `${event.pageX + 10}px`)
+                                .style("top", `${event.pageY}px`)
+                                .text(`${d.account}: ${d.balance_rendered} ${d.currency}`);
+                        })
+                        .on("mousemove", function(event) {
+                            tooltip
+                                .style("left", `${event.pageX + 10}px`)
+                                .style("top", `${event.pageY}px`);
+                        })
+                        .on("mouseout", function() {
+                            // Restore all rectangles
+                            chart.selectAll(".account-rect")
+                                .attr("opacity", 1.0);
+
+                            // Hide tooltip
+                            tooltip.style("display", "none");
+                        });
                 });
 
                 // Draw sum lines
                 stackedData.filter(d => d.account === '__sum__').forEach(d => {
                     const currencyIndex = currencies.indexOf(d.currency);
-                    const xPos = x(d.period.getTime()) + currencyIndex * barWidth;
+                    const xPos = x(d.period.getTime()) + start + currencyIndex * barWidth;
 
                     chart.append("line")
                         .attr("x1", xPos)
@@ -197,8 +252,7 @@ function initPlotComponent() {
                         .attr("y2", y(d.sum))
                         .attr("stroke", "black")
                         .attr("stroke-width", 2)
-                        .append("title")
-                        .text(`Sum: ${d.sum.toFixed(2)} ${d.currency}`);
+                        .append("title");
                 });
 
                 // Draw zero line
@@ -227,7 +281,7 @@ function initPlotComponent() {
 
                 yGroup.call(d3.axisLeft(y).tickFormat(d3.format("~s")));
 
-                // Render legend for accounts
+                // Render legend for currencies
                 renderLegend(currencies, currencyColorScale);
             },
 
