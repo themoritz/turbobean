@@ -208,7 +208,6 @@ document.addEventListener('alpine:init', () => {
 
                 alpineData.forEach((txn) => {
                     data.push({
-                        hash: txn.hash,
                         date: new Date(txn.date),
                         balance: txn.balance,
                         balance_rendered: txn.balance_rendered,
@@ -476,7 +475,7 @@ function updateCurrency(currency, color, chart, data, x, y) {
 
     chart
         .selectAll(`.vertical-${currency}`)
-        .data(data.slice(1), (d) => d.hash) // From second point onward
+        .data(data.slice(1)) // From second point onward
         .enter()
         .append("line")
         .attr("class", `vertical vertical-${currency}`)
@@ -490,7 +489,7 @@ function updateCurrency(currency, color, chart, data, x, y) {
 
     chart
         .selectAll(`.horizontal-${currency}`)
-        .data(data, (d) => d.hash) // One less than points
+        .data(data) // One less than points
         .enter()
         .append("line")
         .attr("class", `horizontal horizontal-${currency}`)
@@ -504,7 +503,7 @@ function updateCurrency(currency, color, chart, data, x, y) {
     // Circles at each point
     chart
         .selectAll(`circle-${currency}`)
-        .data(data, (d) => d.hash)
+        .data(data)
         .enter()
         .append("circle")
         .attr("class", `circle circle-${currency}`)

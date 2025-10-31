@@ -78,7 +78,6 @@ pub fn handler(
 }
 
 const PlotPoint = struct {
-    hash: u64,
     date: []const u8,
     currency: []const u8,
     balance: f64,
@@ -243,7 +242,6 @@ fn render(
 
                             const balance = conv_inv.by_currency.get(conv_cur).?;
                             try plot_points.append(alloc, .{
-                                .hash = hash,
                                 .date = try std.fmt.allocPrint(alloc, "{f}", .{entry.date}),
                                 .currency = try alloc.dupe(u8, conv_cur),
                                 .balance = balance.toFloat(),
