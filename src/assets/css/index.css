@@ -91,7 +91,8 @@ header .filter {
   margin-left: 10px;
   flex-grow: 1;
   display: flex;
-  gap: 15px;
+  flex-wrap: wrap;
+  gap: 5px 15px;
 }
 
 .plot_header #legend .legend-item {
