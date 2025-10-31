@@ -31,6 +31,7 @@ class Filter {
 const Routes = {
     Journal: (account) => ({ type: "Journal", account }),
     BalanceSheet: () => ({ type: "BalanceSheet" }),
+    IncomeStatement: () => ({ type: "IncomeStatement" }),
 };
 
 class Router {
@@ -49,6 +50,10 @@ class Router {
             this.route = Routes.BalanceSheet();
             return
         }
+        if (path.match(/^\/income_statement$/)) {
+            this.route = Routes.IncomeStatement();
+            return
+        }
         this.route = null
     }
 
@@ -58,6 +63,8 @@ class Router {
                 return `/journal/${this.route.account}`;
             case "BalanceSheet":
                 return "/balance_sheet";
+            case "IncomeStatement":
+                return "/income_statement";
             default:
                 return "/";
         }
@@ -69,6 +76,8 @@ class Router {
                 return this.route.account;
             case "BalanceSheet":
                 return "Balance Sheet";
+            case "IncomeStatement":
+                return "Income Statement";
             default:
                 return "";
         }
