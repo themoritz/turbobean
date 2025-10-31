@@ -31,15 +31,207 @@ function initPlotComponent() {
         return {
 
             init() {
-                this.$watch('plotData', (newData) => {
-                    if (newData) {
-                        this.updateChart(newData);
+                this.$watch('plotData', (data) => {
+                    if (data) {
+                        this.renderPlotData(data);
+                    }
+                });
+
+                this.$watch('plotChanges', (data) => {
+                    if (data) {
+                        this.renderPlotChanges(data);
                     }
                 });
             },
 
-            updateChart(alpineData) {
+            renderPlotChanges(alpineData) {
+                const data = [];
 
+                alpineData.forEach((item) => {
+                    data.push({
+                        period: new Date(item.period),
+                        currency: item.currency,
+                        account: item.account,
+                        balance: item.balance,
+                        balance_rendered: item.balance_rendered,
+                    });
+                });
+
+                // Group data by period, then by currency
+                const dataByPeriod = d3.group(data, d => d.period);
+                const periods = Array.from(dataByPeriod.keys()).sort((a, b) => a - b);
+
+                // Get all currencies
+                const currencies = Array.from(new Set(data.map(d => d.currency))).sort();
+                const accounts = Array.from(new Set(data.map(d => d.account))).sort();
+
+                // Create color scale for accounts
+                const currencyColorScale = d3.scaleOrdinal()
+                    .domain(currencies)
+                    .range(d3.schemeSet2);
+
+                // Create color scale for accounts
+                const accountColorScale = d3.scaleOrdinal()
+                    .domain(accounts)
+                    .range(d3.schemeSet2);
+
+                const width = document.querySelector("#d3 svg").clientWidth;
+                const height = width / 5;
+
+                svg.attr("viewBox", `${-margin.left} ${-margin.top} ${width + margin.left + margin.right} ${height + margin.top + margin.bottom}`);
+
+                xGroup.attr("transform", `translate(0,${height})`);
+
+                // Calculate stacked data for each period/currency
+                const stackedData = [];
+                periods.forEach(period => {
+                    const periodData = dataByPeriod.get(period);
+                    const byCurrency = d3.group(periodData, d => d.currency);
+
+                    currencies.forEach(currency => {
+                        const currencyData = byCurrency.get(currency) || [];
+
+                        // Separate positive and negative balances
+                        const positive = currencyData.filter(d => d.balance >= 0).sort((a, b) => b.balance - a.balance);
+                        const negative = currencyData.filter(d => d.balance < 0).sort((a, b) => a.balance - b.balance);
+
+                        // Calculate stack positions for positive
+                        let yPos = 0;
+                        positive.forEach(d => {
+                            stackedData.push({
+                                period: period,
+                                currency: currency,
+                                account: d.account,
+                                balance: d.balance,
+                                balance_rendered: d.balance_rendered,
+                                y0: yPos,
+                                y1: yPos + d.balance
+                            });
+                            yPos += d.balance;
+                        });
+
+                        // Calculate stack positions for negative
+                        let yNeg = 0;
+                        negative.forEach(d => {
+                            stackedData.push({
+                                period: period,
+                                currency: currency,
+                                account: d.account,
+                                balance: d.balance,
+                                balance_rendered: d.balance_rendered,
+                                y0: yNeg + d.balance,
+                                y1: yNeg
+                            });
+                            yNeg += d.balance;
+                        });
+
+                        // Store sum for this period/currency
+                        if (currencyData.length > 0) {
+                            const sum = currencyData.reduce((acc, d) => acc + d.balance, 0);
+                            stackedData.push({
+                                period: period,
+                                currency: currency,
+                                account: '__sum__',
+                                sum: sum,
+                                y0: sum,
+                                y1: sum
+                            });
+                        }
+                    });
+                });
+
+                // Create scales
+                const x = d3.scaleBand()
+                    .domain(periods.map(p => p.getTime()))
+                    .range([0, width])
+                    .padding(0.2);
+
+                // Calculate y domain to include all stacked values
+                const allY = stackedData.flatMap(d => [d.y0, d.y1]);
+                const y = d3.scaleLinear()
+                    .domain([Math.min(0, d3.min(allY)), Math.max(0, d3.max(allY))])
+                    .nice()
+                    .range([height, 0]);
+
+                // Clear previous chart
+                chart.selectAll("*").remove();
+
+                // Draw striped background bands
+                periods.forEach((period) => {
+                    chart.append("rect")
+                        .attr("x", x(period.getTime()))
+                        .attr("y", 0)
+                        .attr("width", x.bandwidth())
+                        .attr("height", height)
+                        .attr("fill", "#d3d3d3")
+                        .attr("opacity", 0.2);
+                });
+
+                // Calculate bar width per currency
+                const barWidth = x.bandwidth() / currencies.length;
+
+                // Draw stacked rectangles
+                stackedData.filter(d => d.account !== '__sum__').forEach(d => {
+                    const currencyIndex = currencies.indexOf(d.currency);
+                    const xPos = x(d.period.getTime()) + currencyIndex * barWidth;
+
+                    chart.append("rect")
+                        .attr("x", xPos + 1)
+                        .attr("y", y(d.y1))
+                        .attr("width", barWidth - 2)
+                        .attr("height", Math.abs(y(d.y0) - y(d.y1)))
+                        .attr("fill", accountColorScale(d.account))
+                        .append("title")
+                        .text(`${d.account}: ${d.balance_rendered} ${d.currency}`);
+                });
+
+                // Draw sum lines
+                stackedData.filter(d => d.account === '__sum__').forEach(d => {
+                    const currencyIndex = currencies.indexOf(d.currency);
+                    const xPos = x(d.period.getTime()) + currencyIndex * barWidth;
+
+                    chart.append("line")
+                        .attr("x1", xPos)
+                        .attr("x2", xPos + barWidth)
+                        .attr("y1", y(d.sum))
+                        .attr("y2", y(d.sum))
+                        .attr("stroke", "black")
+                        .attr("stroke-width", 2)
+                        .append("title")
+                        .text(`Sum: ${d.sum.toFixed(2)} ${d.currency}`);
+                });
+
+                // Draw zero line
+                chart.append("line")
+                    .attr("x1", 0)
+                    .attr("x2", width)
+                    .attr("y1", y(0))
+                    .attr("y2", y(0))
+                    .attr("stroke", "black")
+                    .attr("stroke-width", 1)
+                    .attr("opacity", 0.5);
+
+                // Render axes
+                // Calculate how many labels we can fit without overlap
+                const labelWidth = 80; // Approximate width of date label
+                const maxLabels = Math.floor(width / labelWidth);
+                const skipInterval = Math.max(1, Math.ceil(periods.length / maxLabels));
+
+                xGroup.call(d3.axisBottom(x).tickFormat((d, i) => {
+                    if (i % skipInterval === 0) {
+                        const date = new Date(+d);
+                        return d3.timeFormat("%Y-%m-%d")(date);
+                    }
+                    return "";
+                }));
+
+                yGroup.call(d3.axisLeft(y).tickFormat(d3.format("~s")));
+
+                // Render legend for accounts
+                renderLegend(currencies, currencyColorScale);
+            },
+
+            renderPlotData(alpineData) {
                 const data = [];
 
                 alpineData.forEach((txn) => {
@@ -83,11 +275,11 @@ function initPlotComponent() {
                 d3.selectAll('.horizontal').remove();
                 d3.selectAll('.circle').remove();
                 currencies.forEach((currency) => {
-                    updateCurrency(currency, colorScale(currency), chart, dataByCurrency.get(currency), x, y);
+                    renderCurrency(currency, colorScale(currency), chart, dataByCurrency.get(currency), x, y);
                 });
 
-                // Update legend
-                updateLegend(currencies, colorScale);
+                // Render legend
+                renderLegend(currencies, colorScale);
 
                 const circles = d3.selectAll(".circle");
 
@@ -170,7 +362,7 @@ function initPlotComponent() {
     });
 }
 
-function updateLegend(currencies, colorScale) {
+function renderLegend(currencies, colorScale) {
     const legend = d3.select("#legend");
 
     legend.selectAll(".legend-item").remove();
@@ -196,7 +388,7 @@ function updateLegend(currencies, colorScale) {
         });
 }
 
-function updateCurrency(currency, color, chart, data, x, y) {
+function renderCurrency(currency, color, chart, data, x, y) {
     var desaturated = d3.hsl(color);
     desaturated.s = 0.0;
     desaturated.l += 0.1;

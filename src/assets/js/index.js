@@ -93,6 +93,7 @@ document.addEventListener('alpine:init', () => {
         filter: new Filter(),
         eventSource: null,
         plotData: [],
+        plotChanges: [],
 
         init() {
             if (this.router.route) {
@@ -156,6 +157,10 @@ document.addEventListener('alpine:init', () => {
 
             this.eventSource.addEventListener('plot_points', (event) => {
                 this.plotData = JSON.parse(event.data);
+            })
+
+            this.eventSource.addEventListener('plot_changes', (event) => {
+                this.plotChanges = JSON.parse(event.data);
             })
 
             this.eventSource.onerror = (event) => {

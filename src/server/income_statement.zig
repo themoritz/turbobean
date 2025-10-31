@@ -64,7 +64,7 @@ pub fn handler(
         timer.reset();
 
         try sse.send(.{ .payload = html.writer.buffered() });
-        try sse.send(.{ .payload = json.writer.buffered(), .event = "income_data" });
+        try sse.send(.{ .payload = json.writer.buffered(), .event = "plot_changes" });
 
         const elapsed_ns2 = timer.read();
         const elapsed_ms2 = @divFloor(elapsed_ns2, std.time.ns_per_ms);
@@ -137,7 +137,10 @@ const DataTracker = struct {
     }
 
     pub fn flushData(self: *DataTracker) !void {
-        var iter = self.inv.map.iterator();
+        var converted = try self.inv.convert(self.alloc, self.display.conversion, self.prices);
+        defer converted.deinit();
+
+        var iter = converted.map.iterator();
         while (iter.next()) |kv| {
             const pair = kv.key_ptr.*;
             const balance = kv.value_ptr.*;
@@ -321,7 +324,7 @@ const Inventories = struct {
             switch (conversion) {
                 .units => try result.add(from.account, from.currency, unconverted),
                 .currency => |to| {
-                    if (try prices.convert(unconverted, to)) |converted| {
+                    if (prices.convert(unconverted, from.currency, to)) |converted| {
                         try result.add(from.account, to, converted);
                     } else {
                         try result.add(from.account, from.currency, unconverted);
