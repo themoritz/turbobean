@@ -37,7 +37,9 @@ pub fn handler(
 
     var listener = state.broadcast.newListener();
 
+    var timer = try std.time.Timer.start();
     while (true) {
+        timer.reset();
         {
             state.acquireProject();
             defer state.releaseProject();
@@ -47,11 +49,25 @@ pub fn handler(
                 for (plot_points.items) |*plot_point| plot_point.deinit(alloc);
                 plot_points.deinit(alloc);
             }
+
+            const elapsed_ns = timer.read();
+            const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
+            std.log.info("Except JSON in {d} ms", .{elapsed_ms});
+
             try stringify.write(plot_points.items);
         }
 
+        const elapsed_ns = timer.read();
+        const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
+        std.log.info("Computed in {d} ms", .{elapsed_ms});
+        timer.reset();
+
         try sse.send(.{ .payload = html.writer.buffered() });
         try sse.send(.{ .payload = json.writer.buffered(), .event = "plot_points" });
+
+        const elapsed_ns2 = timer.read();
+        const elapsed_ms2 = @divFloor(elapsed_ns2, std.time.ns_per_ms);
+        std.log.info("Sent in {d} ms", .{elapsed_ms2});
 
         html.clearRetainingCapacity();
         json.clearRetainingCapacity();
