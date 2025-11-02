@@ -15,6 +15,7 @@ const Prices = @import("../Prices.zig");
 const t = @import("templates.zig");
 const tpl = t.balance_sheet;
 const common = @import("common.zig");
+const ztracy = @import("ztracy");
 
 pub fn handler(
     alloc: std.mem.Allocator,
@@ -42,6 +43,9 @@ pub fn handler(
     while (true) {
         timer.reset();
         {
+            const tracy_zone = ztracy.ZoneNC(@src(), "Balance sheet SSE loop", 0x00_ff_00_00);
+            defer tracy_zone.End();
+
             state.acquireProject();
             defer state.releaseProject();
 

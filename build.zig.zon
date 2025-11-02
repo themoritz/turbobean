@@ -12,6 +12,10 @@
             .url = "git+https://github.com/zigtools/lsp-kit.git#6274eebace9a6a82ce182e24468fef88e0b95f37",
             .hash = "lsp_kit-0.1.0-bi_PLzAyCgClDh8_M0U9Q50ysdsQBuRuBTZfwg6rZPd6",
         },
+        .ztracy = .{
+            .url = "git+https://github.com/zig-gamedev/ztracy.git#3cc6a4a1502fdea2e4d3869099e39d9c5e8b98a5",
+            .hash = "ztracy-0.14.0-dev-zHJSq8SJGADr475eGiGJzmX_-P5sDoU564IQSVfZxmYC",
+        },
     },
     .paths = .{
         "build.zig",

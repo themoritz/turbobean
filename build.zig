@@ -6,6 +6,25 @@ pub fn build(b: *std.Build) void {
     const options = b.addOptions();
     options.addOption(bool, "embed_static", embed_static);
 
+    const tracy_options = .{
+        .enable_ztracy = b.option(
+            bool,
+            "enable_ztracy",
+            "Enable Tracy profile markers",
+        ) orelse false,
+        .on_demand = b.option(
+            bool,
+            "on_demand",
+            "Build tracy with TRACY_ON_DEMAND",
+        ) orelse false,
+    };
+
+    const ztracy = b.dependency("ztracy", .{
+        .enable_ztracy = tracy_options.enable_ztracy,
+        .enable_fibers = false,
+        .on_demand = tracy_options.on_demand,
+    });
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -16,6 +35,7 @@ pub fn build(b: *std.Build) void {
     });
     exe_mod.addImport("lsp", b.dependency("lsp_kit", .{}).module("lsp"));
     exe_mod.addImport("zts", b.dependency("zts", .{}).module("zts"));
+    exe_mod.addImport("ztracy", ztracy.module("root"));
     exe_mod.addOptions("config", options);
 
     // Create the executable
@@ -23,6 +43,7 @@ pub fn build(b: *std.Build) void {
         .name = "turbobean",
         .root_module = exe_mod,
     });
+    exe.linkLibrary(ztracy.artifact("tracy"));
 
     addAssetsOption(b, exe, target, optimize) catch |err| {
         std.log.err("Problem adding assets: {t}", .{err});
