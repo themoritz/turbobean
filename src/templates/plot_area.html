@@ -25,6 +25,12 @@
 
 .plot
 <div id="d3" x-data="d3">
-    <svg viewBox="0,0 5,1"></svg>
+    <svg viewBox="0,0 5,1">
+        <defs>
+            <pattern id="stripes" patternUnits="userSpaceOnUse" width="2.5" height="2.5" patternTransform="rotate(45)">
+                <line x1="0" y="0" x2="0" y2="2.5" stroke="#000000" stroke-width="1" />
+            </pattern>
+        </defs>
+    </svg>
     <div class="tooltip"></div>
 </div>

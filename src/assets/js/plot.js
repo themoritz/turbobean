@@ -61,19 +61,19 @@ function initPlotComponent() {
                 const dataByPeriod = d3.group(data, d => d.period);
                 const periods = Array.from(dataByPeriod.keys()).sort((a, b) => a - b);
 
-                // Get all currencies
                 const currencies = Array.from(new Set(data.map(d => d.currency))).sort();
                 const accounts = Array.from(new Set(data.map(d => d.account))).sort();
 
-                // Create color scale for accounts
                 const currencyColorScale = d3.scaleOrdinal()
                     .domain(currencies)
                     .range(["#808080"]);
 
-                // Create color scale for accounts
                 const accountColorScale = d3.scaleOrdinal()
                     .domain(accounts)
-                    .range(d3.schemeSet2);
+                    .range([
+                        ...d3.schemePaired,
+                        ...d3.schemeObservable10,
+                    ]);
 
                 const width = document.querySelector("#d3 svg").clientWidth;
                 const height = width / 5;
@@ -216,7 +216,7 @@ function initPlotComponent() {
 
                             // Highlight all rectangles for this account
                             chart.selectAll(`.account-rect[data-account="${account}"]`)
-                                .attr("opacity", 0.4);
+                                .attr("fill", "url(#stripes)");
 
                             // Show tooltip
                             tooltip
@@ -233,7 +233,7 @@ function initPlotComponent() {
                         .on("mouseout", function() {
                             // Restore all rectangles
                             chart.selectAll(".account-rect")
-                                .attr("opacity", 1.0);
+                                .attr("fill", function() { return accountColorScale(d3.select(this).attr("data-account")); });
 
                             // Hide tooltip
                             tooltip.style("display", "none");
