@@ -137,10 +137,9 @@ const DataTracker = struct {
     }
 
     pub fn flushData(self: *DataTracker) !void {
-        var converted = try self.inv.convert(self.alloc, self.display.conversion, self.prices);
-        defer converted.deinit();
+        try self.inv.convert(self.display.conversion, self.prices);
 
-        var iter = converted.map.iterator();
+        var iter = self.inv.map.iterator();
         while (iter.next()) |kv| {
             const pair = kv.key_ptr.*;
             const balance = kv.value_ptr.*;
@@ -309,30 +308,23 @@ const Inventories = struct {
     }
 
     pub fn convert(
-        self: *const Inventories,
-        alloc: std.mem.Allocator,
+        self: *Inventories,
         conversion: DisplaySettings.Conversion,
         prices: *const Prices,
-    ) !Inventories {
-        var result = Inventories.init(alloc);
-        errdefer result.deinit();
-
-        var iter = self.map.iterator();
-        while (iter.next()) |kv| {
-            const from = kv.key_ptr.*;
-            const unconverted = kv.value_ptr.*;
-            switch (conversion) {
-                .units => try result.add(from.account, from.currency, unconverted),
-                .currency => |to| {
-                    if (prices.convert(unconverted, from.currency, to)) |converted| {
-                        try result.add(from.account, to, converted);
-                    } else {
-                        try result.add(from.account, from.currency, unconverted);
+    ) !void {
+        switch (conversion) {
+            .units => {},
+            .currency => |to| {
+                var iter = self.map.iterator();
+                while (iter.next()) |kv| {
+                    const from = kv.key_ptr.*;
+                    if (std.mem.eql(u8, from.currency, to)) continue;
+                    if (prices.convert(kv.value_ptr.*, from.currency, to)) |converted| {
+                        _ = self.map.remove(from);
+                        try self.add(from.account, to, converted);
                     }
-                },
-            }
+                }
+            },
         }
-
-        return result;
     }
 };
