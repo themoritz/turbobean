@@ -3,7 +3,7 @@ const log = std.log.scoped(.state);
 const Project = @import("../project.zig");
 const Self = @This();
 const Uri = @import("../Uri.zig");
-const Watcher = @import("../Watcher.zig");
+const Watcher = @import("../Watcher.zig").Platform;
 const Broadcast = @import("../Broadcast.zig");
 
 alloc: std.mem.Allocator,
