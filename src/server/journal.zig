@@ -13,6 +13,7 @@ const t = @import("templates.zig");
 const tpl = t.journal;
 const common = @import("common.zig");
 const Prices = @import("../Prices.zig");
+const StringStore = @import("../StringStore.zig");
 
 pub fn handler(
     alloc: std.mem.Allocator,
@@ -27,6 +28,9 @@ pub fn handler(
     defer parsed_request.deinit(alloc);
     var display = try http.Query(DisplaySettings).parse(alloc, &parsed_request.params);
     defer display.deinit(alloc);
+
+    var string_store = StringStore.init(alloc);
+    defer string_store.deinit();
 
     var html = std.Io.Writer.Allocating.init(alloc);
     defer html.deinit();
@@ -44,11 +48,8 @@ pub fn handler(
             state.acquireProject();
             defer state.releaseProject();
 
-            var plot_points = try render(alloc, state.project, display, account, &html.writer);
-            defer {
-                for (plot_points.items) |*plot_point| plot_point.deinit(alloc);
-                plot_points.deinit(alloc);
-            }
+            var plot_points = try render(alloc, state.project, display, account, &html.writer, &string_store);
+            defer plot_points.deinit(alloc);
 
             const elapsed_ns = timer.read();
             const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
@@ -69,6 +70,7 @@ pub fn handler(
         const elapsed_ms2 = @divFloor(elapsed_ns2, std.time.ns_per_ms);
         std.log.info("Sent in {d} ms", .{elapsed_ms2});
 
+        string_store.clearRetainingCapacity();
         html.clearRetainingCapacity();
         json.clearRetainingCapacity();
 
@@ -78,16 +80,10 @@ pub fn handler(
 }
 
 const PlotPoint = struct {
-    date: []const u8,
+    date: StringStore.String,
     currency: []const u8,
     balance: f64,
-    balance_rendered: []const u8,
-
-    pub fn deinit(self: *PlotPoint, alloc: std.mem.Allocator) void {
-        alloc.free(self.date);
-        alloc.free(self.currency);
-        alloc.free(self.balance_rendered);
-    }
+    balance_rendered: StringStore.String,
 };
 
 fn render(
@@ -96,6 +92,7 @@ fn render(
     display: DisplaySettings,
     account: []const u8,
     out: *std.Io.Writer,
+    string_store: *StringStore,
 ) !std.ArrayList(PlotPoint) {
     var tree = try Tree.init(alloc);
     defer tree.deinit();
@@ -107,12 +104,7 @@ fn render(
     defer prices.deinit();
 
     var plot_points = std.ArrayList(PlotPoint){};
-    errdefer {
-        for (plot_points.items) |*plot_point| {
-            plot_point.deinit(alloc);
-        }
-        plot_points.deinit(alloc);
-    }
+    errdefer plot_points.deinit(alloc);
 
     try common.renderPlotArea(operating_currencies, out);
     try zts.write(tpl, "table", out);
@@ -242,10 +234,10 @@ fn render(
 
                             const balance = conv_inv.by_currency.get(conv_cur).?;
                             try plot_points.append(alloc, .{
-                                .date = try std.fmt.allocPrint(alloc, "{f}", .{entry.date}),
-                                .currency = try alloc.dupe(u8, conv_cur),
+                                .date = try string_store.print("{f}", .{entry.date}),
+                                .currency = conv_cur,
                                 .balance = balance.toFloat(),
-                                .balance_rendered = try std.fmt.allocPrint(alloc, "{f}", .{balance.withPrecision(2)}),
+                                .balance_rendered = try string_store.print("{f}", .{balance.withPrecision(2)}),
                             });
                         }
                     }

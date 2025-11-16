@@ -12,6 +12,7 @@ const SSE = @import("SSE.zig");
 const DisplaySettings = @import("DisplaySettings.zig");
 const PlainInventory = @import("../inventory.zig").PlainInventory;
 const Prices = @import("../Prices.zig");
+const StringStore = @import("../StringStore.zig");
 const t = @import("templates.zig");
 const tpl = t.balance_sheet;
 const common = @import("common.zig");
@@ -29,6 +30,9 @@ pub fn handler(
     defer parsed_request.deinit(alloc);
     var display = try http.Query(DisplaySettings).parse(alloc, &parsed_request.params);
     defer display.deinit(alloc);
+
+    var string_store = StringStore.init(alloc);
+    defer string_store.deinit();
 
     var html = std.Io.Writer.Allocating.init(alloc);
     defer html.deinit();
@@ -49,11 +53,8 @@ pub fn handler(
             state.acquireProject();
             defer state.releaseProject();
 
-            const plot_points = try render(alloc, state.project, display, &html.writer);
-            defer {
-                for (plot_points) |*plot_point| plot_point.deinit(alloc);
-                alloc.free(plot_points);
-            }
+            const plot_points = try render(alloc, state.project, display, &html.writer, &string_store);
+            defer alloc.free(plot_points);
 
             const elapsed_ns = timer.read();
             const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
@@ -74,6 +75,7 @@ pub fn handler(
         const elapsed_ms2 = @divFloor(elapsed_ns2, std.time.ns_per_ms);
         std.log.info("Sent in {d} ms", .{elapsed_ms2});
 
+        string_store.clearRetainingCapacity();
         html.clearRetainingCapacity();
         json.clearRetainingCapacity();
 
@@ -83,16 +85,10 @@ pub fn handler(
 }
 
 const PlotPoint = struct {
-    date: []const u8,
+    date: StringStore.String,
     currency: []const u8,
     balance: f64,
-    balance_rendered: []const u8,
-
-    pub fn deinit(self: *PlotPoint, alloc: std.mem.Allocator) void {
-        alloc.free(self.date);
-        alloc.free(self.currency);
-        alloc.free(self.balance_rendered);
-    }
+    balance_rendered: StringStore.String,
 };
 
 const NetWorth = struct {
@@ -102,6 +98,7 @@ const NetWorth = struct {
     display: DisplaySettings,
     inv: PlainInventory,
     next_emit_date: ?Date,
+    string_store: *StringStore,
     plot_points: std.ArrayList(PlotPoint),
 
     pub fn init(
@@ -109,6 +106,7 @@ const NetWorth = struct {
         prices: *Prices,
         operating_currencies: []const []const u8,
         display: DisplaySettings,
+        string_store: *StringStore,
     ) !NetWorth {
         return .{
             .alloc = alloc,
@@ -117,13 +115,13 @@ const NetWorth = struct {
             .display = display,
             .inv = try PlainInventory.init(alloc, null),
             .next_emit_date = null,
+            .string_store = string_store,
             .plot_points = .{},
         };
     }
 
     pub fn deinit(self: *NetWorth) void {
         self.inv.deinit();
-        for (self.plot_points.items) |*plot_point| plot_point.deinit(self.alloc);
         self.plot_points.deinit(self.alloc);
     }
 
@@ -150,10 +148,10 @@ const NetWorth = struct {
         while (iter.next()) |kv| {
             const balance = kv.value_ptr.*;
             try self.plot_points.append(self.alloc, .{
-                .date = try std.fmt.allocPrint(self.alloc, "{f}", .{self.next_emit_date.?}),
-                .currency = try self.alloc.dupe(u8, kv.key_ptr.*),
+                .date = try self.string_store.print("{f}", .{self.next_emit_date.?}),
+                .currency = kv.key_ptr.*,
                 .balance = balance.toFloat(),
-                .balance_rendered = try std.fmt.allocPrint(self.alloc, "{f}", .{balance.withPrecision(2)}),
+                .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
             });
         }
     }
@@ -176,6 +174,7 @@ fn render(
     project: *Project,
     display: DisplaySettings,
     out: *std.Io.Writer,
+    string_store: *StringStore,
 ) ![]PlotPoint {
     var tree = try Tree.init(alloc);
     defer tree.deinit();
@@ -186,7 +185,7 @@ fn render(
     var prices = Prices.init(alloc);
     defer prices.deinit();
 
-    var net_worth = try NetWorth.init(alloc, &prices, operating_currencies, display);
+    var net_worth = try NetWorth.init(alloc, &prices, operating_currencies, display, string_store);
     defer net_worth.deinit();
 
     var date_state = DateState.before;

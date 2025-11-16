@@ -12,6 +12,7 @@ const SSE = @import("SSE.zig");
 const DisplaySettings = @import("DisplaySettings.zig");
 const PlainInventory = @import("../inventory.zig").PlainInventory;
 const Prices = @import("../Prices.zig");
+const StringStore = @import("../StringStore.zig");
 const t = @import("templates.zig");
 const tpl = t.income_statement;
 const common = @import("common.zig");
@@ -29,6 +30,9 @@ pub fn handler(
     var display = try http.Query(DisplaySettings).parse(alloc, &parsed_request.params);
     defer display.deinit(alloc);
 
+    var string_store = StringStore.init(alloc);
+    defer string_store.deinit();
+
     var html = std.Io.Writer.Allocating.init(alloc);
     defer html.deinit();
 
@@ -45,11 +49,8 @@ pub fn handler(
             state.acquireProject();
             defer state.releaseProject();
 
-            const plot_points = try render(alloc, state.project, display, &html.writer);
-            defer {
-                for (plot_points) |*plot_point| plot_point.deinit(alloc);
-                alloc.free(plot_points);
-            }
+            const plot_points = try render(alloc, state.project, display, &html.writer, &string_store);
+            defer alloc.free(plot_points);
 
             const elapsed_ns = timer.read();
             const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
@@ -70,6 +71,7 @@ pub fn handler(
         const elapsed_ms2 = @divFloor(elapsed_ns2, std.time.ns_per_ms);
         std.log.info("Sent in {d} ms", .{elapsed_ms2});
 
+        string_store.clearRetainingCapacity();
         html.clearRetainingCapacity();
         json.clearRetainingCapacity();
 
@@ -79,18 +81,11 @@ pub fn handler(
 }
 
 const DataPoint = struct {
-    period: []const u8,
+    period: StringStore.String,
     currency: []const u8,
     account: []const u8,
     balance: f64,
-    balance_rendered: []const u8,
-
-    pub fn deinit(self: *DataPoint, alloc: std.mem.Allocator) void {
-        alloc.free(self.period);
-        alloc.free(self.currency);
-        alloc.free(self.account);
-        alloc.free(self.balance_rendered);
-    }
+    balance_rendered: StringStore.String,
 };
 
 const DataTracker = struct {
@@ -100,6 +95,7 @@ const DataTracker = struct {
     display: DisplaySettings,
     inv: Inventories,
     next_emit_date: ?Date,
+    string_store: *StringStore,
     data: std.ArrayList(DataPoint),
 
     pub fn init(
@@ -107,6 +103,7 @@ const DataTracker = struct {
         prices: *Prices,
         operating_currencies: []const []const u8,
         display: DisplaySettings,
+        string_store: *StringStore,
     ) DataTracker {
         return .{
             .alloc = alloc,
@@ -115,13 +112,13 @@ const DataTracker = struct {
             .display = display,
             .inv = Inventories.init(alloc),
             .next_emit_date = null,
+            .string_store = string_store,
             .data = .{},
         };
     }
 
     pub fn deinit(self: *DataTracker) void {
         self.inv.deinit();
-        for (self.data.items) |*plot_point| plot_point.deinit(self.alloc);
         self.data.deinit(self.alloc);
     }
 
@@ -144,11 +141,11 @@ const DataTracker = struct {
             const pair = kv.key_ptr.*;
             const balance = kv.value_ptr.*;
             try self.data.append(self.alloc, .{
-                .period = try std.fmt.allocPrint(self.alloc, "{f}", .{self.next_emit_date.?}),
-                .currency = try self.alloc.dupe(u8, pair.currency),
-                .account = try self.alloc.dupe(u8, pair.account),
+                .period = try self.string_store.print("{f}", .{self.next_emit_date.?}),
+                .currency = pair.currency,
+                .account = pair.account,
                 .balance = balance.toFloat(),
-                .balance_rendered = try std.fmt.allocPrint(self.alloc, "{f}", .{balance.withPrecision(2)}),
+                .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
             });
         }
         self.inv.clear();
@@ -163,12 +160,7 @@ const DataTracker = struct {
     }
 };
 
-fn render(
-    alloc: std.mem.Allocator,
-    project: *Project,
-    display: DisplaySettings,
-    out: *std.Io.Writer,
-) ![]DataPoint {
+fn render(alloc: std.mem.Allocator, project: *Project, display: DisplaySettings, out: *std.Io.Writer, string_store: *StringStore) ![]DataPoint {
     var tree = try Tree.init(alloc);
     defer tree.deinit();
 
@@ -178,7 +170,7 @@ fn render(
     var prices = Prices.init(alloc);
     defer prices.deinit();
 
-    var data_tracker = DataTracker.init(alloc, &prices, operating_currencies, display);
+    var data_tracker = DataTracker.init(alloc, &prices, operating_currencies, display, string_store);
     defer data_tracker.deinit();
 
     for (project.sorted_entries.items) |sorted_entry| {
