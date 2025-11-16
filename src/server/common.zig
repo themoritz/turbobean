@@ -1,5 +1,6 @@
 const std = @import("std");
 const Tree = @import("../tree.zig");
+const Inventory = @import("../inventory.zig");
 const Conversion = @import("DisplaySettings.zig").Conversion;
 const Prices = @import("../Prices.zig");
 const zts = @import("zts");
@@ -80,11 +81,16 @@ pub const TreeRenderer = struct {
         var unconverted_inv = try node.inventory.toPlain(self.alloc);
         defer unconverted_inv.deinit();
 
-        var inv = switch (self.conversion) {
-            .units => try unconverted_inv.clone(self.alloc),
-            .currency => |cur| try self.prices.convertInventory(self.alloc, &unconverted_inv, cur),
+        var converted_inv = try Inventory.PlainInventory.init(self.alloc, null);
+        defer converted_inv.deinit();
+
+        var inv = blk: switch (self.conversion) {
+            .units => break :blk &unconverted_inv,
+            .currency => |cur| {
+                try self.prices.convertInventory(&unconverted_inv, cur, &converted_inv);
+                break :blk &converted_inv;
+            },
         };
-        defer inv.deinit();
 
         const name_prefix_len = name_prefix.items.len;
         if (depth > 0) {

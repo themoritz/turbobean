@@ -14,6 +14,7 @@ const tpl = t.journal;
 const common = @import("common.zig");
 const Prices = @import("../Prices.zig");
 const StringStore = @import("../StringStore.zig");
+const Inventory = @import("../inventory.zig");
 
 pub fn handler(
     alloc: std.mem.Allocator,
@@ -109,6 +110,9 @@ fn render(
     try common.renderPlotArea(operating_currencies, out);
     try zts.write(tpl, "table", out);
 
+    var converted_inv = try Inventory.PlainInventory.init(alloc, null);
+    defer converted_inv.deinit();
+
     for (project.sorted_entries.items) |sorted_entry| {
         const data = project.files.items[sorted_entry.file];
         const entry = data.entries.items[sorted_entry.entry];
@@ -182,11 +186,13 @@ fn render(
                             var plain = try sum.toPlain(alloc);
                             defer plain.deinit();
 
-                            var conv_inv = switch (display.conversion) {
-                                .units => try plain.clone(alloc),
-                                .currency => |to| try prices.convertInventory(alloc, &plain, to),
+                            var conv_inv = blk: switch (display.conversion) {
+                                .units => break :blk &plain,
+                                .currency => |to| {
+                                    try prices.convertInventory(&plain, to, &converted_inv);
+                                    break :blk &converted_inv;
+                                },
                             };
-                            defer conv_inv.deinit();
 
                             var iter = conv_inv.by_currency.iterator();
                             while (iter.next()) |kv| {

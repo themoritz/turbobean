@@ -97,6 +97,7 @@ const NetWorth = struct {
     operating_currencies: []const []const u8,
     display: DisplaySettings,
     inv: PlainInventory,
+    converted_inv: PlainInventory,
     next_emit_date: ?Date,
     string_store: *StringStore,
     plot_points: std.ArrayList(PlotPoint),
@@ -114,6 +115,7 @@ const NetWorth = struct {
             .operating_currencies = operating_currencies,
             .display = display,
             .inv = try PlainInventory.init(alloc, null),
+            .converted_inv = try PlainInventory.init(alloc, null),
             .next_emit_date = null,
             .string_store = string_store,
             .plot_points = .{},
@@ -122,6 +124,7 @@ const NetWorth = struct {
 
     pub fn deinit(self: *NetWorth) void {
         self.inv.deinit();
+        self.converted_inv.deinit();
         self.plot_points.deinit(self.alloc);
     }
 
@@ -134,9 +137,8 @@ const NetWorth = struct {
             switch (self.display.conversion) {
                 .units => try self.emitPlotPoints(&self.inv),
                 .currency => |cur| {
-                    var inv = try self.prices.convertInventory(self.alloc, &self.inv, cur);
-                    defer inv.deinit();
-                    try self.emitPlotPoints(&inv);
+                    try self.prices.convertInventory(&self.inv, cur, &self.converted_inv);
+                    try self.emitPlotPoints(&self.converted_inv);
                 },
             }
             self.next_emit_date = self.display.interval.advanceDate(self.next_emit_date.?);

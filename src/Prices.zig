@@ -95,13 +95,11 @@ pub fn convert(self: *const Self, amount: Number, from: []const u8, to: []const 
 /// Caller owns returned inventory.
 pub fn convertInventory(
     self: *const Self,
-    alloc: Allocator,
     inventory: *const PlainInventory,
     to: []const u8,
-) !PlainInventory {
-    var result = try PlainInventory.init(alloc, null);
-    errdefer result.deinit();
-
+    result: *PlainInventory,
+) !void {
+    result.clear();
     var iter = inventory.by_currency.iterator();
     while (iter.next()) |kv| {
         const from = kv.key_ptr.*;
@@ -112,8 +110,6 @@ pub fn convertInventory(
             try result.add(from, balance);
         }
     }
-
-    return result;
 }
 
 test "setPrice stores both forward and inverse rates" {
