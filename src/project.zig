@@ -8,6 +8,7 @@ const Token = @import("lexer.zig").Lexer.Token;
 const Inventory = @import("inventory.zig").Inventory;
 const InvSummary = @import("inventory.zig").Summary;
 const Date = @import("date.zig").Date;
+const ztracy = @import("ztracy");
 
 const Self = @This();
 
@@ -40,6 +41,9 @@ const FileLine = struct {
 
 /// Load a project from a root file relative to the CWD.
 pub fn load(alloc: Allocator, name: []const u8) !Self {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Load project", 0x00_00_ff_00);
+    defer tracy_zone.End();
+
     var self = Self{
         .alloc = alloc,
         .files = .{},
