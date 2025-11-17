@@ -5,8 +5,8 @@
 
     .dependencies = .{
         .zts = .{
-            .url = "git+https://github.com/zigster64/zts?ref=main#7c0842a4aa122c10eee722df787f590ae51a15db",
-            .hash = "zts-0.14.1-_M80OWOzAgCGgZ-eKi77As5Y_e0XcCq0DJ_oHOrn4jkx",
+            .url = "git+https://github.com/zigster64/zts?ref=main#ca98e23fcf1a4fa331c80f5cd2e72f6838daf7ee",
+            .hash = "zts-0.14.1-_M80Of22AgBwArz6uCXR49IoEjlzNt5yhu7KV8cWl5jr",
         },
         .lsp_kit = .{
             .url = "git+https://github.com/zigtools/lsp-kit.git#6274eebace9a6a82ce182e24468fef88e0b95f37",
