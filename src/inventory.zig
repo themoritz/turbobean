@@ -162,7 +162,7 @@ pub const Lots = struct {
         return cost_weight;
     }
 
-    pub fn balance(self: *Lots) Number {
+    pub fn balance(self: *const Lots) Number {
         var result = Number.zero();
         for (self.longs.items) |lot| result = result.add(lot.units);
         for (self.shorts.items) |lot| result = result.add(lot.units);
@@ -271,6 +271,14 @@ pub const LotsInventory = struct {
         }
 
         return inv;
+    }
+
+    pub fn balance(self: *const LotsInventory, currency: []const u8) !Number {
+        if (self.by_currency.get(currency)) |lots| {
+            return lots.balance();
+        } else {
+            return error.CurrencyDoesNotExist;
+        }
     }
 
     pub fn clone(self: *const LotsInventory, alloc: Allocator) !LotsInventory {
@@ -428,6 +436,13 @@ pub const Inventory = union(enum) {
         return switch (self.*) {
             .plain => |inv| inv.summary(alloc),
             .lots => |inv| inv.summary(alloc),
+        };
+    }
+
+    pub fn balance(self: *const Inventory, currency: []const u8) !Number {
+        return switch (self.*) {
+            .plain => |inv| inv.balance(currency),
+            .lots => |inv| inv.balance(currency),
         };
     }
 

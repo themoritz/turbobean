@@ -289,16 +289,14 @@ pub fn check(self: *Self) !void {
                 }
             },
             .balance => |balance| {
-                var inv = tree.inventoryAggregatedByAccount(self.alloc, balance.account.slice) catch |err| switch (err) {
+                const accumulated = tree.balanceAggregatedByAccount(balance.account.slice, balance.amount.currency.?) catch |err| switch (err) {
                     error.AccountDoesNotExist => {
                         try self.addError(balance.account, sorted.file, ErrorDetails.Tag.account_not_open);
                         continue;
                     },
                     else => return err,
                 };
-                defer inv.deinit();
 
-                const accumulated = inv.balance(balance.amount.currency.?);
                 const expected = balance.amount.number.?;
                 if (lastPads.get(balance.account.slice)) |last_pad| {
                     const missing = expected.add(accumulated.negate());

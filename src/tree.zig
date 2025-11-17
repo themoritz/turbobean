@@ -185,6 +185,32 @@ pub fn findNode(self: *const Self, account: []const u8) ?u32 {
     return result;
 }
 
+pub fn balanceAggregatedByAccount(
+    self: *const Self,
+    account: []const u8,
+    currency: []const u8,
+) !Number {
+    const node = self.node_by_name.get(account) orelse self.findNode(account) orelse return error.AccountDoesNotExist;
+    return self.balanceAggregatedByNode(node, currency);
+}
+
+pub fn balanceAggregatedByNode(self: *const Self, node: u32, currency: []const u8) !Number {
+    var result = Number.zero();
+    var stack = std.ArrayList(usize){};
+    defer stack.deinit(self.alloc);
+
+    try stack.append(self.alloc, node);
+    while (stack.items.len > 0) {
+        const index = stack.pop().?;
+        var n = self.nodes.items[index];
+        result = result.add(try n.inventory.balance(currency));
+        for (n.children.items) |child| {
+            try stack.append(self.alloc, child);
+        }
+    }
+    return result;
+}
+
 /// Caller owns returned inventory.
 pub fn inventoryAggregatedByAccount(self: *const Self, alloc: Allocator, account: []const u8) !Summary {
     const node = self.node_by_name.get(account) orelse self.findNode(account) orelse return error.AccountDoesNotExist;
