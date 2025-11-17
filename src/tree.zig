@@ -8,6 +8,7 @@ const Number = @import("number.zig").Number;
 const Data = @import("data.zig");
 const Date = @import("date.zig").Date;
 const Self = @This();
+const Stack = @import("StackStack.zig").Stack(usize, 64);
 
 alloc: Allocator,
 node_by_name: std.StringHashMap(u32),
@@ -196,16 +197,15 @@ pub fn balanceAggregatedByAccount(
 
 pub fn balanceAggregatedByNode(self: *const Self, node: u32, currency: []const u8) !Number {
     var result = Number.zero();
-    var stack = std.ArrayList(usize){};
-    defer stack.deinit(self.alloc);
+    var stack: Stack = .{};
 
-    try stack.append(self.alloc, node);
-    while (stack.items.len > 0) {
-        const index = stack.pop().?;
+    try stack.push(node);
+    while (stack.len > 0) {
+        const index = stack.pop();
         var n = self.nodes.items[index];
         result = result.add(try n.inventory.balance(currency));
         for (n.children.items) |child| {
-            try stack.append(self.alloc, child);
+            try stack.push(child);
         }
     }
     return result;
