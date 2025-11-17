@@ -1,13 +1,10 @@
 const std = @import("std");
 const zts = @import("zts");
-const http = @import("http.zig");
 const State = @import("State.zig");
-const Uri = @import("../Uri.zig");
 const Project = @import("../project.zig");
 const Tree = @import("../tree.zig");
 const Date = @import("../date.zig").Date;
 const Number = @import("../number.zig").Number;
-const SSE = @import("SSE.zig");
 const DisplaySettings = @import("DisplaySettings.zig");
 const t = @import("templates.zig");
 const tpl = t.journal;
@@ -22,62 +19,14 @@ pub fn handler(
     state: *State,
     account: []const u8,
 ) !void {
-    var sse = try SSE.init(alloc, req);
-    defer sse.deinit();
-
-    var parsed_request = try http.ParsedRequest.parse(alloc, req.head.target);
-    defer parsed_request.deinit(alloc);
-    var display = try http.Query(DisplaySettings).parse(alloc, &parsed_request.params);
-    defer display.deinit(alloc);
-
-    var string_store = StringStore.init(alloc);
-    defer string_store.deinit();
-
-    var html = std.Io.Writer.Allocating.init(alloc);
-    defer html.deinit();
-
-    var json = std.Io.Writer.Allocating.init(alloc);
-    defer json.deinit();
-    var stringify = std.json.Stringify{ .writer = &json.writer };
-
-    var listener = state.broadcast.newListener();
-
-    var timer = try std.time.Timer.start();
-    while (true) {
-        timer.reset();
-        {
-            state.acquireProject();
-            defer state.releaseProject();
-
-            var plot_points = try render(alloc, state.project, display, account, &html.writer, &string_store);
-            defer plot_points.deinit(alloc);
-
-            const elapsed_ns = timer.read();
-            const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
-            std.log.info("Except JSON in {d} ms", .{elapsed_ms});
-
-            try stringify.write(plot_points.items);
-        }
-
-        const elapsed_ns = timer.read();
-        const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
-        std.log.info("Computed in {d} ms", .{elapsed_ms});
-        timer.reset();
-
-        try sse.send(.{ .payload = html.writer.buffered() });
-        try sse.send(.{ .payload = json.writer.buffered(), .event = "plot_points" });
-
-        const elapsed_ns2 = timer.read();
-        const elapsed_ms2 = @divFloor(elapsed_ns2, std.time.ns_per_ms);
-        std.log.info("Sent in {d} ms", .{elapsed_ms2});
-
-        string_store.clearRetainingCapacity();
-        html.clearRetainingCapacity();
-        json.clearRetainingCapacity();
-
-        if (!listener.waitForNewVersion()) break;
-    }
-    try sse.end();
+    try common.SseHandler([]PlotPoint, []const u8).run(
+        alloc,
+        req,
+        state,
+        account,
+        render,
+        "plot_points",
+    );
 }
 
 const PlotPoint = struct {
@@ -89,12 +38,12 @@ const PlotPoint = struct {
 
 fn render(
     alloc: std.mem.Allocator,
-    project: *Project,
+    project: *const Project,
     display: DisplaySettings,
-    account: []const u8,
     out: *std.Io.Writer,
     string_store: *StringStore,
-) !std.ArrayList(PlotPoint) {
+    account: []const u8,
+) ![]PlotPoint {
     var tree = try Tree.init(alloc);
     defer tree.deinit();
 
@@ -105,7 +54,7 @@ fn render(
     defer prices.deinit();
 
     var plot_points = std.ArrayList(PlotPoint){};
-    errdefer plot_points.deinit(alloc);
+    defer plot_points.deinit(alloc);
 
     try common.renderPlotArea(operating_currencies, out);
     try zts.write(tpl, "table", out);
@@ -258,7 +207,7 @@ fn render(
 
     try zts.write(tpl, "table_end", out);
 
-    return plot_points;
+    return plot_points.toOwnedSlice(alloc);
 }
 
 fn tryConvert(

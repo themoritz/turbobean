@@ -1,10 +1,18 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const Tree = @import("../tree.zig");
 const Inventory = @import("../inventory.zig");
-const Conversion = @import("DisplaySettings.zig").Conversion;
+const DisplaySettings = @import("DisplaySettings.zig");
+const Conversion = DisplaySettings.Conversion;
 const Prices = @import("../Prices.zig");
+const Project = @import("../project.zig");
+const StringStore = @import("../StringStore.zig");
 const zts = @import("zts");
 const t = @import("templates.zig");
+const SSE = @import("SSE.zig");
+const ztracy = @import("ztracy");
+const State = @import("State.zig");
+const http = @import("http.zig");
 
 pub fn renderPlotArea(operating_currencies: []const []const u8, out: anytype) !void {
     try zts.writeHeader(t.plot, out);
@@ -16,6 +24,87 @@ pub fn renderPlotArea(operating_currencies: []const []const u8, out: anytype) !v
     }
     try zts.write(t.plot, "end_conversions", out);
     try zts.write(t.plot, "plot", out);
+}
+
+/// T = type of plot data
+/// Ctx = type of context, eg account
+pub fn SseHandler(comptime T: type, comptime Ctx: type) type {
+    return struct {
+        pub fn run(
+            alloc: Allocator,
+            req: *std.http.Server.Request,
+            state: *State,
+            ctx: Ctx,
+            render: *const fn (
+                Allocator,
+                *const Project,
+                DisplaySettings,
+                *std.Io.Writer,
+                *StringStore,
+                Ctx,
+            ) anyerror!T,
+            json_event_name: []const u8,
+        ) !void {
+            var sse = try SSE.init(alloc, req);
+            defer sse.deinit();
+
+            var parsed_request = try http.ParsedRequest.parse(alloc, req.head.target);
+            defer parsed_request.deinit(alloc);
+
+            var display = try http.Query(DisplaySettings).parse(alloc, &parsed_request.params);
+            defer display.deinit(alloc);
+
+            var string_store = StringStore.init(alloc);
+            defer string_store.deinit();
+
+            var html = std.Io.Writer.Allocating.init(alloc);
+            defer html.deinit();
+
+            var json = std.Io.Writer.Allocating.init(alloc);
+            defer json.deinit();
+            var stringify = std.json.Stringify{ .writer = &json.writer };
+
+            var listener = state.broadcast.newListener();
+
+            while (true) {
+                var timer = try std.time.Timer.start();
+                const tracy_zone = ztracy.ZoneNC(@src(), "SSE loop", 0x00_ff_00_00);
+                defer tracy_zone.End();
+
+                {
+                    state.acquireProject();
+                    defer state.releaseProject();
+
+                    const plot_data = try render(
+                        alloc,
+                        state.project,
+                        display,
+                        &html.writer,
+                        &string_store,
+                        ctx,
+                    );
+                    defer alloc.free(plot_data);
+
+                    try stringify.write(plot_data);
+                }
+
+                try sse.send(.{ .payload = html.writer.buffered() });
+                try sse.send(.{ .payload = json.writer.buffered(), .event = json_event_name });
+
+                string_store.clearRetainingCapacity();
+                html.clearRetainingCapacity();
+                json.clearRetainingCapacity();
+
+                const elapsed_ns = timer.read();
+                const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
+                std.log.info("Rendered in {d} ms", .{elapsed_ms});
+
+                if (!listener.waitForNewVersion()) break;
+            }
+
+            try sse.end();
+        }
+    };
 }
 
 pub const TreeRenderer = struct {
