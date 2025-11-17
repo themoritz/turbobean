@@ -103,6 +103,21 @@ pub fn accountOpen(self: *Self, name: []const u8) bool {
     return self.node_by_name.contains(name);
 }
 
+pub fn isDescendant(self: *const Self, parent: []const u8, child: []const u8) !bool {
+    const parent_index = self.node_by_name.get(parent) orelse return error.AccountNotOpen;
+    const child_index = self.node_by_name.get(child) orelse return error.AccountNotOpen;
+
+    if (parent_index == child_index) return true;
+
+    var n = child_index;
+    while (self.nodes.items[n].parent) |p| {
+        if (p == parent_index) return true;
+        n = p;
+    }
+
+    return false;
+}
+
 pub fn addPosition(self: *Self, account: []const u8, currency: []const u8, number: Number) !void {
     const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
     try self.nodes.items[index].inventory.add(currency, number);
@@ -413,4 +428,19 @@ test "aggregated" {
     ;
 
     try std.testing.expectEqualStrings(expected, rendered);
+}
+
+test "isDescendant" {
+    var tree = try Self.init(std.testing.allocator);
+    defer tree.deinit();
+
+    _ = try tree.open("Assets", null, null);
+    _ = try tree.open("Assets:Currency:Chase", null, null);
+    _ = try tree.open("Assets:Currency:BoA", null, null);
+    _ = try tree.open("Income:Dividends", null, null);
+    _ = try tree.open("Assets:Stocks", null, null);
+
+    try std.testing.expect(try tree.isDescendant("Assets:Currency:Chase", "Assets:Currency:Chase"));
+    try std.testing.expect(try tree.isDescendant("Assets", "Assets:Currency:Chase"));
+    try std.testing.expect(!try tree.isDescendant("Income:Dividends", "Assets:Currency:Chase"));
 }

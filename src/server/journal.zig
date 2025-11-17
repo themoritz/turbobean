@@ -59,6 +59,9 @@ fn render(
     try common.renderPlotArea(operating_currencies, out);
     try zts.write(tpl, "table", out);
 
+    var plain_inv = try Inventory.PlainInventory.init(alloc, null);
+    defer plain_inv.deinit();
+
     var converted_inv = try Inventory.PlainInventory.init(alloc, null);
     defer converted_inv.deinit();
 
@@ -127,18 +130,14 @@ fn render(
                                 .change_cur = conv_cur,
                             }, out);
 
-                            try tree.postInventory(entry.date, p);
-
-                            var sum = try tree.inventoryAggregatedByAccount(alloc, account);
-                            defer sum.deinit();
-
-                            var plain = try sum.toPlain(alloc);
-                            defer plain.deinit();
+                            if (try tree.isDescendant(account, p.account.slice)) {
+                                try plain_inv.add(p.amount.currency.?, p.amount.number.?);
+                            }
 
                             var conv_inv = blk: switch (display.conversion) {
-                                .units => break :blk &plain,
+                                .units => break :blk &plain_inv,
                                 .currency => |to| {
-                                    try prices.convertInventory(&plain, to, &converted_inv);
+                                    try prices.convertInventory(&plain_inv, to, &converted_inv);
                                     break :blk &converted_inv;
                                 },
                             };
