@@ -281,11 +281,19 @@ pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: boo
 
     var lexer = Lexer.init(source);
 
+    // Average 10 bytes per token:
+    try self.tokens.ensureTotalCapacity(alloc, source.len / 10);
+
     while (true) {
         const token = lexer.next();
         try self.tokens.append(alloc, token);
         if (token.tag == .eof) break;
     }
+
+    // Average 11 entries per token:
+    try self.entries.ensureTotalCapacity(alloc, self.tokens.items.len / 11);
+    // Average 9 postings per token:
+    try self.postings.ensureTotalCapacity(alloc, self.tokens.items.len / 9);
 
     var parser: Parser = .{
         .alloc = self.alloc,

@@ -62,6 +62,24 @@ pub fn load(alloc: Allocator, name: []const u8) !Self {
     };
     errdefer self.deinit();
     try self.loadFileRec(name, true);
+
+    // Collect number of bytes, tokens, entries and postings
+    var chars: usize = 0;
+    var tokens: usize = 0;
+    var entries: usize = 0;
+    var postings: usize = 0;
+    for (self.files.items) |*data| {
+        chars += data.source.len;
+        tokens += data.tokens.items.len;
+        entries += data.entries.items.len;
+        postings += data.postings.len;
+    }
+
+    std.log.debug(
+        "Loaded {d} files, {d} bytes, {d} tokens, {d} entries, {d} postings",
+        .{ self.files.items.len, chars, tokens, entries, postings },
+    );
+
     try self.pipeline();
     return self;
 }
