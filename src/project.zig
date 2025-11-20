@@ -39,8 +39,8 @@ const FileLine = struct {
     line: u32,
 };
 
-/// Load a project from a root file relative to the CWD.
-pub fn load(alloc: Allocator, name: []const u8) !Self {
+/// Load a project from a root file URI.
+pub fn load(alloc: Allocator, uri: Uri) !Self {
     const tracy_zone = ztracy.ZoneNC(@src(), "Load project", 0x00_00_ff_00);
     defer tracy_zone.End();
 
@@ -61,7 +61,7 @@ pub fn load(alloc: Allocator, name: []const u8) !Self {
         .links = std.StringHashMap(void).init(alloc),
     };
     errdefer self.deinit();
-    try self.loadFileRec(name, true);
+    try self.loadFileRec(uri, true);
 
     // Collect number of bytes, tokens, entries and postings
     // var chars: usize = 0;
@@ -105,31 +105,40 @@ pub fn deinit(self: *Self) void {
     self.links.deinit();
 }
 
-fn loadFileRec(self: *Self, name: []const u8, is_root: bool) !void {
-    if (self.files_by_uri.get(name)) |_| return error.ImportCycle;
-    const imports = try self.loadSingleFile(name, is_root);
+/// Is the provided file_uri included in this project?
+pub fn ownsFile(self: *const Self, file_uri: []const u8) bool {
+    return self.files_by_uri.contains(file_uri);
+}
+
+/// Is the provided file_uri the root file of this project?
+pub fn hasRoot(self: *const Self, file_uri: []const u8) bool {
+    return std.mem.eql(u8, self.uris.items[0].value, file_uri);
+}
+
+fn loadFileRec(self: *Self, uri: Uri, is_root: bool) !void {
+    if (self.files_by_uri.get(uri.value)) |_| return error.ImportCycle;
+    const imports = try self.loadSingleFile(uri, is_root);
     defer self.alloc.free(imports);
-    const dir = std.fs.path.dirname(name) orelse ".";
     for (imports) |import| {
-        const joined = try std.fs.path.join(self.alloc, &.{ dir, import });
-        defer self.alloc.free(joined);
-        try self.loadFileRec(joined, false);
+        var import_uri = try uri.move_relative(self.alloc, import);
+        defer import_uri.deinit(self.alloc);
+        try self.loadFileRec(import_uri, false);
     }
 }
 
 /// Parses a file and balances all transactions.
-fn loadSingleFile(self: *Self, name: []const u8, is_root: bool) !Data.Imports.Slice {
-    const uri = try Uri.from_relative_to_cwd(self.alloc, name);
-    try self.uris.append(self.alloc, uri);
+fn loadSingleFile(self: *Self, uri: Uri, is_root: bool) !Data.Imports.Slice {
+    const uri_owned = try uri.clone(self.alloc);
+    try self.uris.append(self.alloc, uri_owned);
 
-    const null_terminated = try uri.load_nullterminated(self.alloc);
+    const null_terminated = try uri_owned.load_nullterminated(self.alloc);
 
-    var data, const imports = try Data.loadSource(self.alloc, uri, null_terminated, is_root);
+    var data, const imports = try Data.loadSource(self.alloc, uri_owned, null_terminated, is_root);
     try data.balanceTransactions();
 
     try self.files.append(self.alloc, data);
 
-    try self.files_by_uri.put(uri.value, self.files.items.len - 1);
+    try self.files_by_uri.put(uri_owned.value, self.files.items.len - 1);
 
     return imports;
 }
@@ -566,7 +575,7 @@ fn refreshLspCache(self: *Self) !void {
 
 /// Assumes checkAccountsOpen has been called.
 pub fn accountInventoryUntilLine(
-    self: *Self,
+    self: *const Self,
     account: []const u8,
     uri: []const u8,
     line: u32,
@@ -651,7 +660,7 @@ pub fn accountInventoryUntilLine(
     return null;
 }
 
-pub fn get_account_open_pos(self: *Self, account: []const u8) ?struct { Uri, u32 } {
+pub fn get_account_open_pos(self: *const Self, account: []const u8) ?struct { Uri, u32 } {
     const entry = self.accounts.get(account) orelse return null;
     return .{ self.uris.items[entry.file], entry.line };
 }

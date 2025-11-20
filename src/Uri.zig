@@ -8,6 +8,10 @@ const prefix = "file://";
 
 value: []const u8,
 
+pub fn from_raw(alloc: Allocator, value: []const u8) !Self {
+    return Self{ .value = try alloc.dupe(u8, value) };
+}
+
 /// Use to get a URI from a relative path that the user typed.
 pub fn from_relative_to_cwd(alloc: Allocator, name: []const u8) !Self {
     const real = try std.fs.cwd().realpathAlloc(alloc, name);
@@ -50,6 +54,18 @@ pub fn load_nullterminated(self: *const Self, alloc: Allocator) ![:0]const u8 {
     const null_terminated: [:0]u8 = source[0..filesize :0];
 
     return null_terminated;
+}
+
+pub fn clone(self: *const Self, alloc: Allocator) !Self {
+    const value = try alloc.dupe(u8, self.value);
+    return Self{ .value = value };
+}
+
+pub fn move_relative(self: *const Self, alloc: Allocator, path: []const u8) !Self {
+    const dir = std.fs.path.dirname(self.absolute()) orelse ".";
+    const joined = try std.fs.path.join(alloc, &.{ dir, path });
+    defer alloc.free(joined);
+    return Self{ .value = try std.fmt.allocPrint(alloc, "{s}{s}", .{ prefix, joined }) };
 }
 
 test relative {

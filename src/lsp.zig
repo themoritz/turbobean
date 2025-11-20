@@ -9,61 +9,165 @@ const Token = @import("lexer.zig").Lexer.Token;
 const completion = @import("lsp/completion.zig");
 const semantic_tokens = @import("lsp/semantic_tokens.zig");
 const Date = @import("date.zig").Date;
+const Uri = @import("Uri.zig");
 
 const LspState = struct {
-    project: Project = undefined,
-    initialized: bool = false,
-    clientCapabilities: ClientCapabilities = .{},
+    alloc: Allocator,
+    projects: std.ArrayList(Project),
+    clientCapabilities: ClientCapabilities,
 
-    pub fn initialize(self: *LspState, alloc: Allocator, root: []const u8) !void {
-        self.project = try Project.load(alloc, root);
-        self.initialized = true;
+    pub fn init(alloc: Allocator) LspState {
+        return .{
+            .alloc = alloc,
+            .projects = .{},
+            .clientCapabilities = .{},
+        };
     }
 
     pub fn deinit(self: *LspState) void {
-        if (self.initialized) {
-            self.project.deinit();
+        for (self.projects.items) |*project| project.deinit();
+        self.projects.deinit(self.alloc);
+    }
+
+    fn initialize(self: *LspState, params: lsp.types.InitializeParams) !InitResult {
+        // Check and store client capabilities
+        if (params.capabilities.general) |general| {
+            if (general.positionEncodings) |encodings| {
+                for (encodings) |encoding| {
+                    if (encoding == .@"utf-16") self.clientCapabilities.utf16_position_encoding = true;
+                }
+            }
+            if (!self.clientCapabilities.utf16_position_encoding) return .{
+                .fail_message = try self.alloc.dupe(u8, "Client doesn't support utf-16 position encoding"),
+            };
+        } else return .{
+            .fail_message = try self.alloc.dupe(u8, "Client doesn't have general capabilities defined"),
+        };
+
+        if (params.workspaceFolders) |workspace_folders| {
+            for (workspace_folders) |folder| {
+                self.addWorkspaceFolder(folder) catch |err| {
+                    std.log.err("Failed to load project for workspace folder '{s}': {s}", .{ folder.name, @errorName(err) });
+                    continue;
+                };
+            }
         }
+
+        self.logOpenProjects();
+        return .{ .success = {} };
     }
 
     pub fn sendDiagnostics(self: *const LspState, alloc: Allocator, transport: *lsp.Transport) !void {
-        var errors = try self.project.collectErrors(alloc);
-        defer {
+        for (self.projects.items) |project| {
+            var errors = try project.collectErrors(alloc);
+            defer {
+                var iter = errors.iterator();
+                while (iter.next()) |kv| {
+                    kv.value_ptr.deinit(alloc);
+                }
+                errors.deinit();
+            }
             var iter = errors.iterator();
             while (iter.next()) |kv| {
-                kv.value_ptr.deinit(alloc);
-            }
-            errors.deinit();
-        }
-        var iter = errors.iterator();
-        while (iter.next()) |kv| {
-            var diagnostics = std.ArrayList(lsp.types.Diagnostic){};
-            defer {
-                for (diagnostics.items) |diagnostic| {
-                    alloc.free(diagnostic.message);
+                var diagnostics = std.ArrayList(lsp.types.Diagnostic){};
+                defer {
+                    for (diagnostics.items) |diagnostic| {
+                        alloc.free(diagnostic.message);
+                    }
+                    diagnostics.deinit(alloc);
                 }
-                diagnostics.deinit(alloc);
+                for (kv.value_ptr.items) |err| {
+                    try diagnostics.append(alloc, try mkDiagnostic(err, alloc));
+                }
+                try transport.writeNotification(
+                    alloc,
+                    "textDocument/publishDiagnostics",
+                    lsp.types.PublishDiagnosticsParams,
+                    .{ .uri = kv.key_ptr.*, .diagnostics = diagnostics.items },
+                    .{},
+                );
             }
-            for (kv.value_ptr.items) |err| {
-                try diagnostics.append(alloc, try mkDiagnostic(err, alloc));
-            }
-            try transport.writeNotification(
-                alloc,
-                "textDocument/publishDiagnostics",
-                lsp.types.PublishDiagnosticsParams,
-                .{ .uri = kv.key_ptr.*, .diagnostics = diagnostics.items },
-                .{},
-            );
         }
     }
 
     pub fn findAccount(self: *const LspState, uri: []const u8, position: lsp.types.Position) ?Token {
-        var iter = self.project.accountIterator(uri);
+        const project = self.getProjectForUri(uri) orelse return null;
+        var iter = project.accountIterator(uri);
         return while (iter.next()) |next| {
             const same_line = next.token.line == position.line;
             const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
             if (same_line and within_token) break next.token;
         } else null;
+    }
+
+    pub fn getProjectForUri(self: *const LspState, uri: []const u8) ?*Project {
+        for (self.projects.items) |*project| {
+            if (project.ownsFile(uri)) return project;
+        }
+        return null;
+    }
+
+    pub fn addWorkspaceFolder(self: *LspState, folder: lsp.types.WorkspaceFolder) !void {
+        const root_file = self.getWorkspaceRootFile(folder) catch |err| {
+            std.log.err("Failed to load project for workspace folder '{s}': {s}", .{ folder.name, @errorName(err) });
+            return;
+        };
+        defer self.alloc.free(root_file);
+
+        var uri = try Uri.from_absolute(self.alloc, root_file);
+        defer uri.deinit(self.alloc);
+
+        try self.openProjectByRootUri(uri);
+    }
+
+    pub fn removeWorkspaceFolder(self: *LspState, folder: lsp.types.WorkspaceFolder) void {
+        const root_file = self.getWorkspaceRootFile(folder) catch |err| {
+            std.log.err("Failed to load config for workspace folder '{s}': {s}", .{ folder.name, @errorName(err) });
+            return;
+        };
+        defer self.alloc.free(root_file);
+
+        closeProjectByRootUri(self, root_file);
+    }
+
+    fn getWorkspaceRootFile(self: *LspState, folder: lsp.types.WorkspaceFolder) ![]const u8 {
+        const config = try Config.load_from_dir(self.alloc, folder.name);
+        defer self.alloc.free(config.root);
+
+        return std.fs.path.join(self.alloc, &.{ folder.name, config.root });
+    }
+
+    pub fn openProjectByRootUri(self: *LspState, uri: Uri) !void {
+        var project = try Project.load(self.alloc, uri);
+        errdefer project.deinit();
+
+        try self.projects.append(self.alloc, project);
+
+        // Remove all projects that have a dependency of this project as their root
+        for (project.uris.items[1..]) |dependency| {
+            self.closeProjectByRootUri(dependency.value);
+        }
+    }
+
+    pub fn closeProjectByRootUri(self: *LspState, uri: []const u8) void {
+        for (self.projects.items, 0..) |*project, i| {
+            if (project.hasRoot(uri)) {
+                project.deinit();
+                _ = self.projects.orderedRemove(i);
+                std.log.debug("Closed project for: {s}", .{uri});
+                return;
+            }
+        }
+    }
+
+    pub fn logOpenProjects(self: *const LspState) void {
+        std.log.debug("Currently open projects:", .{});
+        for (self.projects.items) |*project| {
+            std.log.debug("- {s}", .{project.uris.items[0].value});
+            for (project.uris.items[1..]) |uri| {
+                std.log.debug("  > {s}", .{uri.value});
+            }
+        }
     }
 };
 
@@ -76,7 +180,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
     var stdio_transport: lsp.Transport.Stdio = .init(&read_buffer, .stdin(), .stdout());
     const transport = &stdio_transport.transport;
     var timer = try std.time.Timer.start();
-    var state: LspState = .{};
+    var state = LspState.init(alloc);
     defer state.deinit();
 
     loop: while (true) : ({
@@ -117,7 +221,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                             .{},
                         );
                     }
-                    const init_result = try initialize(alloc, params, &state);
+                    const init_result = try state.initialize(params);
                     defer init_result.deinit(alloc);
                     switch (init_result) {
                         .fail_message => |message| {
@@ -153,7 +257,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                             .triggerCharacters = &.{ "#", "^", "2", "\"" },
                                         },
                                         .textDocumentSync = .{ .TextDocumentSyncOptions = .{
-                                            .openClose = false,
+                                            .openClose = true,
                                             .change = lsp.types.TextDocumentSyncKind.Full,
                                         } },
                                         .semanticTokensProvider = .{ .SemanticTokensOptions = .{
@@ -162,6 +266,10 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                                 .tokenModifiers = &.{},
                                             },
                                             .full = .{ .bool = true },
+                                        } },
+                                        .workspace = .{ .workspaceFolders = .{
+                                            .supported = true,
+                                            .changeNotifications = .{ .bool = true },
                                         } },
                                     },
                                 },
@@ -189,17 +297,23 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                 .@"textDocument/hover" => |params| {
                     const uri = params.textDocument.uri;
                     const position = params.position;
-                    var iter = state.project.accountIterator(uri);
+                    const project = state.getProjectForUri(uri) orelse {
+                        std.log.warn("No project found for file {s}", .{uri});
+                        try transport.writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
+                    var iter = project.accountIterator(uri);
                     const account = while (iter.next()) |next| {
                         const same_line = next.token.line == position.line;
                         const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
                         if (same_line and within_token and (next.kind == .posting or next.kind == .pad or next.kind == .pad_to)) break next.token;
                     } else {
+                        std.log.warn("No account found for file {s} at line {d}", .{ uri, position.line });
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
 
-                    if (try state.project.accountInventoryUntilLine(account.slice, uri, position.line)) |inv| {
+                    if (try project.accountInventoryUntilLine(account.slice, uri, position.line)) |inv| {
                         defer {
                             var before = inv.before;
                             var after = inv.after;
@@ -229,11 +343,17 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         };
                         try transport.writeResponse(alloc, request.id, lsp.types.Hover, result, .{});
                     } else {
+                        std.log.warn("No inventory found for file {s} at line {d}", .{ uri, position.line });
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     }
                 },
                 .@"textDocument/completion" => |params| {
+                    const project = state.getProjectForUri(params.textDocument.uri) orelse {
+                        try transport.writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
+
                     var arena = std.heap.ArenaAllocator.init(alloc);
                     defer arena.deinit();
                     const arena_alloc = arena.allocator();
@@ -245,8 +365,8 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     var end: u32 = params.position.character;
 
                     blk: {
-                        const file = state.project.files_by_uri.get(params.textDocument.uri) orelse break :blk;
-                        const src = state.project.files.items[file].source;
+                        const file = project.files_by_uri.get(params.textDocument.uri) orelse break :blk;
+                        const src = project.files.items[file].source;
                         const line = completion.getLine(src, params.position.line) orelse break :blk;
                         const before = completion.getTextBefore(line, params.position.character);
 
@@ -267,12 +387,12 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         if (triggerChar) |t| {
                             switch (t) {
                                 '#' => {
-                                    var iter = state.project.tags.keyIterator();
+                                    var iter = project.tags.keyIterator();
                                     while (iter.next()) |k| try completions.append(arena_alloc, .{ k.*, .Variable });
                                     start = start - 1;
                                 },
                                 '^' => {
-                                    var iter = state.project.links.keyIterator();
+                                    var iter = project.links.keyIterator();
                                     while (iter.next()) |k| try completions.append(arena_alloc, .{ k.*, .Reference });
                                     start = start - 1;
                                 },
@@ -297,7 +417,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                 completion.countOccurrences(before, "\"") -
                                 completion.countOccurrences(before, "\\\"");
                             if (numQuotes % 2 == 0) {
-                                var iter = state.project.accounts.keyIterator();
+                                var iter = project.accounts.keyIterator();
                                 while (iter.next()) |k| try completions.append(arena_alloc, .{ k.*, .EnumMember });
                                 const word_start, const word_end = completion.getWordAround(line, params.position.character) orelse break :blk;
                                 start = word_start;
@@ -339,11 +459,16 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     }
                 },
                 .@"textDocument/definition" => |params| {
-                    const account = state.findAccount(params.textDocument.uri, params.position) orelse {
+                    const uri = params.textDocument.uri;
+                    const project = state.getProjectForUri(uri) orelse {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
-                    const result_uri, const result_line = state.project.get_account_open_pos(account.slice) orelse {
+                    const account = state.findAccount(uri, params.position) orelse {
+                        try transport.writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
+                    const result_uri, const result_line = project.get_account_open_pos(account.slice) orelse {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
@@ -364,13 +489,17 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                 },
                 .@"textDocument/documentHighlight" => |params| {
                     const uri = params.textDocument.uri;
+                    const project = state.getProjectForUri(uri) orelse {
+                        try transport.writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
                     const account = state.findAccount(uri, params.position) orelse {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
                     var highlights = std.ArrayList(lsp.types.DocumentHighlight){};
                     defer highlights.deinit(alloc);
-                    var iter = state.project.accountIterator(uri);
+                    var iter = project.accountIterator(uri);
                     while (iter.next()) |next| {
                         if (std.mem.eql(u8, next.token.slice, account.slice)) {
                             try highlights.append(alloc, .{
@@ -395,6 +524,10 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                 },
                 .@"textDocument/rename" => |params| {
                     const uri = params.textDocument.uri;
+                    const project = state.getProjectForUri(uri) orelse {
+                        try transport.writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
                     const account = state.findAccount(uri, params.position) orelse {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
@@ -407,7 +540,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         map.deinit();
                     }
 
-                    var iter = state.project.accountIterator(null);
+                    var iter = project.accountIterator(null);
                     while (iter.next()) |next| {
                         const token = next.token;
                         if (std.mem.eql(u8, token.slice, account.slice)) {
@@ -425,7 +558,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
 
                     var map_iter = map.iterator();
                     while (map_iter.next()) |kv| {
-                        const file_uri = state.project.uris.items[kv.key_ptr.*];
+                        const file_uri = project.uris.items[kv.key_ptr.*];
                         try changes.map.put(alloc, file_uri.value, kv.value_ptr.items);
                     }
 
@@ -433,11 +566,15 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                 },
                 .@"textDocument/semanticTokens/full" => |params| {
                     const uri = params.textDocument.uri;
-                    const file = state.project.files_by_uri.get(uri) orelse {
+                    const project = state.getProjectForUri(uri) orelse {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
-                    const tokens = state.project.files.items[file].tokens;
+                    const file = project.files_by_uri.get(uri) orelse {
+                        try transport.writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
+                    const tokens = project.files.items[file].tokens;
                     var data = try semantic_tokens.tokensToData(alloc, tokens.items);
                     defer data.deinit(alloc);
                     try transport.writeResponse(alloc, request.id, lsp.types.SemanticTokens, .{ .data = data.items }, .{});
@@ -449,8 +586,36 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     try state.sendDiagnostics(alloc, transport);
                 },
                 .exit => return,
+                .@"workspace/didChangeWorkspaceFolders" => |params| {
+                    for (params.event.added) |folder| {
+                        state.addWorkspaceFolder(folder) catch |err| {
+                            std.log.err("Failed to add workspace folder '{s}': {s}", .{ folder.name, @errorName(err) });
+                        };
+                    }
+                    for (params.event.removed) |folder| {
+                        state.removeWorkspaceFolder(folder);
+                    }
+                    state.logOpenProjects();
+                    try state.sendDiagnostics(alloc, transport);
+                },
+                .@"textDocument/didOpen" => |params| {
+                    const uri = params.textDocument.uri;
+
+                    if (state.getProjectForUri(uri) == null) {
+                        var owned_uri = try Uri.from_raw(alloc, uri);
+                        defer owned_uri.deinit(alloc);
+                        try state.openProjectByRootUri(owned_uri);
+                        state.logOpenProjects();
+                        try state.sendDiagnostics(alloc, transport);
+                    }
+                },
                 .@"textDocument/didChange" => |params| {
                     const uri = params.textDocument.uri;
+                    var project = state.getProjectForUri(uri) orelse {
+                        std.log.warn("No project found for file {s}", .{uri});
+                        continue :loop;
+                    };
+
                     std.debug.assert(params.contentChanges.len == 1);
                     const text = switch (params.contentChanges[0]) {
                         .literal_1 => |lit| lit.text,
@@ -458,10 +623,14 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     };
                     // Make a null-terminated copy of text
                     const null_terminated = try alloc.dupeZ(u8, text);
-                    try state.project.update_file(uri, null_terminated);
+                    try project.update_file(uri, null_terminated);
                     std.log.debug("Updated file {s}", .{uri});
 
                     try state.sendDiagnostics(alloc, transport);
+                },
+                .@"textDocument/didClose" => |params| {
+                    state.closeProjectByRootUri(params.textDocument.uri);
+                    state.logOpenProjects();
                 },
                 .other => {},
             },
@@ -492,68 +661,6 @@ const InitResult = union(enum) {
     }
 };
 
-fn initialize(alloc: std.mem.Allocator, params: lsp.types.InitializeParams, state: *LspState) !InitResult {
-    // Check and store client capabilities
-    if (params.capabilities.general) |general| {
-        if (general.positionEncodings) |encodings| {
-            for (encodings) |encoding| {
-                if (encoding == .@"utf-16") state.clientCapabilities.utf16_position_encoding = true;
-            }
-        }
-        if (!state.clientCapabilities.utf16_position_encoding) return .{
-            .fail_message = try alloc.dupe(u8, "Client doesn't support utf-16 position encoding"),
-        };
-    } else return .{
-        .fail_message = try alloc.dupe(u8, "Client doesn't have general capabilities defined"),
-    };
-
-    // Load config
-    if (params.workspaceFolders == null) return .{
-        .fail_message = try alloc.dupe(u8, "No workspace folder"),
-    };
-    const workspace_folders = params.workspaceFolders.?;
-    if (workspace_folders.len != 1) return .{
-        .fail_message = try alloc.dupe(u8, "Expected one workspace folder"),
-    };
-    var root = workspace_folders[0].name;
-    std.log.debug("Workspace root: {s}", .{root});
-
-    const cwd = try std.process.getCwdAlloc(alloc);
-    defer alloc.free(cwd);
-    std.log.debug("Current working dir: {s}", .{cwd});
-
-    if (!std.fs.path.isAbsolute(root)) {
-        root = cwd;
-    }
-
-    std.log.debug("Looking for config in {s}", .{root});
-
-    const config = Config.load_from_dir(alloc, root) catch |err| switch (err) {
-        error.FileNotFound => return .{
-            .fail_message = try alloc.dupe(u8, "No config found. Make sure to put a `turbobean.config` file in the workspace folder"),
-        },
-        error.InvalidConfig => return .{
-            .fail_message = try alloc.dupe(u8, "Invalid config. The config should contain a line like `root = file.bean` where file.bean is relative to the workspace root"),
-        },
-        else => return .{
-            .fail_message = try std.fmt.allocPrint(alloc, "Error: {s}", .{@errorName(err)}),
-        },
-    };
-    defer config.deinit(alloc);
-
-    std.log.debug("Loaded config: {any}", .{config});
-    state.initialize(alloc, config.root) catch |err| switch (err) {
-        error.FileNotFound => return .{
-            .fail_message = try std.fmt.allocPrint(alloc, "Could not open `{s}` defined in your `turbobean.config` file", .{config.root}),
-        },
-        else => return .{
-            .fail_message = try std.fmt.allocPrint(alloc, "Error: {s}", .{@errorName(err)}),
-        },
-    };
-
-    return .{ .success = {} };
-}
-
 const Message = lsp.Message(RequestMethods, NotificationMethods, .{});
 
 const RequestMethods = union(enum) {
@@ -572,9 +679,10 @@ const RequestMethods = union(enum) {
 const NotificationMethods = union(enum) {
     initialized: lsp.types.InitializedParams,
     exit,
-    // @"textDocument/didOpen": lsp.types.DidOpenTextDocumentParams,
+    @"workspace/didChangeWorkspaceFolders": lsp.types.DidChangeWorkspaceFoldersParams,
+    @"textDocument/didOpen": lsp.types.DidOpenTextDocumentParams,
     @"textDocument/didChange": lsp.types.DidChangeTextDocumentParams,
-    // @"textDocument/didClose": lsp.types.DidCloseTextDocumentParams,
+    @"textDocument/didClose": lsp.types.DidCloseTextDocumentParams,
     other: lsp.MethodWithParams,
 };
 

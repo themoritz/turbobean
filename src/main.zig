@@ -7,6 +7,7 @@ const number = @import("number.zig");
 const Data = @import("data.zig");
 const parser = @import("parser.zig");
 const Project = @import("project.zig");
+const Uri = @import("Uri.zig");
 
 const lsp = @import("lsp.zig");
 const server = @import("server.zig");
@@ -64,7 +65,10 @@ pub fn main() !void {
         return;
     }
 
-    var project = try Project.load(alloc, first_arg);
+    var uri = try Uri.from_relative_to_cwd(alloc, first_arg);
+    defer uri.deinit(alloc);
+
+    var project = try Project.load(alloc, uri);
     defer project.deinit();
 
     if (project.hasErrors()) try project.printErrors();
