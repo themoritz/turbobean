@@ -1,0 +1,7 @@
+tests/golden/double_open.bean: [[31mError[0m] Account has already been opened
+
+    2 | 2025-11-22 open Assets:Foo
+                        [31m^^^^^^^^^^[0m
+
+Assets
+└ Foo

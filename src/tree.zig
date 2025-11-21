@@ -57,14 +57,15 @@ pub fn deinit(self: *Self) void {
     self.nodes.deinit(self.alloc);
 }
 
+/// Returns null if the account is already open.
 pub fn open(
     self: *Self,
     name: []const u8,
     currencies: ?[][]const u8,
     booking_method: ?BookingMethod,
-) !u32 {
+) !?u32 {
     if (self.node_by_name.contains(name)) {
-        return error.AccountExists;
+        return null;
     }
 
     var current_index: u32 = 0; // Start from root
@@ -160,7 +161,7 @@ pub fn postInventory(self: *Self, date: Date, posting: Data.Posting) !void {
 }
 
 pub fn clearEarnings(self: *Self, to_account: []const u8) !void {
-    const to_index = self.node_by_name.get(to_account) orelse try self.open(to_account, null, null);
+    const to_index = self.node_by_name.get(to_account) orelse (try self.open(to_account, null, null)).?;
 
     var iter = self.node_by_name.iterator();
     while (iter.next()) |kv| {

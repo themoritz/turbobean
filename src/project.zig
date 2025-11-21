@@ -270,7 +270,9 @@ pub fn check(self: *Self) !void {
                     data.currencies.items[c.start..c.end]
                 else
                     null;
-                _ = try tree.open(open.account.slice, currencies, open.booking_method);
+                if (try tree.open(open.account.slice, currencies, open.booking_method) == null) {
+                    try self.addError(open.account, sorted.file, ErrorDetails.Tag.account_already_open);
+                }
             },
             .close => |close| {
                 tree.close(close.account.slice) catch |err| switch (err) {

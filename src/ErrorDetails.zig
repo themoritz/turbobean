@@ -39,6 +39,7 @@ pub const Tag = enum {
     tx_multiple_solutions,
 
     account_not_open,
+    account_already_open,
     multiple_pads,
     balance_assertion_failed,
 
@@ -75,6 +76,7 @@ pub const Tag = enum {
             .tx_division_by_zero => "Division by zero while balancing transaction",
             .tx_multiple_solutions => "Transaction can't be balanced unambiguously",
             .account_not_open => "Account is not open or has been closed. Open it with an open entry",
+            .account_already_open => "Account has already been opened",
             .multiple_pads => "Multiple pads of the same account. You need to have a balance assertion between pads",
             .balance_assertion_failed => "Balance assertion failed",
             .account_does_not_hold_currency => "Cannot post this currency to this account. Check open declaration.",
