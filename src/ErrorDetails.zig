@@ -32,6 +32,7 @@ pub const Tag = enum {
     tag_not_pushed,
     meta_not_pushed,
 
+    tx_balance_no_currency,
     tx_does_not_balance,
     tx_no_solution,
     tx_too_many_variables,
@@ -70,6 +71,7 @@ pub const Tag = enum {
             .meta_already_pushed => "Key already pushed",
             .tag_not_pushed => "Tag has not been pushed before",
             .meta_not_pushed => "Key has not been pushed before",
+            .tx_balance_no_currency => "No currency to pick to balance transaction",
             .tx_does_not_balance => "Transaction does not balance",
             .tx_no_solution => "Transaction can't be balanced",
             .tx_too_many_variables => "Transaction can't be balanced unambiguously",

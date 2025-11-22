@@ -348,8 +348,9 @@ pub fn balanceTransactions(self: *Self) !void {
 
                         try solver.addTriple(price, number, currency);
                     }
-                    solver.solve() catch |err| {
+                    _ = solver.solve() catch |err| {
                         const tag: ErrorDetails.Tag = switch (err) {
+                            error.NoCurrency => .tx_balance_no_currency,
                             error.DoesNotBalance => .tx_does_not_balance,
                             error.NoSolution => .tx_no_solution,
                             error.TooManyVariables => .tx_too_many_variables,

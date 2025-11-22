@@ -1,0 +1,5 @@
+tests/golden/balance_single.bean: [[31mError[0m] No currency to pick to balance transaction
+
+    1 | 2025-11-21 txn "Balance"
+        [31m^^^^^^^^^^[0m
+

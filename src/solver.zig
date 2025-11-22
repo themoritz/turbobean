@@ -59,14 +59,12 @@ const Solution = struct {
     num_number_vars: usize,
     num_currency_vars: usize,
 
-    pub fn format(self: Solution, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: Solution, writer: *std.Io.Writer) !void {
         for (0..self.num_number_vars) |i| {
-            try std.fmt.format(writer, "{d} -> {any}, ", .{ i, self.numbers[i] });
+            try writer.print("{d} -> {f}, ", .{ i, self.numbers[i] });
         }
         for (0..self.num_currency_vars) |i| {
-            try std.fmt.format(writer, "{d} -> {s}, ", .{ i, self.currencies[i] });
+            try writer.print("{d} -> {s}, ", .{ i, self.currencies[i] });
         }
     }
 
@@ -163,15 +161,18 @@ pub const Solver = struct {
     }
 
     pub const SolverError = error{
+        NoCurrency,
         NoSolution,
         MultipleSolutions,
     } || TryAssignmentError;
 
     /// The solver can be reused after this. There is no need to allocate a new one
     /// for each tx that needs balancing.
-    pub fn solve(p: *Solver) SolverError!void {
+    pub fn solve(p: *Solver) SolverError!Solution {
         defer p.clear();
         var assignment: Assignment = .{0} ** MAX_UNKNOWNS;
+
+        if (p.num_currencies == 0) return error.NoCurrency;
 
         var err: ?TryAssignmentError = null;
         var prev_solution: ?Solution = null;
@@ -210,6 +211,7 @@ pub const Solver = struct {
                 if (triple.number.variable) |v| triple.number.number.* = s.numbers[v];
                 if (triple.currency.variable) |v| triple.currency.currency.* = s.currencies[v];
             }
+            return s;
         } else if (err) |e| {
             return e;
         } else {
@@ -341,7 +343,7 @@ test "plain balance" {
     try p.addTriple(&one, &five, &eur);
     try p.addTriple(&one, &neg_five, &eur);
 
-    try p.solve();
+    _ = try p.solve();
 }
 
 test "currency solution" {
@@ -368,7 +370,7 @@ test "currency solution" {
     try p.addTriple(&one, &three, &usd);
     try p.addTriple(&one, &neg_three, &c2);
 
-    try p.solve();
+    _ = try p.solve();
     try std.testing.expectEqualStrings("EUR", c1.?);
     try std.testing.expectEqualStrings("USD", c2.?);
 }
@@ -395,7 +397,7 @@ test "number solution" {
     try p.addTriple(&one, &six, &usd);
     try p.addTriple(&n2, &three, &usd);
 
-    try p.solve();
+    _ = try p.solve();
     try std.testing.expectEqual(Number.fromFloat(-6), n1.?);
     try std.testing.expectEqual(Number.fromFloat(-2), n2.?);
 }
@@ -417,7 +419,7 @@ test "combined solution" {
     try p.addTriple(&one, &six, &eur);
     try p.addTriple(&one, &n1, &c1);
 
-    try p.solve();
+    _ = try p.solve();
     try std.testing.expectEqualStrings("EUR", c1.?);
     try std.testing.expectEqual(Number.fromFloat(-6), n1.?);
 }
@@ -484,4 +486,36 @@ test "does not balance" {
 
     const s = p.solve();
     try std.testing.expectError(error.DoesNotBalance, s);
+}
+
+test "single no currency" {
+    const alloc = std.testing.allocator;
+    var p = Solver.init(alloc);
+    defer p.deinit();
+
+    var n1: ?Number = null;
+    var one: ?Number = Number.fromFloat(1);
+    var c1: ?[]const u8 = null;
+
+    try p.addTriple(&n1, &one, &c1);
+
+    const s = p.solve();
+    try std.testing.expectError(error.NoCurrency, s);
+}
+
+test "single zero" {
+    const alloc = std.testing.allocator;
+    var p = Solver.init(alloc);
+    defer p.deinit();
+
+    var n1: ?Number = null;
+    var one: ?Number = Number.fromFloat(1);
+
+    var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
+    defer alloc.free(eur.?);
+
+    try p.addTriple(&n1, &one, &eur);
+
+    _ = try p.solve();
+    try std.testing.expectEqual(Number.zero(), n1.?);
 }

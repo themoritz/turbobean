@@ -134,6 +134,9 @@ fn loadSingleFile(self: *Self, uri: Uri, is_root: bool) !Data.Imports.Slice {
     const null_terminated = try uri_owned.load_nullterminated(self.alloc);
 
     var data, const imports = try Data.loadSource(self.alloc, uri_owned, null_terminated, is_root);
+    errdefer data.deinit();
+    errdefer self.alloc.free(imports);
+
     try data.balanceTransactions();
 
     try self.files.append(self.alloc, data);
