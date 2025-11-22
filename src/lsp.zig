@@ -336,7 +336,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                             .contents = .{
                                 .MarkupContent = lsp.types.MarkupContent{
                                     .kind = lsp.types.MarkupKind.plaintext,
-                                    .value = value.writer.buffer,
+                                    .value = value.written(),
                                 },
                             },
                             .range = tokenRange(account),
