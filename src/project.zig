@@ -304,8 +304,12 @@ pub fn check(self: *Self) !void {
             },
             .balance => |balance| {
                 const accumulated = tree.balanceAggregatedByAccount(balance.account.slice, balance.amount.currency.?) catch |err| switch (err) {
-                    error.AccountDoesNotExist => {
+                    error.AccountNotOpen => {
                         try self.addError(balance.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                        continue;
+                    },
+                    error.DoesNotHoldCurrency => {
+                        try self.addError(balance.account, sorted.file, ErrorDetails.Tag.account_does_not_hold_currency);
                         continue;
                     },
                     else => return err,

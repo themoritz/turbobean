@@ -1,0 +1,15 @@
+2025-11-21 open Assets:Foo USD
+2025-11-21 open Expenses:Bar
+
+2025-11-22 *
+  Assets:Foo  1 USD
+  Expenses:Bar
+
+2025-11-23 balance Assets  -1 USD
+2025-11-23 balance Assets:Foo  1 EUR
+
+; This is fine because the required precision is so low:
+2025-11-23 balance Assets:Foo  2 USD
+
+; This fails because we require a higher precision:
+2025-11-23 balance Assets:Foo  1.2 USD

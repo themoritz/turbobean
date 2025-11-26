@@ -187,7 +187,7 @@ pub const LotsInventory = struct {
     pub fn init(
         alloc: Allocator,
         booking_method: BookingMethod,
-        currencies: ?[][]const u8,
+        currencies: ?[]const []const u8,
     ) !LotsInventory {
         if (currencies) |cs| {
             var by_currency = std.StringHashMap(Lots).init(alloc);
@@ -277,7 +277,7 @@ pub const LotsInventory = struct {
         if (self.by_currency.get(currency)) |lots| {
             return lots.balance();
         } else {
-            return error.CurrencyDoesNotExist;
+            return if (self.restricted) error.DoesNotHoldCurrency else Number.zero();
         }
     }
 
@@ -311,7 +311,7 @@ pub const PlainInventory = struct {
     restricted: bool,
     by_currency: std.StringHashMap(Number),
 
-    pub fn init(alloc: Allocator, currencies: ?[][]const u8) !PlainInventory {
+    pub fn init(alloc: Allocator, currencies: ?[]const []const u8) !PlainInventory {
         if (currencies) |cs| {
             var by_currency = std.StringHashMap(Number).init(alloc);
             for (cs) |c| try by_currency.put(c, Number.zero());
@@ -382,7 +382,7 @@ pub const Inventory = union(enum) {
     plain: PlainInventory,
     lots: LotsInventory,
 
-    pub fn init(alloc: Allocator, booking_method: ?BookingMethod, currencies: ?[][]const u8) !Inventory {
+    pub fn init(alloc: Allocator, booking_method: ?BookingMethod, currencies: ?[]const []const u8) !Inventory {
         if (booking_method) |b| {
             return .{
                 .lots = try LotsInventory.init(alloc, b, currencies),

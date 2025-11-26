@@ -1,0 +1,20 @@
+Balance assertion failed: Expected 1.2, accumulated 1
+tests/golden/balance_assertion.bean: [[31mError[0m] Account is not open or has been closed. Open it with an open entry
+
+    8 | 2025-11-23 balance Assets  -1 USD
+                           [31m^^^^^^[0m
+
+tests/golden/balance_assertion.bean: [[31mError[0m] The account does not hold this currency. Check open declaration.
+
+    9 | 2025-11-23 balance Assets:Foo  1 EUR
+                           [31m^^^^^^^^^^[0m
+
+tests/golden/balance_assertion.bean: [[31mError[0m] Balance assertion failed
+
+   15 | 2025-11-23 balance Assets:Foo  1.2 USD
+        [31m^^^^^^^^^^[0m
+
+Assets     1 USD
+└ Foo      1 USD
+Expenses   -1 USD
+└ Bar      -1 USD

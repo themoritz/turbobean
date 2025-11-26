@@ -61,7 +61,7 @@ pub fn deinit(self: *Self) void {
 pub fn open(
     self: *Self,
     name: []const u8,
-    currencies: ?[][]const u8,
+    currencies: ?[]const []const u8,
     booking_method: ?BookingMethod,
 ) !?u32 {
     if (self.node_by_name.contains(name)) {
@@ -207,22 +207,36 @@ pub fn balanceAggregatedByAccount(
     account: []const u8,
     currency: []const u8,
 ) !Number {
-    const node = self.node_by_name.get(account) orelse self.findNode(account) orelse return error.AccountDoesNotExist;
+    const node = self.node_by_name.get(account) orelse return error.AccountNotOpen;
     return self.balanceAggregatedByNode(node, currency);
 }
 
 pub fn balanceAggregatedByNode(self: *const Self, node: u32, currency: []const u8) !Number {
     var result = Number.zero();
     var stack: Stack = .{};
+    var catch_error = false;
 
     try stack.push(node);
     while (stack.len > 0) {
         const index = stack.pop();
         var n = self.nodes.items[index];
-        result = result.add(try n.inventory.balance(currency));
+
+        const balance = n.inventory.balance(currency) catch |err| if (catch_error)
+            switch (err) {
+                error.DoesNotHoldCurrency => Number.zero(),
+                else => return err,
+            }
+        else
+            return err;
+
+        result = result.add(balance);
         for (n.children.items) |child| {
             try stack.push(child);
         }
+
+        // For descendants we catch the DoesNotHoldCurrency error because they
+        // are not the account being queried.
+        catch_error = true;
     }
     return result;
 }
@@ -444,4 +458,28 @@ test "isDescendant" {
     try std.testing.expect(try tree.isDescendant("Assets:Currency:Chase", "Assets:Currency:Chase"));
     try std.testing.expect(try tree.isDescendant("Assets", "Assets:Currency:Chase"));
     try std.testing.expect(!try tree.isDescendant("Income:Dividends", "Assets:Currency:Chase"));
+}
+
+test "balanceAggregatedByAccount" {
+    var tree = try Self.init(std.testing.allocator);
+    defer tree.deinit();
+
+    _ = try tree.open("Assets:Foo", &.{"NZD"}, null);
+    _ = try tree.open("Assets:Foo:Bar", &.{"EUR"}, null);
+    _ = try tree.open("Assets:Baz", null, null);
+
+    try tree.addPosition("Assets:Foo", "NZD", Number.fromInt(1));
+    try tree.addPosition("Assets:Foo:Bar", "EUR", Number.fromInt(2));
+    try tree.addPosition("Assets:Baz", "USD", Number.fromInt(3));
+
+    try std.testing.expectEqual(Number.fromFloat(2), try tree.balanceAggregatedByAccount("Assets:Foo:Bar", "EUR"));
+    try std.testing.expectError(error.DoesNotHoldCurrency, tree.balanceAggregatedByAccount("Assets:Foo:Bar", "USD"));
+
+    try std.testing.expectEqual(Number.fromFloat(1), try tree.balanceAggregatedByAccount("Assets:Foo", "NZD"));
+    try std.testing.expectError(error.DoesNotHoldCurrency, tree.balanceAggregatedByAccount("Assets:Foo", "USD"));
+
+    try std.testing.expectEqual(Number.fromFloat(3), try tree.balanceAggregatedByAccount("Assets:Baz", "USD"));
+    try std.testing.expectEqual(Number.fromFloat(0), try tree.balanceAggregatedByAccount("Assets:Baz", "EUR"));
+
+    try std.testing.expectError(error.AccountNotOpen, tree.balanceAggregatedByAccount("Assets", "USD"));
 }
