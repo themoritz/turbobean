@@ -1,0 +1,13 @@
+{
+  "name": "turbobean-puppeteer-tests",
+  "version": "1.0.0",
+  "description": "Puppeteer-based integration tests for turbobean server",
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "test:headful": "HEADLESS=false bun test"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.0.0"
+  }
+}

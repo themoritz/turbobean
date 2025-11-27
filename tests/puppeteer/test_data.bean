@@ -1,0 +1,38 @@
+option "operating_currency" "EUR"
+
+2024-01-01 open Assets:Checking USD
+2024-01-01 open Assets:Savings USD
+2024-01-01 open Liabilities:CreditCard USD
+2024-01-01 open Equity:Opening USD
+2024-01-01 open Income:Salary USD
+2024-01-01 open Expenses:Groceries USD
+2024-01-01 open Expenses:Rent USD
+
+; Initial equity
+2024-01-02 txn "Opening balances"
+  Assets:Checking        1000.00 USD
+  Assets:Savings         5000.00 USD
+  Equity:Opening
+
+; Income transaction
+2024-01-15 txn "Salary"
+  Assets:Checking        3000.00 USD
+  Income:Salary
+
+; Expense transactions
+2024-01-16 txn "Rent payment"
+  Assets:Checking       -1200.00 USD
+  Expenses:Rent
+
+2024-01-18 txn "Groceries"
+  Assets:Checking        -150.00 USD
+  Expenses:Groceries
+
+2024-01-20 txn "Credit card payment"
+  Assets:Checking        -500.00 USD
+  Liabilities:CreditCard
+
+; More expenses
+2024-01-25 txn "Groceries"
+  Assets:Checking        -120.00 USD
+  Expenses:Groceries

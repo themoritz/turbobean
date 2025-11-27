@@ -35,6 +35,17 @@ jobs:
           zig build
           echo "$(pwd)/zig-out/bin" >> "$GITHUB_PATH"
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Puppeteer tests
+        run: |
+          cd tests/puppeteer
+          bun install
+          bun test
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
