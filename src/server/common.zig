@@ -62,7 +62,6 @@ pub fn SseHandler(comptime T: type, comptime Ctx: type) type {
 
             var json = std.Io.Writer.Allocating.init(alloc);
             defer json.deinit();
-            var stringify = std.json.Stringify{ .writer = &json.writer };
 
             var listener = state.broadcast.newListener();
 
@@ -85,6 +84,7 @@ pub fn SseHandler(comptime T: type, comptime Ctx: type) type {
                     );
                     defer alloc.free(plot_data);
 
+                    var stringify = std.json.Stringify{ .writer = &json.writer };
                     try stringify.write(plot_data);
                 }
 
