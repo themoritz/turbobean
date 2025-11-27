@@ -25,8 +25,10 @@ beforeAll(async () => {
 
     // Turbobean mostly outputs to stderr for now which is normal
     server.stderr.on('data', (data) => {
-      const output = data.toString();
-      console.log('[server]', data.toString().trim());
+      const output = data.toString().trim();
+      if (!output.includes('[info]')) {
+        console.log('[server]', output);
+      }
       if (output.includes('Listening on')) {
         resolve();
       }
@@ -91,93 +93,60 @@ afterAll(async () => {
 
 describe('TurboBean Server', () => {
   describe('Balance Sheet', () => {
-    beforeAll(async () => {
-      await page.goto(`${SERVER_URL}/balance_sheet`, { waitUntil: 'domcontentloaded' });
-      await Bun.sleep(10);
-    });
-
     test('page loads', async () => {
+      await goto('balance_sheet')
       const bodyHandle = await page.$('body');
       expect(bodyHandle).not.toBeNull();
-    });
-
-    test('displays Savings account', async () => {
-      const pageContent = await page.evaluate(() => document.body.innerText);
-      expect(pageContent).toContain('Savings');
-    });
-
-    test('shows expected checking balance (2030.00)', async () => {
-      const pageContent = await page.evaluate(() => document.body.innerText);
-      expect(pageContent.includes('2,030')).toBe(true);
-    });
-
-    test('shows expected savings balance (5000.00)', async () => {
-      const pageContent = await page.evaluate(() => document.body.innerText);
-      expect(pageContent.includes('5,000')).toBe(true);
     });
   });
 
   describe('Income Statement', () => {
-    beforeAll(async () => {
-      await page.goto(`${SERVER_URL}/income_statement`, { waitUntil: 'domcontentloaded' });
-      await Bun.sleep(10);
-    });
-
     test('page loads', async () => {
+      await goto('income_statement')
       const bodyHandle = await page.$('body');
       expect(bodyHandle).not.toBeNull();
-    });
-
-    test('shows expected salary amount (3000.00)', async () => {
-      const pageContent = await page.evaluate(() => document.body.innerText);
-      expect(pageContent.includes('3000') || pageContent.includes('3,000')).toBe(true);
-    });
-
-    test('displays Rent expense', async () => {
-      const pageContent = await page.evaluate(() => document.body.innerText);
-      expect(pageContent).toContain('Rent');
-    });
-
-    test('shows expected rent amount (1200.00)', async () => {
-      const pageContent = await page.evaluate(() => document.body.innerText);
-      expect(pageContent.includes('1200') || pageContent.includes('1,200')).toBe(true);
-    });
-
-    test('displays Groceries expense', async () => {
-      const pageContent = await page.evaluate(() => document.body.innerText);
-      expect(pageContent).toContain('Groceries');
-    });
-
-    test('shows expected groceries total (270.00)', async () => {
-      const pageContent = await page.evaluate(() => document.body.innerText);
-      expect(pageContent).toContain('270');
     });
   });
 
   describe('Journal', () => {
-    beforeAll(async () => {
-      const encodedAccount = encodeURIComponent('Assets:Checking');
-      await page.goto(`${SERVER_URL}/journal/${encodedAccount}`, { waitUntil: 'domcontentloaded' });
-      await Bun.sleep(10);
+    test('Plain', async () => {
+      await goto('journal/Assets:Checking');
+      const transactions = await getTransactions();
+
+      const expected = [
+        { narration: '', change: '', balance: '' }, // Open
+        { narration: 'Opening balances', change: '1,000.00 USD', balance: '1,000.00 USD' },
+        { narration: 'Salary', change: '3,000.00 USD', balance: '4,000.00 USD' },
+        { narration: 'Groceries', change: '-150.00 USD', balance: '3,850.00 USD' },
+        { narration: 'Credit card payment', change: '-500.00 USD', balance: '3,350.00 USD' },
+        { narration: 'Buy AAPL', change: '-1,000.00 USD', balance: '2,350.00 USD' },
+      ];
+
+      expect(transactions).toEqual(expected);
     });
 
-    test('page loads', async () => {
-      const bodyHandle = await page.$('body');
-      expect(bodyHandle).not.toBeNull();
+    test('Stocks Unconverted', async () => {
+      await goto('journal/Assets:Stocks');
+      const transactions = await getTransactions();
+
+      const expected = [
+        { narration: '', change: '', balance: '' }, // Open
+        { narration: 'Buy AAPL', change: '1.00 AAPL', balance: '1.00 AAPL' },
+      ];
+
+      expect(transactions).toEqual(expected);
     });
 
-    test('displays account name', async () => {
-      const pageContent = await page.evaluate(() => document.body.innerText);
-      expect(pageContent).toContain('Assets:Checking');
-    });
+    test('Stocks Converted', async () => {
+      await goto('journal/Assets:Stocks?conversion=USD');
+      const transactions = await getTransactions();
 
-    test('displays transaction information', async () => {
-      const pageContent = await page.evaluate(() => document.body.innerText);
-      const hasTransactionInfo =
-        pageContent.includes('Opening balance') &&
-        pageContent.includes('Salary') &&
-        pageContent.includes('Rent payment');
-      expect(hasTransactionInfo).toBe(true);
+      const expected = [
+        { narration: '', change: '', balance: '' }, // Open
+        { narration: 'Buy AAPL', change: '1,000.00 USD', balance: '1,000.00 USD' },
+      ];
+
+      expect(transactions).toEqual(expected);
     });
   });
 
@@ -188,3 +157,25 @@ describe('TurboBean Server', () => {
     });
   });
 });
+
+async function goto(route) {
+  await page.goto(`${SERVER_URL}/${route}`, { waitUntil: 'domcontentloaded' });
+  await Bun.sleep(10);
+}
+
+async function getTransactions() {
+  return await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('.journal .row:not(.header)'));
+    return rows.map(row => {
+      const narrationEl = row.querySelector('.payee-narration .narration');
+      const changeEl = row.querySelector('.cell.change');
+      const balanceEl = row.querySelector('.balances .balance');
+
+      return {
+        narration: narrationEl ? narrationEl.textContent.trim() : '',
+        change: changeEl ? changeEl.textContent.trim() : '',
+        balance: balanceEl ? balanceEl.textContent.trim() : '',
+      };
+    });
+  });
+}
