@@ -679,8 +679,10 @@ pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !vo
     const index = self.files_by_uri.get(uri_value) orelse return error.FileNotFound;
     const data = &self.files.items[index];
 
+    const is_root = index == 0;
+
     const uri = self.uris.items[index];
-    var new_data, const imports = try Data.loadSource(self.alloc, uri, source, false);
+    var new_data, const imports = try Data.loadSource(self.alloc, uri, source, is_root);
     defer self.alloc.free(imports);
     // TODO: Do something with imports
     try new_data.balanceTransactions();
