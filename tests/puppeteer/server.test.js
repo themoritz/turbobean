@@ -160,7 +160,7 @@ describe('TurboBean Server', () => {
 
 async function goto(route) {
   await page.goto(`${SERVER_URL}/${route}`, { waitUntil: 'domcontentloaded' });
-  await Bun.sleep(10);
+  await Bun.sleep(100);
 }
 
 async function getTransactions() {
