@@ -1,6 +1,9 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { Position, TextDocument, DiagnosticSeverity } from 'vscode';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+
 
 suite('LSP', () => {
     let doc: vscode.TextDocument;
@@ -9,147 +12,109 @@ suite('LSP', () => {
         doc = await openDoc('main.bean');
     });
 
-    test('Hover', async function() {
-        // Assets:Checking
-        await testHover(doc, new Position(10, 4), (contents) => {
-            assertContains('100.10', contents);
-            assertContains('200.20', contents);
-        });
+    test('Hover on Assets:Checking', async function() {
+        const pos = findInLine(doc, 10, 'Assets:Checking');
+        await moveTo(doc, pos);
+        const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+            'vscode.executeHoverProvider',
+            doc.uri,
+            pos
+        );
+        await assertGolden('hover-assets-checking', formatHover(hovers));
     });
 
-    test('Highlight', async function() {
-        // Assets:Checking
-        await testHighlight(doc, new Position(10, 4), [
-            toRange(7, 16, 31),
-            toRange(10, 4, 19),
-            toRange(14, 4, 19),
-            toRange(18, 4, 19),
-            toRange(22, 4, 19),
-            toRange(26, 4, 19),
-        ]);
+    test('Highlight Assets:Checking', async function() {
+        const pos = findInLine(doc, 10, 'Assets:Checking');
+        await moveTo(doc, pos);
+        const highlights = await vscode.commands.executeCommand<vscode.DocumentHighlight[]>(
+            'vscode.executeDocumentHighlights',
+            doc.uri,
+            pos
+        );
+        await assertGolden('highlight-assets-checking', formatHighlights(doc, highlights));
+    });
 
-        // Equity:Ope𝄞ning-Balances
-        await testHighlight(doc, new Position(2, 30), [
-            toRange(2, 29, 54),
-            toRange(3, 16, 41),
-            toRange(30, 26, 51),
-            toRange(34, 26, 51),
-        ]);
+    test('Highlight Equity:Ope𝄞ning-Balances', async function() {
+        const pos = findInLine(doc, 2, 'Equity:Ope𝄞ning-Balances');
+        await moveTo(doc, pos);
+        const highlights = await vscode.commands.executeCommand<vscode.DocumentHighlight[]>(
+            'vscode.executeDocumentHighlights',
+            doc.uri,
+            pos
+        );
+        await assertGolden('highlight-equity-opening-balances', formatHighlights(doc, highlights));
     });
 
     test('Diagnostics', async function() {
-        testDiagnostics(doc, [
-            {
-                prefix: "Flagged",
-                range: toRange(9, 11, 12),
-                severity: DiagnosticSeverity.Warning
-            },
-        ]);
+        const diagnostics = vscode.languages.getDiagnostics(doc.uri);
+        await assertGolden('diagnostics', formatDiagnostics(doc, diagnostics));
     });
 
     test('Jump to definition', async function() {
-        await testJumpToDefinition(doc, new Position(10, 4), 'open.bean', 0, 0);
+        const pos = findInLine(doc, 10, 'Assets:Checking');
+        const result = await vscode.commands.executeCommand<vscode.Location[]>(
+            'vscode.executeDefinitionProvider',
+            doc.uri,
+            pos
+        );
+        assert.equal(result.length, 1);
+        const formatted = await formatJumpToDefinition(result[0]);
+        await assertGolden('jump-to-definition', formatted);
     });
 
-    test('Autocomplete', async function() {
-        // Links
-        await testAutocomplete(doc, new Position(0, 1), "^", 0, 1, [
+    test('Autocomplete links', async function() {
+        const result = await vscode.commands.executeCommand<vscode.CompletionList>(
+            'vscode.executeCompletionItemProvider',
+            doc.uri,
+            new Position(0, 1),
+            '^'
+        );
+        assert.ok(result);
+        const actual = result.items.map(item => String(item.label));
+        const expected = [
             '^link',
             '^link1',
             '^link2',
             '^mylink'
-        ]);
-        // Tags
-        await testAutocomplete(doc, new Position(0, 1), "#", 0, 1, [
+        ];
+        assert.deepStrictEqual(actual, expected);
+    });
+
+    test('Autocomplete tags', async function() {
+        const result = await vscode.commands.executeCommand<vscode.CompletionList>(
+            'vscode.executeCompletionItemProvider',
+            doc.uri,
+            new Position(0, 1),
+            '#'
+        );
+        assert.ok(result);
+        const actual = result.items.map(item => String(item.label));
+        const expected = [
             '#tag',
             '#tag2'
-        ]);
-        // Accounts
-        await testAutocomplete(doc, new Position(1, 1), null, 0, 0, [
+        ];
+        assert.deepStrictEqual(actual, expected);
+    });
+
+    test('Autocomplete accounts', async function() {
+        const result = await vscode.commands.executeCommand<vscode.CompletionList>(
+            'vscode.executeCompletionItemProvider',
+            doc.uri,
+            new Position(1, 1),
+            null
+        );
+        assert.ok(result);
+        const actual = result.items.map(item => String(item.label));
+        const expected = [
             'Assets:Checking',
             'Assets:Foo',
             'Equity:Ope𝄞ning-Balances',
             'Expenses:Food'
-        ]);
-        await testAutocomplete(doc, new Position(7, 20), null, 16, 31, [
-            'Assets:Checking',
-            'Assets:Foo',
-            'Equity:Ope𝄞ning-Balances',
-            'Expenses:Food'
-        ]);
+        ];
+        assert.deepStrictEqual(actual, expected);
     });
 });
 
-async function testHover(doc: TextDocument, pos: Position, check: (contents: string) => void) {
-    await moveTo(doc, pos);
-    const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
-        'vscode.executeHoverProvider',
-        doc.uri,
-        pos
-    );
-    assert.equal(hovers.length, 1);
-    const contents = hovers[0].contents
-        .map(c => (typeof c === 'string' ? c : c.value))
-        .join('\n');
-    check(contents);
-}
-
-async function testHighlight(doc: TextDocument, pos: Position, expectedRanges: vscode.Range[]) {
-    await moveTo(doc, pos);
-    const actualHighlights = await vscode.commands.executeCommand<vscode.DocumentHighlight[]>(
-        'vscode.executeDocumentHighlights',
-        doc.uri,
-        pos
-    );
-    assert.equal(actualHighlights.length, expectedRanges.length);
-    expectedRanges.forEach((expected, i) => {
-        const actual = actualHighlights[i].range;
-        assert.deepEqual(expected, actual);
-    });
-}
-
-function testDiagnostics(doc: TextDocument, expected: any[]) {
-    const diagnostics = vscode.languages.getDiagnostics(doc.uri);
-    assert.equal(diagnostics.length, expected.length);
-    expected.forEach((e, i) => {
-        const a = diagnostics[i];
-        assert.ok(a.message.startsWith(e.prefix), `"${a.message}" should start with "${e.prefix}"`);
-        assert.deepEqual(e.range, a.range);
-        assert.equal(e.severity, a.severity);
-    });
-}
-
-async function testJumpToDefinition(doc: TextDocument, pos: Position, file: string, line: number, char: number) {
-    const result = await vscode.commands.executeCommand<vscode.Location[]>(
-        'vscode.executeDefinitionProvider',
-        doc.uri,
-        pos
-    );
-    assert.equal(result.length, 1);
-    const path = result[0].uri.fsPath;
-    assert.ok(path.endsWith(file), `"${path}" should end with "${file}"`);
-    assert.equal(result[0].range.start.line, line);
-    assert.equal(result[0].range.start.character, char);
-}
-
-async function testAutocomplete(doc: TextDocument, pos: Position, trigger: string | null, exp_start: number, exp_end: number, expected: string[]) {
-    const result = await vscode.commands.executeCommand<vscode.CompletionList>(
-        'vscode.executeCompletionItemProvider',
-        doc.uri,
-        pos,
-        trigger,
-    );
-    if (!result) {
-        throw new Error('No result');
-    }
-    assert.equal(result.items.length, expected.length, JSON.stringify(result));
-    result.items.forEach((item, i) => {
-        const range = 'start' in item.range! ? item.range! : item.range!.inserting;
-        assert.equal(range.start.character, exp_start);
-        assert.equal(range.end.character, exp_end);
-        assert.equal(item.label, expected[i]);
-    });
-}
 
 async function sleep(ms: number = 10) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -170,12 +135,179 @@ async function moveTo(doc: TextDocument, position: Position) {
     await sleep();
 }
 
-function assertContains(needle: string, haystack: string) {
-    assert.ok(haystack.includes(needle), `Expected "${haystack}" to contain "${needle}"`);
+/**
+ * Find the position of text within a specific line (0-indexed).
+ * Returns the position at the start of the found text.
+ */
+function findInLine(doc: TextDocument, line: number, text: string): Position {
+    const lineText = doc.lineAt(line).text;
+    const index = lineText.indexOf(text);
+    if (index === -1) {
+        throw new Error(`Could not find "${text}" in line ${line + 1}: "${lineText}"`);
+    }
+    return new Position(line, index);
 }
 
-function toRange(line: number, sChar: number, eChar: number) {
-    const start = new vscode.Position(line, sChar);
-    const end = new vscode.Position(line, eChar);
-    return new vscode.Range(start, end);
+// ============================================================================
+// Golden Test Infrastructure
+// ============================================================================
+
+function formatHighlights(doc: TextDocument, highlights: vscode.DocumentHighlight[]): string {
+    // Group highlights by line
+    const lineMap = new Map<number, vscode.Range[]>();
+    for (const h of highlights) {
+        const line = h.range.start.line;
+        if (!lineMap.has(line)) {
+            lineMap.set(line, []);
+        }
+        lineMap.get(line)!.push(h.range);
+    }
+
+    const result: string[] = [];
+
+    for (let lineNum = 0; lineNum < doc.lineCount; lineNum++) {
+        const lineText = doc.lineAt(lineNum).text;
+        result.push(lineText);
+
+        // Add underline if this line has highlights
+        const ranges = lineMap.get(lineNum);
+        if (ranges) {
+            // Build underline string
+            const underline = new Array(lineText.length).fill(' ');
+            for (const range of ranges) {
+                for (let j = range.start.character; j < range.end.character; j++) {
+                    underline[j] = '-';
+                }
+            }
+            result.push(underline.join('').trimEnd());
+        }
+    }
+
+    return result.join('\n');
+}
+
+function formatDiagnostics(doc: TextDocument, diagnostics: vscode.Diagnostic[]): string {
+    if (diagnostics.length === 0) {
+        return '(no diagnostics)';
+    }
+
+    // Group by line
+    const byLine = new Map<number, vscode.Diagnostic[]>();
+    for (const d of diagnostics) {
+        const line = d.range.start.line;
+        if (!byLine.has(line)) {
+            byLine.set(line, []);
+        }
+        byLine.get(line)!.push(d);
+    }
+
+    const result: string[] = [];
+
+    for (let lineNum = 0; lineNum < doc.lineCount; lineNum++) {
+        const lineText = doc.lineAt(lineNum).text;
+        result.push(lineText);
+
+        // Add diagnostics if this line has any
+        const diags = byLine.get(lineNum);
+        if (diags) {
+            for (const d of diags) {
+                const arrows = ' '.repeat(d.range.start.character) + '^'.repeat(d.range.end.character - d.range.start.character);
+                const severity = d.severity === DiagnosticSeverity.Error ? 'Error' :
+                    d.severity === DiagnosticSeverity.Warning ? 'Warn' :
+                        d.severity === DiagnosticSeverity.Information ? 'Info' : 'Hint';
+                result.push(`${arrows} ${severity}: ${d.message}`);
+            }
+        }
+    }
+
+    return result.join('\n');
+}
+
+function formatHover(hovers: vscode.Hover[]): string {
+    assert.equal(hovers.length, 1);
+    const contents = hovers[0].contents;
+    assert.equal(contents.length, 1);
+    const c = contents[0];
+    const text = typeof c === 'string' ? c : c.value;
+
+    // Undo HTML formatting
+    return text.replace(/\n\n/g, '\n').replace(/&nbsp;/g, ' ').trim();
+}
+
+async function formatJumpToDefinition(location: vscode.Location): Promise<string> {
+    const toFile = location.uri.fsPath.split('/').pop();
+    const targetLine = location.range.start.line;
+
+    const targetDoc = await vscode.workspace.openTextDocument(location.uri);
+
+    const result: string[] = [];
+    result.push(`${toFile}:${targetLine + 1}:${location.range.start.character}`);
+    result.push('');
+
+    // Show entire destination file with marker on target line
+    for (let i = 0; i < targetDoc.lineCount; i++) {
+        const lineText = targetDoc.lineAt(i).text;
+        const prefix = i === targetLine ? '>' : ' ';
+        result.push(`${prefix} ${lineText}`);
+    }
+
+    return result.join('\n');
+}
+
+function createDiff(expected: string, actual: string): string {
+    const expectedLines = expected.split('\n');
+    const actualLines = actual.split('\n');
+
+    const diff: string[] = [];
+    const maxLines = Math.max(expectedLines.length, actualLines.length);
+
+    for (let i = 0; i < maxLines; i++) {
+        const expLine = expectedLines[i];
+        const actLine = actualLines[i];
+
+        if (expLine === actLine) {
+            diff.push(`  ${expLine || ''}`);
+        } else {
+            if (expLine !== undefined) {
+                diff.push(`- ${expLine}`);
+            }
+            if (actLine !== undefined) {
+                diff.push(`+ ${actLine}`);
+            }
+        }
+    }
+
+    return diff.join('\n');
+}
+
+/**
+ * Compare actual output with expected golden file.
+ * If ACCEPT=true, update the expected file with actual output.
+ */
+async function assertGolden(testName: string, actual: string) {
+    const root = vscode.workspace.workspaceFolders![0].uri.fsPath;
+    const expectedPath = path.join(root, 'expected', `${testName}.txt`);
+
+    const acceptMode = process.env.ACCEPT === 'true';
+
+    if (acceptMode) {
+        await fs.mkdir(path.dirname(expectedPath), { recursive: true });
+        await fs.writeFile(expectedPath, actual, 'utf-8');
+        return;
+    }
+
+    let expected: string;
+    try {
+        expected = await fs.readFile(expectedPath, 'utf-8');
+    } catch (err) {
+        assert.fail(`Expected file not found: ${expectedPath}\n\nRun with ACCEPT=true to create it.\n\nActual output:\n${actual}`);
+    }
+
+    const normalizeActual = actual.trim().replace(/\r\n/g, '\n');
+    const normalizeExpected = expected.trim().replace(/\r\n/g, '\n');
+
+    if (normalizeActual !== normalizeExpected) {
+        const diff = createDiff(normalizeExpected, normalizeActual);
+        assert.fail(`Golden test failed: ${testName}\n\n${diff}\n\nRun with ACCEPT=true to update expected output.`);
+    }
 }

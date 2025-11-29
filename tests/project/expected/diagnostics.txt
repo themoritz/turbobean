@@ -1,0 +1,43 @@
+include "open.bean" ; this is a comment
+
+2020-01-01 pad Expenses:Food Equity:Ope𝄞ning-Balances
+2026-01-01 note Equity:Ope𝄞ning-Balances ""
+
+2025-01-01 balance Expenses:Food    100.1 USD
+
+2025-01-01 note Assets:Checking    "Hello"
+
+2025-04-22 ! "Buy coffee" ^mylink #tag
+           ^ Warn: Flagged
+
+    Assets:Checking    100.10 USD
+    Expenses:Food
+
+2025-04-22 txn "Buy coffee" ^link2 #tag
+    Assets:Checking    100.10 USD
+    Expenses:Food
+
+2028-01-01 txn "Open" ^link1 #tag2
+    Assets:Checking    100.1 USD
+    Expenses:Food
+
+2025-01-22 * "Buy coffee" ^link
+    Assets:Checking    100.10 USD
+    Expenses:Food
+
+2026-01-01 * "Bytd"
+    Assets:Checking    100.10 USD
+    Expenses:Food
+
+2020-01-01 open Assets:Foo
+2020-01-02 pad Assets:Foo Equity:Ope𝄞ning-Balances
+
+2020-01-02 balance Assets:Foo    1 EUR
+
+2020-01-02 pad Assets:Foo Equity:Ope𝄞ning-Balances
+
+2020-01-02 balance Assets:Foo    4 EUR
+
+2020-01-03 txn ""
+    Assets:Foo    1 EUR
+    Expenses:Food
