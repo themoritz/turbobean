@@ -31,38 +31,90 @@ jobs:
           zig build golden --summary all
 
       - name: Run zig build
-        run: |
-          zig build
-          echo "$(pwd)/zig-out/bin" >> "$GITHUB_PATH"
+        run: zig build
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: turbobean-${{ matrix.os }}
+          path: zig-out/bin/turbobean
+
+  puppeteer-tests:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: turbobean-${{ matrix.os }}
+          path: zig-out/bin
+
+      - name: Make binary executable
+        run: chmod +x zig-out/bin/turbobean
+
+      - name: Add binary to PATH
+        run: echo "$(pwd)/zig-out/bin" >> "$GITHUB_PATH"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Puppeteer tests
+      - name: Install dependencies
         run: |
           cd tests/puppeteer
           bun install
+
+      - name: Run tests
+        run: |
+          cd tests/puppeteer
           bun test
+
+  vscode-tests:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: turbobean-${{ matrix.os }}
+          path: zig-out/bin
+
+      - name: Make binary executable
+        run: chmod +x zig-out/bin/turbobean
+
+      - name: Add binary to PATH
+        run: echo "$(pwd)/zig-out/bin" >> "$GITHUB_PATH"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: npm install
+      - name: Install dependencies
         run: |
           cd vscode
           npm install
 
-      - name: npm test
+      - name: Run tests
         if: matrix.os == 'ubuntu-latest'
         run: |
           cd vscode
           xvfb-run -a npm run test
 
-      - name: npm test
+      - name: Run tests
         if: matrix.os == 'macos-latest'
         run: |
           cd vscode
