@@ -43,7 +43,6 @@ const DataTracker = struct {
     operating_currencies: []const []const u8,
     display: DisplaySettings,
     inv: Inventories,
-    next_emit_date: ?Date,
     string_store: *StringStore,
     data: std.ArrayList(DataPoint),
 
@@ -60,7 +59,6 @@ const DataTracker = struct {
             .operating_currencies = operating_currencies,
             .display = display,
             .inv = Inventories.init(alloc),
-            .next_emit_date = null,
             .string_store = string_store,
             .data = .{},
         };
@@ -71,18 +69,7 @@ const DataTracker = struct {
         self.data.deinit(self.alloc);
     }
 
-    pub fn newEntry(self: *DataTracker, date: Date) !void {
-        if (self.next_emit_date == null) {
-            self.next_emit_date = self.display.interval.advanceDate(date);
-            return;
-        }
-        if (self.next_emit_date.?.compare(date) == .after) {
-            try self.flushData();
-            self.next_emit_date = self.display.interval.advanceDate(self.next_emit_date.?);
-        }
-    }
-
-    pub fn flushData(self: *DataTracker) !void {
+    pub fn flush(self: *DataTracker, date: Date) !void {
         try self.inv.convert(self.display.conversion, self.prices);
 
         var iter = self.inv.map.iterator();
@@ -90,7 +77,7 @@ const DataTracker = struct {
             const pair = kv.key_ptr.*;
             const balance = kv.value_ptr.*;
             try self.data.append(self.alloc, .{
-                .period = try self.string_store.print("{f}", .{self.next_emit_date.?}),
+                .period = try self.string_store.print("{f}", .{date}),
                 .currency = pair.currency,
                 .account = pair.account,
                 .balance = balance.toFloat(),
@@ -130,50 +117,53 @@ fn render(
     var data_tracker = DataTracker.init(alloc, &prices, operating_currencies, display, string_store);
     defer data_tracker.deinit();
 
-    for (project.sorted_entries.items) |sorted_entry| {
-        const data = project.files.items[sorted_entry.file];
-        const entry = data.entries.items[sorted_entry.entry];
+    var iter = common.IntervalIterator.init(project, display.interval);
+    while (iter.next()) |it| switch (it) {
+        .cutoff => |date| {
+            if (display.isWithinDateRange(date)) {
+                try data_tracker.flush(date);
+            }
+        },
+        .entry => |e| {
+            const data, const entry = e;
 
-        switch (entry.payload) {
-            .open => |open| {
-                _ = try tree.open(open.account.slice, null, open.booking_method);
-            },
-            .transaction => |tx| {
-                if (tx.dirty) continue;
-                if (!display.isWithinDateRange(entry.date)) continue;
+            switch (entry.payload) {
+                .open => |open| {
+                    _ = try tree.open(open.account.slice, null, open.booking_method);
+                },
+                .transaction => |tx| {
+                    if (tx.dirty) continue;
+                    if (!display.isWithinDateRange(entry.date)) continue;
 
-                if (tx.postings) |postings| {
+                    if (tx.postings) |postings| {
+                        for (postings.start..postings.end) |i| {
+                            const p = data.postings.get(i);
+                            try tree.postInventory(entry.date, p);
+                            try data_tracker.updateWithPosting(p);
+                        }
+                    }
+                },
+                .pad => |pad| {
+                    if (pad.synthetic_index == null) continue;
+                    if (!display.isWithinDateRange(entry.date)) continue;
+
+                    const index = pad.synthetic_index.?;
+                    const synthetic_entry = project.synthetic_entries.items[index];
+                    const tx = synthetic_entry.payload.transaction;
+                    const postings = tx.postings.?;
                     for (postings.start..postings.end) |i| {
-                        const p = data.postings.get(i);
+                        const p = project.synthetic_postings.get(i);
                         try tree.postInventory(entry.date, p);
                         try data_tracker.updateWithPosting(p);
                     }
-                }
-            },
-            .pad => |pad| {
-                if (pad.synthetic_index == null) continue;
-                if (!display.isWithinDateRange(entry.date)) continue;
-
-                const index = pad.synthetic_index.?;
-                const synthetic_entry = project.synthetic_entries.items[index];
-                const tx = synthetic_entry.payload.transaction;
-                const postings = tx.postings.?;
-                for (postings.start..postings.end) |i| {
-                    const p = project.synthetic_postings.get(i);
-                    try tree.postInventory(entry.date, p);
-                    try data_tracker.updateWithPosting(p);
-                }
-            },
-            .price => |price| {
-                try prices.setPrice(price);
-            },
-            else => {},
-        }
-
-        if (display.isWithinDateRange(entry.date)) {
-            try data_tracker.newEntry(entry.date);
-        }
-    }
+                },
+                .price => |price| {
+                    try prices.setPrice(price);
+                },
+                else => {},
+            }
+        },
+    };
 
     try common.renderPlotArea(operating_currencies, out);
 

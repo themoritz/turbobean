@@ -131,7 +131,7 @@ fn render(
 
     var date_state = DateState.before;
 
-    var iter = Iter.init(project, display.interval);
+    var iter = common.IntervalIterator.init(project, display.interval);
     while (iter.next()) |it| switch (it) {
         .cutoff => |date| {
             if (date_state == .within) {
@@ -218,56 +218,3 @@ fn render(
 
     return net_worth.plot_points.toOwnedSlice(alloc);
 }
-
-const Iter = struct {
-    project: *const Project,
-    interval: DisplaySettings.Interval,
-    next_cutoff: ?Date = null,
-    current_index: usize = 0,
-
-    pub const Elem = union(enum) {
-        cutoff: Date,
-        entry: struct { *Data, *Data.Entry },
-    };
-
-    pub fn init(project: *const Project, interval: DisplaySettings.Interval) Iter {
-        return .{
-            .project = project,
-            .interval = interval,
-        };
-    }
-
-    pub fn next(it: *Iter) ?Elem {
-        // No more entries - emit remaining cutoff if any
-        if (it.current_index >= it.project.sorted_entries.items.len) {
-            if (it.next_cutoff) |cutoff| {
-                it.next_cutoff = null; // Clear it so we don't emit it again
-                return .{ .cutoff = cutoff };
-            }
-            return null;
-        }
-
-        const sorted_entry = it.project.sorted_entries.items[it.current_index];
-        const data = &it.project.files.items[sorted_entry.file];
-        const entry = &data.entries.items[sorted_entry.entry];
-
-        // Initialize next_cutoff on first call
-        if (it.next_cutoff == null) {
-            it.next_cutoff = it.interval.advanceDate(entry.date);
-        }
-
-        const cutoff = it.next_cutoff.?;
-        const cmp = cutoff.compare(entry.date);
-
-        // If entry is before or on the same date as cutoff, emit entry first
-        // This ensures cutoffs come after entries when dates are equal
-        if (cmp == .before or cmp == .equal) {
-            it.current_index += 1;
-            return .{ .entry = .{ data, entry } };
-        } else {
-            // Entry is after cutoff, emit cutoff first and advance
-            it.next_cutoff = it.interval.advanceDate(cutoff);
-            return .{ .cutoff = cutoff };
-        }
-    }
-};
