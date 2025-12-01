@@ -254,32 +254,6 @@ async function formatJumpToDefinition(location: vscode.Location): Promise<string
     return result.join('\n');
 }
 
-function createDiff(expected: string, actual: string): string {
-    const expectedLines = expected.split('\n');
-    const actualLines = actual.split('\n');
-
-    const diff: string[] = [];
-    const maxLines = Math.max(expectedLines.length, actualLines.length);
-
-    for (let i = 0; i < maxLines; i++) {
-        const expLine = expectedLines[i];
-        const actLine = actualLines[i];
-
-        if (expLine === actLine) {
-            diff.push(`  ${expLine || ''}`);
-        } else {
-            if (expLine !== undefined) {
-                diff.push(`- ${expLine}`);
-            }
-            if (actLine !== undefined) {
-                diff.push(`+ ${actLine}`);
-            }
-        }
-    }
-
-    return diff.join('\n');
-}
-
 /**
  * Compare actual output with expected golden file.
  * If ACCEPT=true, update the expected file with actual output.
@@ -306,8 +280,5 @@ async function assertGolden(testName: string, actual: string) {
     const normalizeActual = actual.trim().replace(/\r\n/g, '\n');
     const normalizeExpected = expected.trim().replace(/\r\n/g, '\n');
 
-    if (normalizeActual !== normalizeExpected) {
-        const diff = createDiff(normalizeExpected, normalizeActual);
-        assert.fail(`Golden test failed: ${testName}\n\n${diff}\n\nRun with ACCEPT=true to update expected output.`);
-    }
+    assert.equal(normalizeActual, normalizeExpected, `Golden test failed: ${testName}\nRun with ACCEPT=true to update expected output.`);
 }

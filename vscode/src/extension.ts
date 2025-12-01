@@ -1,10 +1,17 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { LanguageClientOptions, ServerOptions, LanguageClient, Executable, TransportKind } from 'vscode-languageclient/node';
 
 let client: LanguageClient | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-    const exe: Executable = {
+    const isTest = process.env.VSCODE_TURBOBEAN_TEST === 'true';
+
+    const exe: Executable = isTest ? {
+        command: 'bash',
+        args: ['-c', `${path.join(context.extensionPath, '../zig-out/bin/turbobean')} --lsp 2> >(tee ${path.join(context.extensionPath, '../turbobean-vscode.log')} >&2)`],
+        transport: TransportKind.stdio,
+    } : {
         command: 'turbobean',
         args: ['--lsp'],
         transport: TransportKind.stdio,
