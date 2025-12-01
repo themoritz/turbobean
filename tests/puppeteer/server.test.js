@@ -14,6 +14,7 @@ const HEADLESS = process.env.HEADLESS !== 'false';
 let server = null;
 let browser = null;
 let page = null;
+let sseInterceptionSetup = false;
 
 beforeAll(async () => {
   console.log('Starting turbobean server...');
@@ -98,6 +99,42 @@ describe('TurboBean Server', () => {
       const bodyHandle = await page.$('body');
       expect(bodyHandle).not.toBeNull();
     });
+
+    test('Plot points (week, unconverted)', async () => {
+      const sseCapture = await captureSSEEvents('plot_points');
+      await goto('balance_sheet?interval=week');
+
+      const events = await sseCapture.waitForEvents(1);
+      expect(events.length).toBe(1);
+
+      const plotPoints = events[0].data;
+
+      const expected = [
+        { date: '2024-01-07', currency: 'USD', balance: 1000.0, balance_rendered: '1,000.00' },
+        { date: '2024-01-14', currency: 'USD', balance: 1000.0, balance_rendered: '1,000.00' },
+        { date: '2024-01-21', currency: 'USD', balance: 3850.0, balance_rendered: '3,850.00' },
+        { date: '2024-01-28', currency: 'AAPL', balance: 1.0, balance_rendered: '1.00' },
+        { date: '2024-01-28', currency: 'USD', balance: 2850.0, balance_rendered: '2,850.00' },
+      ];
+
+      expect(plotPoints).toEqual(expected);
+    });
+
+    test('Plot points (month, converted)', async () => {
+      const sseCapture = await captureSSEEvents('plot_points');
+      await goto('balance_sheet?conversion=USD&interval=month');
+
+      const events = await sseCapture.waitForEvents(1);
+      expect(events.length).toBe(1);
+
+      const plotPoints = events[0].data;
+
+      const expected = [
+        { date: '2024-01-31', currency: 'USD', balance: 4850.0, balance_rendered: '4,850.00' },
+      ];
+
+      expect(plotPoints).toEqual(expected);
+    });
   });
 
   describe('Income Statement', () => {
@@ -160,7 +197,7 @@ describe('TurboBean Server', () => {
 
 async function goto(route) {
   await page.goto(`${SERVER_URL}/${route}`, { waitUntil: 'domcontentloaded' });
-  await Bun.sleep(100);
+  await Bun.sleep(50);
 }
 
 async function getTransactions() {
@@ -178,4 +215,54 @@ async function getTransactions() {
       };
     });
   });
+}
+
+async function captureSSEEvents(eventType) {
+  // Only set up the interception once
+  if (!sseInterceptionSetup) {
+    await page.evaluateOnNewDocument((eventType) => {
+      // Override EventSource to intercept events
+      const OriginalEventSource = window.EventSource;
+      window.EventSource = function(...args) {
+        // Clear events when a new EventSource is created
+        window.__capturedSSEEvents = [];
+
+        const eventSource = new OriginalEventSource(...args);
+
+        eventSource.addEventListener(eventType, (event) => {
+          window.__capturedSSEEvents.push({
+            type: event.type,
+            data: JSON.parse(event.data),
+            timestamp: Date.now()
+          });
+        });
+
+        return eventSource;
+      };
+    }, eventType);
+    sseInterceptionSetup = true;
+  }
+
+  // Clear events from previous tests
+  try {
+    await page.evaluate(() => {
+      window.__capturedSSEEvents = [];
+    });
+  } catch (e) {
+    // Page might not be loaded yet, ignore
+  }
+
+  return {
+    async waitForEvents(minCount = 1, timeout = 100) {
+      const startTime = Date.now();
+      while (Date.now() - startTime < timeout) {
+        const events = await page.evaluate(() => window.__capturedSSEEvents || []);
+        if (events.length >= minCount) {
+          return events;
+        }
+        await Bun.sleep(100);
+      }
+      throw new Error(`Timeout waiting for ${minCount} SSE events of type "${eventType}"`);
+    },
+  };
 }

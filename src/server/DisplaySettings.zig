@@ -8,7 +8,7 @@ conversion: Conversion = .{ .units = {} },
 start_date: ?[]const u8 = null,
 end_date: ?[]const u8 = null,
 
-const Interval = enum {
+pub const Interval = enum {
     day,
     week,
     month,

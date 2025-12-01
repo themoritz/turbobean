@@ -44,7 +44,6 @@ const NetWorth = struct {
     display: DisplaySettings,
     inv: PlainInventory,
     converted_inv: PlainInventory,
-    next_emit_date: ?Date,
     string_store: *StringStore,
     plot_points: std.ArrayList(PlotPoint),
 
@@ -62,7 +61,6 @@ const NetWorth = struct {
             .display = display,
             .inv = try PlainInventory.init(alloc, null),
             .converted_inv = try PlainInventory.init(alloc, null),
-            .next_emit_date = null,
             .string_store = string_store,
             .plot_points = .{},
         };
@@ -74,29 +72,22 @@ const NetWorth = struct {
         self.plot_points.deinit(self.alloc);
     }
 
-    pub fn newEntry(self: *NetWorth, date: Date) !void {
-        if (self.next_emit_date == null) {
-            self.next_emit_date = self.display.interval.advanceDate(date);
-            return;
-        }
-        if (self.next_emit_date.?.compare(date) == .after) {
-            switch (self.display.conversion) {
-                .units => try self.emitPlotPoints(&self.inv),
-                .currency => |cur| {
-                    try self.prices.convertInventory(&self.inv, cur, &self.converted_inv);
-                    try self.emitPlotPoints(&self.converted_inv);
-                },
-            }
-            self.next_emit_date = self.display.interval.advanceDate(self.next_emit_date.?);
+    pub fn flush(self: *NetWorth, date: Date) !void {
+        switch (self.display.conversion) {
+            .units => try self.emitPlotPoints(&self.inv, date),
+            .currency => |cur| {
+                try self.prices.convertInventory(&self.inv, cur, &self.converted_inv);
+                try self.emitPlotPoints(&self.converted_inv, date);
+            },
         }
     }
 
-    pub fn emitPlotPoints(self: *NetWorth, inv: *PlainInventory) !void {
+    pub fn emitPlotPoints(self: *NetWorth, inv: *PlainInventory, date: Date) !void {
         var iter = inv.by_currency.iterator();
         while (iter.next()) |kv| {
             const balance = kv.value_ptr.*;
             try self.plot_points.append(self.alloc, .{
-                .date = try self.string_store.print("{f}", .{self.next_emit_date.?}),
+                .date = try self.string_store.print("{f}", .{date}),
                 .currency = kv.key_ptr.*,
                 .balance = balance.toFloat(),
                 .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
@@ -140,67 +131,69 @@ fn render(
 
     var date_state = DateState.before;
 
-    for (project.sorted_entries.items) |sorted_entry| {
-        const data = project.files.items[sorted_entry.file];
-        const entry = data.entries.items[sorted_entry.entry];
-
-        state: switch (date_state) {
-            .before => {
-                if (display.hasStartDate()) {
-                    if (display.isAfterStart(entry.date)) {
-                        try tree.clearEarnings("Equity:Earnings:Previous");
+    var iter = Iter.init(project, display.interval);
+    while (iter.next()) |it| switch (it) {
+        .cutoff => |date| {
+            if (date_state == .within) {
+                try net_worth.flush(date);
+            }
+        },
+        .entry => |e| {
+            const data, const entry = e;
+            state: switch (date_state) {
+                .before => {
+                    if (display.hasStartDate()) {
+                        if (display.isAfterStart(entry.date)) {
+                            try tree.clearEarnings("Equity:Earnings:Previous");
+                            continue :state .within;
+                        }
+                    } else {
                         continue :state .within;
                     }
-                } else {
-                    continue :state .within;
-                }
-            },
-            .within => {
-                date_state = .within;
-                if (display.isAfterEnd(entry.date)) {
-                    break;
-                }
-            },
-        }
+                },
+                .within => {
+                    date_state = .within;
+                    if (display.isAfterEnd(entry.date)) {
+                        break;
+                    }
+                },
+            }
 
-        switch (entry.payload) {
-            .open => |open| {
-                _ = try tree.open(open.account.slice, null, open.booking_method);
-            },
-            .transaction => |tx| {
-                if (tx.dirty) continue;
+            switch (entry.payload) {
+                .open => |open| {
+                    _ = try tree.open(open.account.slice, null, open.booking_method);
+                },
+                .transaction => |tx| {
+                    if (tx.dirty) continue;
 
-                if (tx.postings) |postings| {
+                    if (tx.postings) |postings| {
+                        for (postings.start..postings.end) |i| {
+                            const p = data.postings.get(i);
+                            try tree.postInventory(entry.date, p);
+                            try net_worth.updateWithPosting(p);
+                        }
+                    }
+                },
+                .pad => |pad| {
+                    if (pad.synthetic_index == null) continue;
+
+                    const index = pad.synthetic_index.?;
+                    const synthetic_entry = project.synthetic_entries.items[index];
+                    const tx = synthetic_entry.payload.transaction;
+                    const postings = tx.postings.?;
                     for (postings.start..postings.end) |i| {
-                        const p = data.postings.get(i);
+                        const p = project.synthetic_postings.get(i);
                         try tree.postInventory(entry.date, p);
                         try net_worth.updateWithPosting(p);
                     }
-                }
-            },
-            .pad => |pad| {
-                if (pad.synthetic_index == null) continue;
-
-                const index = pad.synthetic_index.?;
-                const synthetic_entry = project.synthetic_entries.items[index];
-                const tx = synthetic_entry.payload.transaction;
-                const postings = tx.postings.?;
-                for (postings.start..postings.end) |i| {
-                    const p = project.synthetic_postings.get(i);
-                    try tree.postInventory(entry.date, p);
-                    try net_worth.updateWithPosting(p);
-                }
-            },
-            .price => |price| {
-                try prices.setPrice(price);
-            },
-            else => {},
-        }
-
-        if (date_state == .within) {
-            try net_worth.newEntry(entry.date);
-        }
-    }
+                },
+                .price => |price| {
+                    try prices.setPrice(price);
+                },
+                else => {},
+            }
+        },
+    };
 
     try tree.clearEarnings("Equity:Earnings:Current");
 
@@ -225,3 +218,56 @@ fn render(
 
     return net_worth.plot_points.toOwnedSlice(alloc);
 }
+
+const Iter = struct {
+    project: *const Project,
+    interval: DisplaySettings.Interval,
+    next_cutoff: ?Date = null,
+    current_index: usize = 0,
+
+    pub const Elem = union(enum) {
+        cutoff: Date,
+        entry: struct { *Data, *Data.Entry },
+    };
+
+    pub fn init(project: *const Project, interval: DisplaySettings.Interval) Iter {
+        return .{
+            .project = project,
+            .interval = interval,
+        };
+    }
+
+    pub fn next(it: *Iter) ?Elem {
+        // No more entries - emit remaining cutoff if any
+        if (it.current_index >= it.project.sorted_entries.items.len) {
+            if (it.next_cutoff) |cutoff| {
+                it.next_cutoff = null; // Clear it so we don't emit it again
+                return .{ .cutoff = cutoff };
+            }
+            return null;
+        }
+
+        const sorted_entry = it.project.sorted_entries.items[it.current_index];
+        const data = &it.project.files.items[sorted_entry.file];
+        const entry = &data.entries.items[sorted_entry.entry];
+
+        // Initialize next_cutoff on first call
+        if (it.next_cutoff == null) {
+            it.next_cutoff = it.interval.advanceDate(entry.date);
+        }
+
+        const cutoff = it.next_cutoff.?;
+        const cmp = cutoff.compare(entry.date);
+
+        // If entry is before or on the same date as cutoff, emit entry first
+        // This ensures cutoffs come after entries when dates are equal
+        if (cmp == .before or cmp == .equal) {
+            it.current_index += 1;
+            return .{ .entry = .{ data, entry } };
+        } else {
+            // Entry is after cutoff, emit cutoff first and advance
+            it.next_cutoff = it.interval.advanceDate(cutoff);
+            return .{ .cutoff = cutoff };
+        }
+    }
+};
