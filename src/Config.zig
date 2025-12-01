@@ -1,13 +1,14 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Uri = @import("Uri.zig");
 
 const Self = @This();
 
 root: []const u8,
 
 /// Load the config from a directory. dir has to be an absolute path.
-pub fn load_from_dir(alloc: Allocator, dir: []const u8) !Self {
-    const config_path = try std.fs.path.join(alloc, &.{ dir, "turbobean.config" });
+pub fn load_from_dir(alloc: Allocator, uri: Uri) !Self {
+    const config_path = try std.fs.path.join(alloc, &.{ uri.absolute(), "turbobean.config" });
     defer alloc.free(config_path);
 
     const file = try std.fs.openFileAbsolute(config_path, .{});

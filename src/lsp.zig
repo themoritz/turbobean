@@ -131,10 +131,12 @@ const LspState = struct {
     }
 
     fn getWorkspaceRootFile(self: *LspState, folder: lsp.types.WorkspaceFolder) ![]const u8 {
-        const config = try Config.load_from_dir(self.alloc, folder.name);
+        var uri = try Uri.from_raw(self.alloc, folder.uri);
+        defer uri.deinit(self.alloc);
+        const config = try Config.load_from_dir(self.alloc, uri);
         defer self.alloc.free(config.root);
 
-        return std.fs.path.join(self.alloc, &.{ folder.name, config.root });
+        return std.fs.path.join(self.alloc, &.{ uri.absolute(), config.root });
     }
 
     pub fn openProjectByRootUri(self: *LspState, uri: Uri) !void {
