@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const zts = @import("zts");
 const State = @import("State.zig");
 const Project = @import("../project.zig");
@@ -19,7 +20,7 @@ pub fn handler(
     req: *std.http.Server.Request,
     state: *State,
 ) !void {
-    try common.SseHandler([]DataPoint, void).run(
+    try common.SseHandler(PlotData, void).run(
         alloc,
         req,
         state,
@@ -29,12 +30,48 @@ pub fn handler(
     );
 }
 
-const DataPoint = struct {
-    period: StringStore.String,
-    currency: []const u8,
-    account: []const u8,
-    balance: f64,
-    balance_rendered: StringStore.String,
+pub const PlotData = struct {
+    alloc: Allocator,
+    periods: std.ArrayList(PeriodGroup) = .{},
+    current_data_points: std.ArrayList(DataPoint) = .{},
+
+    const PeriodGroup = struct {
+        date: StringStore.String,
+        period: StringStore.String,
+        data_points: []DataPoint,
+    };
+
+    const DataPoint = struct {
+        currency: []const u8,
+        account: []const u8,
+        balance: f64,
+        balance_rendered: StringStore.String,
+    };
+
+    pub fn deinit(self: *PlotData) void {
+        for (self.periods.items) |period| {
+            self.alloc.free(period.data_points);
+        }
+        self.periods.deinit(self.alloc);
+    }
+
+    pub fn addDataPoint(self: *PlotData, data_point: DataPoint) !void {
+        try self.current_data_points.append(self.alloc, data_point);
+    }
+
+    pub fn endPeriod(self: *PlotData, date: StringStore.String, period: StringStore.String) !void {
+        try self.periods.append(self.alloc, .{
+            .date = date,
+            .period = period,
+            .data_points = try self.current_data_points.toOwnedSlice(self.alloc),
+        });
+
+        self.current_data_points = .{};
+    }
+
+    pub fn jsonStringify(self: *const PlotData, jw: anytype) !void {
+        try jw.write(self.periods.items);
+    }
 };
 
 const DataTracker = struct {
@@ -44,7 +81,7 @@ const DataTracker = struct {
     display: DisplaySettings,
     inv: Inventories,
     string_store: *StringStore,
-    data: std.ArrayList(DataPoint),
+    plot_data: *PlotData,
 
     pub fn init(
         alloc: std.mem.Allocator,
@@ -52,6 +89,7 @@ const DataTracker = struct {
         operating_currencies: []const []const u8,
         display: DisplaySettings,
         string_store: *StringStore,
+        plot_data: *PlotData,
     ) DataTracker {
         return .{
             .alloc = alloc,
@@ -60,13 +98,12 @@ const DataTracker = struct {
             .display = display,
             .inv = Inventories.init(alloc),
             .string_store = string_store,
-            .data = .{},
+            .plot_data = plot_data,
         };
     }
 
     pub fn deinit(self: *DataTracker) void {
         self.inv.deinit();
-        self.data.deinit(self.alloc);
     }
 
     pub fn flush(self: *DataTracker, date: Date) !void {
@@ -76,8 +113,7 @@ const DataTracker = struct {
         while (iter.next()) |kv| {
             const pair = kv.key_ptr.*;
             const balance = kv.value_ptr.*;
-            try self.data.append(self.alloc, .{
-                .period = try self.string_store.print("{f}", .{date}),
+            try self.plot_data.addDataPoint(.{
                 .currency = pair.currency,
                 .account = pair.account,
                 .balance = balance.toFloat(),
@@ -85,6 +121,11 @@ const DataTracker = struct {
             });
         }
         self.inv.clear();
+
+        const date_str = try self.string_store.print("{f}", .{date});
+        const period_str = try self.display.interval.formatPeriod(date, self.string_store);
+
+        try self.plot_data.endPeriod(date_str, period_str);
     }
 
     pub fn updateWithPosting(self: *DataTracker, posting: Data.Posting) !void {
@@ -103,7 +144,7 @@ fn render(
     out: *std.Io.Writer,
     string_store: *StringStore,
     ctx: void,
-) ![]DataPoint {
+) !PlotData {
     _ = ctx;
     var tree = try Tree.init(alloc);
     defer tree.deinit();
@@ -114,7 +155,17 @@ fn render(
     var prices = Prices.init(alloc);
     defer prices.deinit();
 
-    var data_tracker = DataTracker.init(alloc, &prices, operating_currencies, display, string_store);
+    var plot_data = PlotData{ .alloc = alloc };
+    errdefer plot_data.deinit();
+
+    var data_tracker = DataTracker.init(
+        alloc,
+        &prices,
+        operating_currencies,
+        display,
+        string_store,
+        &plot_data,
+    );
     defer data_tracker.deinit();
 
     var iter = common.IntervalIterator.init(project, display.interval);
@@ -183,7 +234,7 @@ fn render(
     try treeRenderer.renderTable("Expenses");
     try zts.write(tpl, "right_end", out);
 
-    return data_tracker.data.toOwnedSlice(alloc);
+    return plot_data;
 }
 
 const Inventories = struct {

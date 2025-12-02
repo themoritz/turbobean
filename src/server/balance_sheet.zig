@@ -20,7 +20,7 @@ pub fn handler(
     req: *std.http.Server.Request,
     state: *State,
 ) !void {
-    try common.SseHandler([]PlotPoint, void).run(
+    try common.SseHandler(common.PlotData, void).run(
         alloc,
         req,
         state,
@@ -30,13 +30,6 @@ pub fn handler(
     );
 }
 
-const PlotPoint = struct {
-    date: StringStore.String,
-    currency: []const u8,
-    balance: f64,
-    balance_rendered: StringStore.String,
-};
-
 const NetWorth = struct {
     alloc: std.mem.Allocator,
     prices: *Prices,
@@ -45,7 +38,7 @@ const NetWorth = struct {
     inv: PlainInventory,
     converted_inv: PlainInventory,
     string_store: *StringStore,
-    plot_points: std.ArrayList(PlotPoint),
+    plot_data: *common.PlotData,
 
     pub fn init(
         alloc: std.mem.Allocator,
@@ -53,6 +46,7 @@ const NetWorth = struct {
         operating_currencies: []const []const u8,
         display: DisplaySettings,
         string_store: *StringStore,
+        plot_data: *common.PlotData,
     ) !NetWorth {
         return .{
             .alloc = alloc,
@@ -62,14 +56,13 @@ const NetWorth = struct {
             .inv = try PlainInventory.init(alloc, null),
             .converted_inv = try PlainInventory.init(alloc, null),
             .string_store = string_store,
-            .plot_points = .{},
+            .plot_data = plot_data,
         };
     }
 
     pub fn deinit(self: *NetWorth) void {
         self.inv.deinit();
         self.converted_inv.deinit();
-        self.plot_points.deinit(self.alloc);
     }
 
     pub fn flush(self: *NetWorth, date: Date) !void {
@@ -86,7 +79,7 @@ const NetWorth = struct {
         var iter = inv.by_currency.iterator();
         while (iter.next()) |kv| {
             const balance = kv.value_ptr.*;
-            try self.plot_points.append(self.alloc, .{
+            try self.plot_data.points.append(self.alloc, .{
                 .date = try self.string_store.print("{f}", .{date}),
                 .currency = kv.key_ptr.*,
                 .balance = balance.toFloat(),
@@ -115,7 +108,7 @@ fn render(
     out: *std.Io.Writer,
     string_store: *StringStore,
     ctx: void,
-) ![]PlotPoint {
+) !common.PlotData {
     _ = ctx;
     var tree = try Tree.init(alloc);
     defer tree.deinit();
@@ -126,7 +119,17 @@ fn render(
     var prices = Prices.init(alloc);
     defer prices.deinit();
 
-    var net_worth = try NetWorth.init(alloc, &prices, operating_currencies, display, string_store);
+    var plot_data = common.PlotData{ .alloc = alloc };
+    errdefer plot_data.deinit();
+
+    var net_worth = try NetWorth.init(
+        alloc,
+        &prices,
+        operating_currencies,
+        display,
+        string_store,
+        &plot_data,
+    );
     defer net_worth.deinit();
 
     var date_state = DateState.before;
@@ -216,5 +219,5 @@ fn render(
     try treeRenderer.renderTable("Equity");
     try zts.write(tpl, "right_end", out);
 
-    return net_worth.plot_points.toOwnedSlice(alloc);
+    return plot_data;
 }

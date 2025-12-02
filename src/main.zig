@@ -97,5 +97,6 @@ test {
     _ = @import("ErrorDetails.zig");
     _ = @import("Uri.zig");
     _ = @import("solver.zig");
+    _ = @import("server/DisplaySettings.zig");
     _ = semantic_tokens;
 }

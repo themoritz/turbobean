@@ -47,19 +47,35 @@ function initPlotComponent() {
             renderPlotChanges(alpineData) {
                 const data = [];
 
-                alpineData.forEach((item) => {
-                    data.push({
-                        period: new Date(item.period),
-                        currency: item.currency,
-                        account: item.account,
-                        balance: item.balance,
-                        balance_rendered: item.balance_rendered,
+                // Collect all periods (including empty ones)
+                const allPeriods = alpineData.map(pg => new Date(pg.date));
+
+                // Create mapping from period date to period name
+                const periodNames = new Map();
+                alpineData.forEach(pg => {
+                    periodNames.set(new Date(pg.date).getTime(), pg.period);
+                });
+
+                // alpineData is now an array of PeriodGroup objects
+                alpineData.forEach((periodGroup) => {
+                    const periodDate = new Date(periodGroup.date);
+
+                    // Iterate through data_points within this period
+                    periodGroup.data_points.forEach((item) => {
+                        data.push({
+                            period: periodDate,
+                            currency: item.currency,
+                            account: item.account,
+                            balance: item.balance,
+                            balance_rendered: item.balance_rendered,
+                        });
                     });
                 });
 
                 // Group data by period, then by currency
                 const dataByPeriod = d3.group(data, d => d.period);
-                const periods = Array.from(dataByPeriod.keys()).sort((a, b) => a - b);
+                // Use all periods (including empty ones) instead of just periods with data
+                const periods = allPeriods.sort((a, b) => a - b);
 
                 const currencies = Array.from(new Set(data.map(d => d.currency))).sort();
                 const accounts = Array.from(new Set(data.map(d => d.account))).sort();
@@ -85,7 +101,7 @@ function initPlotComponent() {
                 // Calculate stacked data for each period/currency
                 const stackedData = [];
                 periods.forEach(period => {
-                    const periodData = dataByPeriod.get(period);
+                    const periodData = dataByPeriod.get(period) || [];
                     const byCurrency = d3.group(periodData, d => d.currency);
 
                     currencies.forEach(currency => {
@@ -181,7 +197,7 @@ function initPlotComponent() {
                                 .style("display", "block")
                                 .style("left", `${event.pageX + 10}px`)
                                 .style("top", `${event.pageY - 10}px`)
-                                .text(`${period.toISOString().split('T')[0]}: ${tooltipText}`);
+                                .text(`${periodNames.get(period.getTime()) || ''}: ${tooltipText}`);
                         })
                         .on("mousemove", function(event) {
                             tooltip
@@ -273,8 +289,7 @@ function initPlotComponent() {
 
                 xGroup.call(d3.axisBottom(x).tickFormat((d, i) => {
                     if (i % skipInterval === 0) {
-                        const date = new Date(+d);
-                        return d3.timeFormat("%Y-%m-%d")(date);
+                        return periodNames.get(d) || "";
                     }
                     return "";
                 }));

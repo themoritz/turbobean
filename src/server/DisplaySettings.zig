@@ -1,6 +1,7 @@
 const std = @import("std");
 const Self = @This();
 const Date = @import("../date.zig").Date;
+const StringStore = @import("../StringStore.zig");
 
 interval: Interval = .week,
 conversion: Conversion = .{ .units = {} },
@@ -22,6 +23,22 @@ pub const Interval = enum {
             .month => return date.nextMonth(),
             .quarter => return date.nextQuarter(),
             .year => return date.nextYear(),
+        }
+    }
+
+    pub fn formatPeriod(self: Interval, date: Date, string_store: *StringStore) !StringStore.String {
+        switch (self) {
+            .day => return try string_store.print("{f}", .{date}),
+            .week => {
+                const week = date.getISOWeek();
+                return try string_store.print("W{d} {d}", .{ week, date.year });
+            },
+            .month => return try string_store.print("{s} {d}", .{ date.getMonthName(), date.year }),
+            .quarter => {
+                const quarter = date.getQuarter();
+                return try string_store.print("Q{d} {d}", .{ quarter, date.year });
+            },
+            .year => return try string_store.print("{d}", .{date.year}),
         }
     }
 };
@@ -116,4 +133,41 @@ test "parse default" {
 
     try std.testing.expectEqual(.week, actual.interval);
     try std.testing.expectEqual({}, actual.conversion.units);
+}
+
+fn testFormatPeriod(year: u32, month: u4, day: u5, interval: Interval, expected: []const u8) !void {
+    const alloc = std.testing.allocator;
+    var string_store = StringStore.init(alloc);
+    defer string_store.deinit();
+
+    const date = Date{ .year = year, .month = month, .day = day };
+    const result = try interval.formatPeriod(date, &string_store);
+    try std.testing.expectEqualStrings(expected, result.slice());
+}
+
+test "formatPeriod - day" {
+    try testFormatPeriod(2025, 1, 15, .day, "2025-01-15");
+}
+
+test "formatPeriod - week" {
+    try testFormatPeriod(2025, 1, 5, .week, "W1 2025");
+    try testFormatPeriod(2024, 12, 29, .week, "W52 2024");
+}
+
+test "formatPeriod - month" {
+    try testFormatPeriod(2025, 1, 15, .month, "Jan 2025");
+    try testFormatPeriod(2025, 2, 28, .month, "Feb 2025");
+    try testFormatPeriod(2024, 12, 31, .month, "Dec 2024");
+}
+
+test "formatPeriod - quarter" {
+    try testFormatPeriod(2025, 1, 15, .quarter, "Q1 2025");
+    try testFormatPeriod(2025, 6, 30, .quarter, "Q2 2025");
+    try testFormatPeriod(2025, 9, 15, .quarter, "Q3 2025");
+    try testFormatPeriod(2024, 12, 31, .quarter, "Q4 2024");
+}
+
+test "formatPeriod - year" {
+    try testFormatPeriod(2025, 6, 15, .year, "2025");
+    try testFormatPeriod(2024, 12, 31, .year, "2024");
 }

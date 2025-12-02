@@ -19,7 +19,7 @@ pub fn handler(
     state: *State,
     account: []const u8,
 ) !void {
-    try common.SseHandler([]PlotPoint, []const u8).run(
+    try common.SseHandler(common.PlotData, []const u8).run(
         alloc,
         req,
         state,
@@ -29,13 +29,6 @@ pub fn handler(
     );
 }
 
-const PlotPoint = struct {
-    date: StringStore.String,
-    currency: []const u8,
-    balance: f64,
-    balance_rendered: StringStore.String,
-};
-
 fn render(
     alloc: std.mem.Allocator,
     project: *const Project,
@@ -43,7 +36,7 @@ fn render(
     out: *std.Io.Writer,
     string_store: *StringStore,
     account: []const u8,
-) ![]PlotPoint {
+) !common.PlotData {
     var tree = try Tree.init(alloc);
     defer tree.deinit();
 
@@ -53,8 +46,8 @@ fn render(
     var prices = Prices.init(alloc);
     defer prices.deinit();
 
-    var plot_points = std.ArrayList(PlotPoint){};
-    defer plot_points.deinit(alloc);
+    var plot_data = common.PlotData{ .alloc = alloc };
+    errdefer plot_data.deinit();
 
     try common.renderPlotArea(operating_currencies, out);
     try zts.write(tpl, "table", out);
@@ -187,7 +180,7 @@ fn render(
                             try zts.write(tpl, "transaction_end", out);
 
                             const balance = conv_inv.by_currency.get(conv_cur).?;
-                            try plot_points.append(alloc, .{
+                            try plot_data.points.append(alloc, .{
                                 .date = try string_store.print("{f}", .{entry.date}),
                                 .currency = conv_cur,
                                 .balance = balance.toFloat(),
@@ -206,7 +199,7 @@ fn render(
 
     try zts.write(tpl, "table_end", out);
 
-    return plot_points.toOwnedSlice(alloc);
+    return plot_data;
 }
 
 fn tryConvert(

@@ -76,7 +76,7 @@ pub fn SseHandler(comptime T: type, comptime Ctx: type) type {
                     state.acquireProject();
                     defer state.releaseProject();
 
-                    const plot_data = try render(
+                    var plot_data = try render(
                         alloc,
                         state.project,
                         display,
@@ -84,7 +84,7 @@ pub fn SseHandler(comptime T: type, comptime Ctx: type) type {
                         &string_store,
                         ctx,
                     );
-                    defer alloc.free(plot_data);
+                    defer plot_data.deinit();
 
                     var stringify = std.json.Stringify{ .writer = &json.writer };
                     try stringify.write(plot_data);
@@ -357,5 +357,25 @@ pub const IntervalIterator = struct {
             it.next_cutoff = it.interval.advanceDate(cutoff);
             return .{ .cutoff = cutoff };
         }
+    }
+};
+
+pub const PlotData = struct {
+    alloc: std.mem.Allocator,
+    points: std.ArrayList(PlotPoint) = .{},
+
+    const PlotPoint = struct {
+        date: StringStore.String,
+        currency: []const u8,
+        balance: f64,
+        balance_rendered: StringStore.String,
+    };
+
+    pub fn deinit(self: *PlotData) void {
+        self.points.deinit(self.alloc);
+    }
+
+    pub fn jsonStringify(self: *const PlotData, jw: anytype) !void {
+        try jw.write(self.points.items);
     }
 };

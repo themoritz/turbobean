@@ -100,9 +100,9 @@ pub const Date = struct {
     }
 
     pub fn addDays(self: Date, days: i32) Date {
-        var epoch_day = self.toEpochDay();
-        epoch_day.day += @intCast(days);
-        return Date.fromEpochDay(epoch_day);
+        const epoch_day = self.toEpochDay();
+        const new_day = @as(i64, epoch_day.day) + @as(i64, days);
+        return Date.fromEpochDay(.{ .day = @intCast(new_day) });
     }
 
     pub fn nextDay(self: Date) Date {
@@ -165,6 +165,69 @@ pub const Date = struct {
             }
         }
         return Date{ .year = self.year, .month = self.month, .day = days_in_month };
+    }
+
+    /// Returns the ISO week number (1-53) for this date
+    /// ISO 8601: A week belongs to the year that contains the week's Thursday
+    pub fn getISOWeek(self: Date) u6 {
+        // Find the Thursday of this week
+        // ISO 8601: Monday=1, Sunday=7 (our enum: Monday=1, Sunday=0)
+        const this_weekday = self.weekday();
+        const iso_weekday: u8 = if (this_weekday == .sunday) 7 else @intFromEnum(this_weekday);
+        const days_to_thursday: i8 = 4 - @as(i8, @intCast(iso_weekday));
+        const thursday = self.addDays(@as(i32, days_to_thursday));
+
+        // The week belongs to the year containing the Thursday
+        const year_to_use = thursday.year;
+
+        // Calculate week number within that year
+        const jan_1 = Date{ .year = year_to_use, .month = 1, .day = 1 };
+        const jan_1_weekday = jan_1.weekday();
+
+        // Days from Jan 1 to Thursday
+        const epoch_jan_1 = jan_1.toEpochDay();
+        const epoch_thursday = thursday.toEpochDay();
+        const days_from_jan_1: u32 = @intCast(epoch_thursday.day - epoch_jan_1.day);
+
+        // Adjust for ISO week: if Jan 1 is Fri, Sat, or Sun, those days belong to last year's week
+        const iso_offset: i8 = switch (jan_1_weekday) {
+            .monday => 0,
+            .tuesday => 1,
+            .wednesday => 2,
+            .thursday => 3,
+            .friday => -3,
+            .saturday => -2,
+            .sunday => -1,
+        };
+
+        const iso_day: i32 = @as(i32, @intCast(days_from_jan_1)) + iso_offset;
+        const week_num: u6 = @intCast(@divFloor(iso_day, 7) + 1);
+
+        return week_num;
+    }
+
+    /// Returns the quarter number (1-4) for this date
+    pub fn getQuarter(self: Date) u3 {
+        return @intCast((self.month - 1) / 3 + 1);
+    }
+
+    /// Returns the 3-letter month abbreviation
+    pub fn getMonthName(self: Date) []const u8 {
+        return switch (self.month) {
+            1 => "Jan",
+            2 => "Feb",
+            3 => "Mar",
+            4 => "Apr",
+            5 => "May",
+            6 => "Jun",
+            7 => "Jul",
+            8 => "Aug",
+            9 => "Sep",
+            10 => "Oct",
+            11 => "Nov",
+            12 => "Dec",
+            else => unreachable,
+        };
     }
 };
 
