@@ -94,12 +94,6 @@ afterAll(async () => {
 
 describe('TurboBean Server', () => {
   describe('Balance Sheet', () => {
-    test('page loads', async () => {
-      await goto('balance_sheet')
-      const bodyHandle = await page.$('body');
-      expect(bodyHandle).not.toBeNull();
-    });
-
     test('Plot points (week, unconverted)', async () => {
       const sseCapture = await captureSSEEvents('plot_points');
       await goto('balance_sheet?interval=week');
@@ -138,10 +132,52 @@ describe('TurboBean Server', () => {
   });
 
   describe('Income Statement', () => {
-    test('page loads', async () => {
-      await goto('income_statement')
-      const bodyHandle = await page.$('body');
-      expect(bodyHandle).not.toBeNull();
+    test('Plot points (week)', async () => {
+      const sseCapture = await captureSSEEvents('plot_changes');
+      await goto('income_statement?interval=week');
+
+      const events = await sseCapture.waitForEvents(1);
+      expect(events.length).toBe(1);
+
+      const periods = events[0].data;
+
+      const expected = [
+        {
+          date: "2024-01-07",
+          period: "W1 2024",
+          data_points: [],
+        },
+        {
+          date: "2024-01-14",
+          period: "W2 2024",
+          data_points: [],
+        },
+        {
+          date: "2024-01-21",
+          period: "W3 2024",
+          data_points: [
+            {
+              account: "Income:Salary",
+              balance: -3000,
+              balance_rendered: "-3,000.00",
+              currency: "USD",
+            },
+            {
+              account: "Expenses:Groceries",
+              balance: 150,
+              balance_rendered: "150.00",
+              currency: "USD",
+            },
+          ],
+        },
+        {
+          date: "2024-01-28",
+          period: "W4 2024",
+          data_points: [],
+        },
+      ]
+
+      expect(periods).toEqual(expected);
     });
   });
 
@@ -220,7 +256,7 @@ async function getTransactions() {
 async function captureSSEEvents(eventType) {
   // Only set up the interception once
   if (!sseInterceptionSetup) {
-    await page.evaluateOnNewDocument((eventType) => {
+    await page.evaluateOnNewDocument(() => {
       // Override EventSource to intercept events
       const OriginalEventSource = window.EventSource;
       window.EventSource = function(...args) {
@@ -229,17 +265,45 @@ async function captureSSEEvents(eventType) {
 
         const eventSource = new OriginalEventSource(...args);
 
-        eventSource.addEventListener(eventType, (event) => {
-          window.__capturedSSEEvents.push({
-            type: event.type,
-            data: JSON.parse(event.data),
-            timestamp: Date.now()
-          });
+        // Capture all message events
+        eventSource.addEventListener('message', (event) => {
+          try {
+            window.__capturedSSEEvents.push({
+              type: event.type,
+              data: JSON.parse(event.data),
+              timestamp: Date.now()
+            });
+          } catch (e) {
+            // Silently ignore non-JSON events
+          }
         });
+
+        // Also capture named events (like 'plot_points', 'plot_changes', etc.)
+        const originalAddEventListener = eventSource.addEventListener.bind(eventSource);
+        eventSource.addEventListener = function(type, listener, options) {
+          if (type !== 'message' && type !== 'error' && type !== 'open') {
+            // Intercept named SSE events
+            originalAddEventListener(type, (event) => {
+              try {
+                window.__capturedSSEEvents.push({
+                  type: event.type,
+                  data: JSON.parse(event.data),
+                  timestamp: Date.now()
+                });
+              } catch (e) {
+                // Silently ignore non-JSON events
+              }
+              // Still call the original listener
+              listener(event);
+            }, options);
+          } else {
+            originalAddEventListener(type, listener, options);
+          }
+        };
 
         return eventSource;
       };
-    }, eventType);
+    });
     sseInterceptionSetup = true;
   }
 
@@ -256,7 +320,9 @@ async function captureSSEEvents(eventType) {
     async waitForEvents(minCount = 1, timeout = 100) {
       const startTime = Date.now();
       while (Date.now() - startTime < timeout) {
-        const events = await page.evaluate(() => window.__capturedSSEEvents || []);
+        const allEvents = await page.evaluate(() => window.__capturedSSEEvents || []);
+        // Filter by event type
+        const events = allEvents.filter(e => e.type === eventType);
         if (events.length >= minCount) {
           return events;
         }
