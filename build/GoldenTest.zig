@@ -44,7 +44,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     const exe_path = self.exe.getEmittedBin().getPath(b);
 
-    var child = std.process.Child.init(&[_][]const u8{ exe_path, inp_file }, arena);
+    var child = std.process.Child.init(&[_][]const u8{ exe_path, "tree", inp_file }, arena);
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
 

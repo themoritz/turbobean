@@ -19,7 +19,7 @@ let sseInterceptionSetup = false;
 beforeAll(async () => {
   console.log('Starting turbobean server...');
   await new Promise((resolve, reject) => {
-    server = spawn(BINARY_PATH, [TEST_FILE, '--server'], {
+    server = spawn(BINARY_PATH, ['serve', TEST_FILE], {
       stdio: 'pipe',
       cwd: REPO_ROOT,
     });

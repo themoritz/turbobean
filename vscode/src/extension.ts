@@ -9,11 +9,11 @@ export function activate(context: vscode.ExtensionContext) {
 
     const exe: Executable = isTest ? {
         command: 'bash',
-        args: ['-c', `${path.join(context.extensionPath, '../zig-out/bin/turbobean')} --lsp 2> >(tee ${path.join(context.extensionPath, '../turbobean-vscode.log')} >&2)`],
+        args: ['-c', `${path.join(context.extensionPath, '../zig-out/bin/turbobean')} lsp 2> >(tee ${path.join(context.extensionPath, '../turbobean-vscode.log')} >&2)`],
         transport: TransportKind.stdio,
     } : {
         command: 'turbobean',
-        args: ['--lsp'],
+        args: ['lsp'],
         transport: TransportKind.stdio,
     };
 

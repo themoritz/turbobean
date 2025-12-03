@@ -12,6 +12,7 @@ const Uri = @import("Uri.zig");
 const lsp = @import("lsp.zig");
 const server = @import("server.zig");
 const semantic_tokens = @import("lsp/semantic_tokens.zig");
+const cli = @import("cli.zig");
 
 pub const std_options: std.Options = .{
     .log_level = std.log.default_level,
@@ -55,35 +56,57 @@ pub fn main() !void {
         _ = debug_allocator.deinit();
     };
 
-    const args = try std.process.argsAlloc(alloc);
-    defer std.process.argsFree(alloc, args);
-    if (args.len < 2) return error.MissingArgument;
-    const first_arg = args[1];
+    var iter = try std.process.ArgIterator.initWithAllocator(alloc);
+    defer iter.deinit();
+    _ = iter.next();
 
-    if (std.mem.eql(u8, first_arg, "--lsp")) {
-        try lsp.loop(alloc);
+    if (iter.next()) |command| {
+        if (std.mem.eql(u8, command, "lsp")) {
+            try lsp.loop(alloc);
+            return;
+        }
+        if (std.mem.eql(u8, command, "serve")) {
+            if (iter.next()) |file| {
+                var uri = try Uri.from_relative_to_cwd(alloc, file);
+                defer uri.deinit(alloc);
+
+                var project = try Project.load(alloc, uri);
+                defer project.deinit();
+
+                if (project.hasErrors()) try project.printErrors();
+
+                try server.loop(alloc, &project);
+                return;
+            } else {
+                cli.printMissingFileArgument();
+                return;
+            }
+        }
+        if (std.mem.eql(u8, command, "tree")) {
+            if (iter.next()) |file| {
+                var uri = try Uri.from_relative_to_cwd(alloc, file);
+                defer uri.deinit(alloc);
+
+                var project = try Project.load(alloc, uri);
+                defer project.deinit();
+
+                if (project.hasErrors()) try project.printErrors();
+                try project.printTree();
+                return;
+            } else {
+                cli.printMissingFileArgument();
+                return;
+            }
+        }
+        if (std.mem.eql(u8, command, "-h")) {
+            cli.printHelp();
+            return;
+        }
+        cli.printUnknownCommand();
+    } else {
+        cli.printHelp();
         return;
     }
-
-    var uri = try Uri.from_relative_to_cwd(alloc, first_arg);
-    defer uri.deinit(alloc);
-
-    var project = try Project.load(alloc, uri);
-    defer project.deinit();
-
-    if (project.hasErrors()) try project.printErrors();
-
-    if (args.len < 3) {
-        try project.printTree();
-        return;
-    }
-
-    if (std.mem.eql(u8, args[2], "--server")) {
-        try server.loop(alloc, &project);
-        return;
-    }
-
-    return error.SecondArgumentNeedsToBeServer;
 }
 
 test {

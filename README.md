@@ -92,7 +92,7 @@ Put this into your nvim-lspconfig's `config` function:
         cmd = {
           'bash',
           '-c',
-          '/Users/moritz/code/turbobean/zig-out/bin/turbobean --lsp 2> >(tee turbobean.log >&2)',
+          '/Users/moritz/code/turbobean/zig-out/bin/turbobean lsp 2> >(tee turbobean.log >&2)',
         },
         filetypes = { 'beancount', 'bean' },
         root_dir = require('lspconfig.util').root_pattern 'turbobean.config',
