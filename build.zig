@@ -1,6 +1,8 @@
 const std = @import("std");
 const GoldenTest = @import("build/GoldenTest.zig");
 
+const zon_version = std.SemanticVersion.parse(@import("build.zig.zon").version) catch unreachable;
+
 pub fn build(b: *std.Build) void {
     const embed_static = b.option(bool, "embed-static", "Embed static assets into the binary") orelse false;
     const options = b.addOptions();
@@ -164,8 +166,10 @@ fn getVersion(b: *std.Build) std.SemanticVersion {
         std.log.warn(
             \\Failed to run git describe to resolve turbobean version: {}
             \\command: {s}
-        , .{ err, argv_joined });
-        std.process.exit(1);
+            \\
+            \\Falling back to zon file version: {f}
+        , .{ err, argv_joined, zon_version });
+        return zon_version;
     };
 
     const git_describe = std.mem.trim(u8, git_describe_untrimmed, " \n\r");

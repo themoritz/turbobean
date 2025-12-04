@@ -1,7 +1,7 @@
 .{
     .name = .turbobean,
     .fingerprint = 0x8380b6b6b2f5bf2b,
-    .version = "0.0.0",
+    .version = "0.0.0-dev",
 
     .dependencies = .{
         .zts = .{
