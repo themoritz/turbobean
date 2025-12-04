@@ -39,10 +39,10 @@ pub const StaticEmbedded = struct {
         const asset = self.assets.get(sub_path) orelse
             return try req.respond("Asset not found\n", .{ .status = .not_found });
 
-        var response_headers = std.ArrayList(std.http.Header).init(self.alloc);
-        defer response_headers.deinit();
+        var response_headers = std.ArrayList(std.http.Header){};
+        defer response_headers.deinit(self.alloc);
 
-        try response_headers.append(.{
+        try response_headers.append(self.alloc, .{
             .name = "Content-Type",
             .value = getMime(sub_path),
         });
@@ -55,7 +55,7 @@ pub const StaticEmbedded = struct {
         const calc_etag = try std.fmt.allocPrint(self.alloc, "\"{d}\"", .{etag_hash});
         defer self.alloc.free(calc_etag);
 
-        try response_headers.append(.{ .name = "ETag", .value = calc_etag });
+        try response_headers.append(self.alloc, .{ .name = "ETag", .value = calc_etag });
 
         if (getHeader(req, "If-None-Match")) |etag| {
             if (std.mem.eql(u8, etag, calc_etag)) {

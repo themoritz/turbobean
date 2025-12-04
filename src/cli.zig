@@ -1,4 +1,5 @@
 const std = @import("std");
+const version = @import("config").version;
 
 pub const colors = struct {
     const CSI = "\x1b[";
@@ -23,7 +24,7 @@ pub const colors = struct {
 
 pub fn printHelp() void {
     std.debug.print(
-        \\{[r]s}{[b]s}Turbobean{[r]s} is a fast Beancount implementation.
+        \\{[r]s}{[b]s}Turbobean{[r]s} is a fast Beancount implementation. {[d]s}(version {[version]f}){[r]s}
         \\
         \\{[b]s}Usage:{[r]s} turbobean {[magenta]s}<command>{[r]s} {[d]s}[...args]{[r]s}
         \\
@@ -35,6 +36,7 @@ pub fn printHelp() void {
         \\Learn more: {[blue]s}https://github.com/themoritz/turbobean{[r]s}
         \\
     , .{
+        .version = version,
         .b = colors.BOLD,
         .d = colors.DIM,
         .r = colors.RESET,

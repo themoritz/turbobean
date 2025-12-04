@@ -5,16 +5,17 @@ pub fn build(b: *std.Build) void {
     const embed_static = b.option(bool, "embed-static", "Embed static assets into the binary") orelse false;
     const options = b.addOptions();
     options.addOption(bool, "embed_static", embed_static);
+    options.addOption(std.SemanticVersion, "version", getVersion(b));
 
     const tracy_options = .{
         .enable_ztracy = b.option(
             bool,
-            "enable_ztracy",
+            "enable-ztracy",
             "Enable Tracy profile markers",
         ) orelse false,
         .on_demand = b.option(
             bool,
-            "on_demand",
+            "tracy-on-demand",
             "Build tracy with TRACY_ON_DEMAND",
         ) orelse false,
     };
@@ -43,11 +44,15 @@ pub fn build(b: *std.Build) void {
         .name = "turbobean",
         .root_module = exe_mod,
     });
-    exe.linkLibrary(ztracy.artifact("tracy"));
+    if (tracy_options.enable_ztracy) {
+        exe.linkLibrary(ztracy.artifact("tracy"));
+    }
 
-    addAssetsOption(b, exe, target, optimize) catch |err| {
-        std.log.err("Problem adding assets: {t}", .{err});
-    };
+    if (embed_static) {
+        addAssetsOption(b, exe, target, optimize) catch |err| {
+            std.log.err("Problem adding assets: {t}", .{err});
+        };
+    }
 
     b.installArtifact(exe);
 
@@ -146,4 +151,51 @@ pub fn addAssetsOption(b: *std.Build, exe: anytype, target: anytype, optimize: a
     });
 
     exe.root_module.addImport("assets", assets);
+}
+
+/// Leverage git describe to get the version
+fn getVersion(b: *std.Build) std.SemanticVersion {
+    const argv: []const []const u8 = &.{
+        "git", "-C", b.pathFromRoot("."), "--git-dir", ".git", "describe", "--match", "*.*.*", "--tags",
+    };
+    var code: u8 = undefined;
+    const git_describe_untrimmed = b.runAllowFail(argv, &code, .Ignore) catch |err| {
+        const argv_joined = std.mem.join(b.allocator, " ", argv) catch @panic("OOM");
+        std.log.warn(
+            \\Failed to run git describe to resolve turbobean version: {}
+            \\command: {s}
+        , .{ err, argv_joined });
+        std.process.exit(1);
+    };
+
+    const git_describe = std.mem.trim(u8, git_describe_untrimmed, " \n\r");
+
+    switch (std.mem.count(u8, git_describe, "-")) {
+        0 => {
+            // Tagged release version (e.g. 0.10.0).
+            return std.SemanticVersion.parse(git_describe) catch unreachable;
+        },
+        2 => {
+            // Untagged development build (e.g. 0.10.0-dev.216+34ce200).
+            var it = std.mem.splitScalar(u8, git_describe, '-');
+            const tagged_ancestor = it.first();
+            const commit_height = it.next().?;
+            const commit_id = it.next().?;
+            std.debug.assert(std.mem.startsWith(u8, commit_id, "g")); // commit hash is prefixed with a 'g'
+
+            const ancestor_ver = std.SemanticVersion.parse(tagged_ancestor) catch unreachable;
+
+            return .{
+                .major = ancestor_ver.major,
+                .minor = ancestor_ver.minor,
+                .patch = ancestor_ver.patch,
+                .pre = b.fmt("dev.{s}", .{commit_height}),
+                .build = commit_id[1..],
+            };
+        },
+        else => {
+            std.debug.print("Unexpected 'git describe' output: '{s}'\n", .{git_describe});
+            std.process.exit(1);
+        },
+    }
 }
