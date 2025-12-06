@@ -3,7 +3,7 @@ const GoldenTest = @import("build/GoldenTest.zig");
 
 const zon_version = std.SemanticVersion.parse(@import("build.zig.zon").version) catch unreachable;
 
-const release_targets = [_]std.Target.Query{
+const release_target_queries = [_]std.Target.Query{
     .{ .cpu_arch = .aarch64, .os_tag = .linux },
     .{ .cpu_arch = .aarch64, .os_tag = .macos },
     .{ .cpu_arch = .aarch64, .os_tag = .windows },
@@ -15,10 +15,12 @@ const release_targets = [_]std.Target.Query{
 };
 
 pub fn build(b: *std.Build) !void {
+    const version = getVersion(b);
+
     const embed_static = b.option(bool, "embed-static", "Embed static assets into the binary") orelse false;
     const options = b.addOptions();
     options.addOption(bool, "embed_static", embed_static);
-    options.addOption(std.SemanticVersion, "version", getVersion(b));
+    options.addOption(std.SemanticVersion, "version", version);
 
     const tracy_options = .{
         .enable_ztracy = b.option(
@@ -126,25 +128,62 @@ pub fn build(b: *std.Build) !void {
     }
 
     {
+        const FileExtension = enum {
+            zip,
+            @"tar.gz",
+        };
+
         // Release
         const release_step = b.step("release", "Build all release artifacts");
+        const install_dir: std.Build.InstallDir = .{ .custom = "artifacts" };
 
-        for (release_targets) |target_query| {
+        for (release_target_queries) |target_query| {
             const release_target = b.resolveTargetQuery(target_query);
             const release_exe = b.addExecutable(.{
                 .name = "turbobean",
                 .root_module = createRootModule(b, release_target, optimize, options, ztracy),
             });
+            if (embed_static) {
+                addAssetsOption(b, release_exe, release_target, optimize) catch |err| {
+                    std.log.err("Problem adding assets: {t}", .{err});
+                };
+            }
 
-            const target_output = b.addInstallArtifact(release_exe, .{
-                .dest_dir = .{
-                    .override = .{
-                        .custom = try target_query.zigTriple(b.allocator),
-                    },
-                },
+            const target_result = release_target.result;
+
+            const is_windows = target_result.os.tag == .windows;
+            const exe_name = b.fmt("{s}{s}", .{ exe.name, target_result.exeFileExt() });
+            const extension: FileExtension = if (is_windows) .zip else .@"tar.gz";
+
+            const file_name = b.fmt("turbobean-{t}-{t}-{f}.{t}", .{
+                target_result.cpu.arch,
+                target_result.os.tag,
+                version,
+                extension,
             });
 
-            release_step.dependOn(&target_output.step);
+            const compress_cmd = std.Build.Step.Run.create(b, "compress artifact");
+            compress_cmd.clearEnvironment();
+            const file_path = blk: switch (extension) {
+                .zip => {
+                    compress_cmd.addArgs(&.{ "7z", "a", "-mx=9" });
+                    const path = compress_cmd.addOutputFileArg(file_name);
+                    compress_cmd.addArtifactArg(release_exe);
+                    compress_cmd.addFileArg(release_exe.getEmittedPdb());
+                    break :blk path;
+                },
+                .@"tar.gz" => {
+                    compress_cmd.addArgs(&.{ "tar", "caf" });
+                    const path = compress_cmd.addOutputFileArg(file_name);
+                    compress_cmd.addPrefixedDirectoryArg("-C", release_exe.getEmittedBinDirectory());
+                    compress_cmd.addArg(exe_name);
+
+                    break :blk path;
+                },
+            };
+
+            const install_tarball = b.addInstallFileWithDir(file_path, install_dir, file_name);
+            release_step.dependOn(&install_tarball.step);
         }
     }
 }

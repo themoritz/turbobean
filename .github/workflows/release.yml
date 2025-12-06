@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for git describe to work
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build release artifacts
+        run: zig build release -Doptimize=ReleaseSafe -Dembed-static
+
+      - name: List artifacts
+        run: ls -lh zig-out/artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: zig-out/artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
