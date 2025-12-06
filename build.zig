@@ -3,7 +3,18 @@ const GoldenTest = @import("build/GoldenTest.zig");
 
 const zon_version = std.SemanticVersion.parse(@import("build.zig.zon").version) catch unreachable;
 
-pub fn build(b: *std.Build) void {
+const release_targets = [_]std.Target.Query{
+    .{ .cpu_arch = .aarch64, .os_tag = .linux },
+    .{ .cpu_arch = .aarch64, .os_tag = .macos },
+    .{ .cpu_arch = .aarch64, .os_tag = .windows },
+    .{ .cpu_arch = .x86, .os_tag = .linux },
+    .{ .cpu_arch = .x86, .os_tag = .windows },
+    .{ .cpu_arch = .x86_64, .os_tag = .linux },
+    .{ .cpu_arch = .x86_64, .os_tag = .macos },
+    .{ .cpu_arch = .x86_64, .os_tag = .windows },
+};
+
+pub fn build(b: *std.Build) !void {
     const embed_static = b.option(bool, "embed-static", "Embed static assets into the binary") orelse false;
     const options = b.addOptions();
     options.addOption(bool, "embed_static", embed_static);
@@ -31,15 +42,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    exe_mod.addImport("lsp", b.dependency("lsp_kit", .{}).module("lsp"));
-    exe_mod.addImport("zts", b.dependency("zts", .{}).module("zts"));
-    exe_mod.addImport("ztracy", ztracy.module("root"));
-    exe_mod.addOptions("config", options);
+    const exe_mod = createRootModule(b, target, optimize, options, ztracy);
 
     // Create the executable
     const exe = b.addExecutable(.{
@@ -121,6 +124,48 @@ pub fn build(b: *std.Build) void {
         const run_step = b.step("run", "Run the app");
         run_step.dependOn(&run_cmd.step);
     }
+
+    {
+        // Release
+        const release_step = b.step("release", "Build all release artifacts");
+
+        for (release_targets) |target_query| {
+            const release_target = b.resolveTargetQuery(target_query);
+            const release_exe = b.addExecutable(.{
+                .name = "turbobean",
+                .root_module = createRootModule(b, release_target, optimize, options, ztracy),
+            });
+
+            const target_output = b.addInstallArtifact(release_exe, .{
+                .dest_dir = .{
+                    .override = .{
+                        .custom = try target_query.zigTriple(b.allocator),
+                    },
+                },
+            });
+
+            release_step.dependOn(&target_output.step);
+        }
+    }
+}
+
+fn createRootModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    options: *std.Build.Step.Options,
+    ztracy: *std.Build.Dependency,
+) *std.Build.Module {
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    exe_mod.addImport("lsp", b.dependency("lsp_kit", .{}).module("lsp"));
+    exe_mod.addImport("zts", b.dependency("zts", .{}).module("zts"));
+    exe_mod.addImport("ztracy", ztracy.module("root"));
+    exe_mod.addOptions("config", options);
+    return exe_mod;
 }
 
 /// Credits: https://github.com/ringtailsoftware/zig-embeddir

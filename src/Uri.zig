@@ -45,13 +45,15 @@ pub fn load_nullterminated(self: *const Self, alloc: Allocator) ![:0]const u8 {
     defer file.close();
 
     const filesize = try file.getEndPos();
-    const source = try alloc.alloc(u8, filesize + 1);
+    std.debug.assert(filesize < 2 ^ 30); // Don't support more than 1GB files for 32 bit machines.
+    const alloc_size: usize = @intCast(filesize);
+    const source = try alloc.alloc(u8, alloc_size + 1);
     errdefer alloc.free(source);
 
-    _ = try file.readAll(source[0..filesize]);
-    source[filesize] = 0;
+    _ = try file.readAll(source[0..alloc_size]);
+    source[alloc_size] = 0;
 
-    const null_terminated: [:0]u8 = source[0..filesize :0];
+    const null_terminated: [:0]u8 = source[0..alloc_size :0];
 
     return null_terminated;
 }
