@@ -133,6 +133,7 @@ pub const Lexer = struct {
     const State = enum {
         start,
         invalid,
+        expect_eol,
         string,
         string_backslash,
         int,
@@ -209,7 +210,8 @@ pub const Lexer = struct {
     }
 
     /// Consume the current character. If it's a newline, we're at the start of
-    /// the line for the next character. Otherwise, we're not.
+    /// the line for the next character. Otherwise, we're not. This is also true
+    /// on Windows.
     inline fn consume(self: *Lexer) void {
         switch (self.buffer[self.cursor.pos]) {
             '\n' => {
@@ -262,6 +264,10 @@ pub const Lexer = struct {
                         } else {
                             continue :state .invalid;
                         }
+                    },
+                    '\r' => {
+                        self.consume();
+                        continue :state .expect_eol;
                     },
                     '\n' => {
                         self.consume();
@@ -398,11 +404,23 @@ pub const Lexer = struct {
                         continue :state .invalid;
                     },
                     // Recovers to parse a new token after whitespace.
-                    ' ', '\t', '\n' => {
+                    ' ', '\t', '\n', '\r' => {
                         result.tag = .invalid;
                     },
                     else => {
                         self.consume();
+                        continue :state .invalid;
+                    },
+                }
+            },
+
+            .expect_eol => {
+                switch (self.current()) {
+                    '\n' => {
+                        self.consume();
+                        result.tag = .eol;
+                    },
+                    else => {
                         continue :state .invalid;
                     },
                 }
@@ -413,6 +431,13 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .indent;
                 },
+                // Ignore empty indented lines (windows)
+                '\r' => {
+                    start = self.cursor;
+                    self.consume();
+                    continue :state .expect_eol;
+                },
+                // Ignore empty indented lines (unix)
                 '\n' => {
                     start = self.cursor;
                     self.consume();
@@ -516,7 +541,7 @@ pub const Lexer = struct {
             },
 
             .flag => switch (self.current()) {
-                0, ' ', '\t', '\n' => {},
+                0, ' ', '\t', '\r', '\n' => {},
                 else => {
                     result.tag = .currency;
                     continue :state .currency;
@@ -524,7 +549,7 @@ pub const Lexer = struct {
             },
 
             .flag_special => switch (self.current()) {
-                0, ' ', '\t', '\n' => {},
+                0, ' ', '\t', '\r', '\n' => {},
                 else => continue :state .invalid,
             },
 
@@ -558,7 +583,7 @@ pub const Lexer = struct {
                     result.tag = .tag;
                     continue :state .tag;
                 },
-                0, ' ', '\t', '\n' => {
+                0, ' ', '\t', '\r', '\n' => {
                     result.tag = .flag;
                 },
                 else => continue :state .invalid,
@@ -569,7 +594,7 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .tag;
                 },
-                0, ' ', '\t', '\n' => {},
+                0, ' ', '\t', '\r', '\n' => {},
                 else => continue :state .invalid,
             },
 
@@ -578,7 +603,7 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .link;
                 },
-                0, ' ', '\t', '\n' => {
+                0, ' ', '\t', '\r', '\n' => {
                     if (self.cursor.pos - start.pos < 2) continue :state .invalid;
                 },
                 else => continue :state .invalid,
@@ -672,7 +697,7 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .keyword;
                 },
-                0, ' ', '\n' => {
+                0, ' ', '\r', '\n' => {
                     const keyword = self.buffer[start.pos..self.cursor.pos];
                     if (Token.getKeyword(keyword)) |tag| {
                         result.tag = tag;
@@ -688,7 +713,7 @@ pub const Lexer = struct {
             },
 
             .comment => switch (self.current()) {
-                0, '\n' => {},
+                0, '\r', '\n' => {},
                 else => {
                     self.consume();
                     continue :state .comment;
@@ -703,6 +728,30 @@ pub const Lexer = struct {
         return result;
     }
 };
+
+test "windows" {
+    try testLex("2025-01-01\r\nEUR", &.{ .date, .eol, .currency });
+    try testLex("200 P\r\n200", &.{ .number, .flag, .eol, .number });
+    try testLex("200 !\r\n200", &.{ .number, .flag, .eol, .number });
+    try testLex("200 #\r\n200", &.{ .number, .flag, .eol, .number });
+    try testLex("200 #foo\r\n200", &.{ .number, .tag, .eol, .number });
+    try testLex("200 ^foo\r\n200", &.{ .number, .link, .eol, .number });
+    try testLex("txn\r\n200", &.{ .keyword_txn, .eol, .number });
+    try testLex("txn ; Comment\r\n200", &.{ .keyword_txn, .comment, .eol, .number });
+
+    // Recover
+    try testLex("x\r\n200", &.{ .invalid, .eol, .number });
+}
+
+test "ignore empty indented lines" {
+    // Unix:
+    try testLex("200\n  \n  200", &.{ .number, .eol, .eol, .indent, .number });
+    // Windows:
+    try testLex("200\r\n  \r\n  200", &.{ .number, .eol, .eol, .indent, .number });
+
+    // Recover
+    try testLex("200\r\n  \r  200", &.{ .number, .eol, .invalid, .number });
+}
 
 test "combined" {
     try testLex("\"café 😊\"", &.{.string});
