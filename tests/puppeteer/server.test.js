@@ -326,7 +326,7 @@ async function captureSSEEvents(eventType) {
         if (events.length >= minCount) {
           return events;
         }
-        await Bun.sleep(500);
+        await Bun.sleep(2000);
       }
       throw new Error(`Timeout waiting for ${minCount} SSE events of type "${eventType}"`);
     },
