@@ -4,7 +4,7 @@ import { LanguageClientOptions, ServerOptions, LanguageClient, Executable, Trans
 
 let client: LanguageClient | undefined;
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
     const isTest = process.env.VSCODE_TURBOBEAN_TEST === 'true';
 
     const exe: Executable = isTest ? {
@@ -37,7 +37,7 @@ export function activate(context: vscode.ExtensionContext) {
         clientOptions
     );
 
-    client.start();
+    await client.start();
 
     context.subscriptions.push(
         vscode.commands.registerCommand('turbobean.restartServer', async () => {
@@ -51,7 +51,7 @@ export function activate(context: vscode.ExtensionContext) {
                 serverOptions,
                 clientOptions
             );
-            client.start();
+            await client.start();
             vscode.window.showInformationMessage('TurboBean language server restarted.');
         })
     );
