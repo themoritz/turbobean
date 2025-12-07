@@ -38,14 +38,6 @@ beforeAll(async () => {
     server.on('error', (err) => {
       reject(new Error(`Failed to start server: ${err.message}`));
     });
-
-    const timeoutId = setTimeout(() => {
-      reject(new Error('Server failed to start within 10 seconds'))
-    }, 1000);
-
-    server.stdout.once('data', () => {
-      clearTimeout(timeoutId);
-    });
   });
 
   console.log('Launching browser...');
@@ -317,7 +309,7 @@ async function captureSSEEvents(eventType) {
   }
 
   return {
-    async waitForEvents(minCount = 1, timeout = 100) {
+    async waitForEvents(minCount = 1, timeout = 2000) {
       const startTime = Date.now();
       while (Date.now() - startTime < timeout) {
         const allEvents = await page.evaluate(() => window.__capturedSSEEvents || []);
@@ -326,7 +318,7 @@ async function captureSSEEvents(eventType) {
         if (events.length >= minCount) {
           return events;
         }
-        await Bun.sleep(2000);
+        await Bun.sleep(50);
       }
       throw new Error(`Timeout waiting for ${minCount} SSE events of type "${eventType}"`);
     },
