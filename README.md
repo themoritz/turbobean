@@ -56,44 +56,29 @@ The philosopy is:
 - Importing data (use templates in your favorite language + formatter)
 - Price fetching (same)
 
-## Installation and Use
+## Installation
 
-Currently has to be built from source (which is easy, see
-[below](#developing)). Binary releases coming soon!
+### Download Binary
 
-Run `turbobean serve <project_root>.bean` to launch a server that serves the Web UI. Go
-to `http://localhost:8080` in your browser.
+Go to the [latest
+release](https://github.com/themoritz/turbobean/releases/latest), pick your CPU
+architecture and operating system, then download and extract the tarball/zip to
+somewhere on your `$PATH`.
 
-## Compatibility
+### Building from Source
 
-Aims to be compatible with Beancount as much as possible, following some ideas
-from [Beancount Vnext:
-Goals
-& Design](https://docs.google.com/document/d/1qPdNXaz5zuDQ8M9uoZFyyFis7hA0G55BEfhWhrVBsfc/edit?tab=t.0),
-notably [Beancount - Vnext: Booking Rules
-Redesign](https://docs.google.com/document/d/1H0UDD1cKenraIMe40PbdMgnqJdeqI6yKv0og51mXk-0/view#).
-This is currently implemented in a non-backwards-compatible way.
+Install the [Zig compiler](https://ziglang.org/). Then (assuming you have a Unix
+system and `~/.local/bin` is on your `$PATH`):
 
-#### Known Incompatibilities
+```bash
+zig build --release=safe -Dembed-static --prefix ~/.local
+```
 
-* The balancing algorithm doesn't automatically insert multiple postings to the
-  same account. For example, the following transaction doesn't balance:
+## Use
 
-  ```beancount
-  2023-10-30 * "Cash Distribution"
-    Assets:Cash           -92.08 EUR
-    Assets:Cash          -794.49 USD
-    Expenses:Trips:Car    600.00 USD
-    Expenses:Food:Out
-  ```
-
-  You have to insert a second `Expenses:Food:Out` posting so that the USD and 
-  EUR amounts can be put there. This is so that the editor can properly show 
-  the inserted amounts inline.
-
-* The booking rules design is not fully formed yet. Right now there is the
-  distinction between "booked" and "plain" accounts. Commodities can only be
-  bought in "booked" accounts, which is not great but simplifies implementation.
+* Run `turbobean serve <project_root>.bean` to launch a server that serves the
+  Web UI.
+* Navigate to `http://localhost:8080` in your browser.
 
 ## Editor Setup
 
@@ -209,11 +194,43 @@ the existing Beancount highlight queries (from
 [https://github.com/helix-editor/helix/blob/master/runtime/queries/beancount/highlights.scm]()
 to `~/.config/helix/runtime/queries/bean/highlights.scm`).
 
+## Compatibility
+
+Aims to be compatible with Beancount as much as possible, following some ideas
+from [Beancount Vnext:
+Goals
+& Design](https://docs.google.com/document/d/1qPdNXaz5zuDQ8M9uoZFyyFis7hA0G55BEfhWhrVBsfc/edit?tab=t.0),
+notably [Beancount - Vnext: Booking Rules
+Redesign](https://docs.google.com/document/d/1H0UDD1cKenraIMe40PbdMgnqJdeqI6yKv0og51mXk-0/view#).
+This is currently implemented in a non-backwards-compatible way.
+
+#### Known Incompatibilities
+
+* The balancing algorithm doesn't automatically insert multiple postings to the
+  same account. For example, the following transaction doesn't balance:
+
+  ```beancount
+  2023-10-30 * "Cash Distribution"
+    Assets:Cash           -92.08 EUR
+    Assets:Cash          -794.49 USD
+    Expenses:Trips:Car    600.00 USD
+    Expenses:Food:Out
+  ```
+
+  You have to insert a second `Expenses:Food:Out` posting so that the USD and 
+  EUR amounts can be put there. This is so that the editor can properly show 
+  the inserted amounts inline.
+
+* The booking rules design is not fully formed yet. Right now there is the
+  distinction between "booked" and "plain" accounts. Commodities can only be
+  bought in "booked" accounts, which is not great but simplifies implementation.
+
 ## Developing
 
 ### Prerequisites
 
-* Install the [zig compiler](https://ziglang.org/).
+* Install the [Zig compiler](https://ziglang.org/) (project currently uses 0.15.2).
+* I recommend [ZLS](https://zigtools.org/zls/install/) as the Zig IDE.
 
 ### Building
 
@@ -222,6 +239,28 @@ zig build
 zig build run
 zig build run -- serve foo.bean
 ```
+
+### Iterating
+
+I'm using [watchexec](https://github.com/watchexec/watchexec) for automatic
+rebuilds on file change.
+
+* When iterating on Zig tests in a particular file:
+
+  ```bash
+  watchexec -e zig -- zig test src/lexer.zig --test-filter "windows"
+  ```
+
+* When iterating on the server (zig code or template):
+
+  ```bash
+  watchexec -r -e zig,html -- zig build run -- serve test.bean
+  ```
+
+  (page needs to be reloaded manually in the browser)
+
+* When iterating on JS or CSS files, just reload the page while the server is
+  running.
 
 ### Testing
 
