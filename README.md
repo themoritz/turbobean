@@ -79,6 +79,7 @@ zig build --release=safe -Dembed-static --prefix ~/.local
 * Run `turbobean serve <project_root>.bean` to launch a server that serves the
   Web UI.
 * Navigate to `http://localhost:8080` in your browser.
+* Press the `g` key to fuzzy-navigate (e.g. balance sheet, income statement, journal).
 
 ## Editor Setup
 
