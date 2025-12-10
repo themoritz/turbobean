@@ -54,6 +54,7 @@ pub const Tag = enum {
     ambiguous_strict_booking,
 
     flagged,
+    inferred_price,
 
     pub fn message(self: Tag) []const u8 {
         return switch (self) {
@@ -82,13 +83,14 @@ pub const Tag = enum {
             .multiple_pads => "Multiple pads of the same account. You need to have a balance assertion between pads",
             .balance_assertion_failed => "Balance assertion failed",
             .account_does_not_hold_currency => "The account does not hold this currency. Check open declaration.",
-            .account_is_booked => "Booked account. Can only buy or sell.",
-            .account_does_not_support_lot_spec => "Can't use lot spec on an unbooked account.",
+            .account_is_booked => "Account only supports positions held at cost. Can only buy or sell.",
+            .account_does_not_support_lot_spec => "Can't use lot spec on an account that doesn't support positions held at cost.",
             .lot_spec_ambiguous_match => "Ambiguous match. Lot spec needs to match exactly one lot.",
             .lot_spec_match_too_small => "Matched lot too small. You can cancel at most one lot.",
             .lot_spec_no_match => "No matching lot found for lot spec.",
             .ambiguous_strict_booking => "Strict booking requires explicit lot selection, or new lot needs to cancel all existing lots exactly.",
             .flagged => "Flagged",
+            .inferred_price => "Price inferred from cost spec. Please consider using @ syntax.",
         };
     }
 };

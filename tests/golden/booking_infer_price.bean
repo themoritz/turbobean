@@ -1,0 +1,7 @@
+2025-12-10 open Assets:Stocks "FIFO"
+2025-12-10 open Assets:Cash
+
+2025-12-10 txn "Buy"
+  Assets:Stocks  10 AAPL {2 USD}
+  Assets:Cash
+
