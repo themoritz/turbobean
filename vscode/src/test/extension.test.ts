@@ -8,8 +8,11 @@ import * as path from 'path';
 suite('LSP', () => {
     let doc: vscode.TextDocument;
 
-    setup(async function() {
+    suiteSetup(async function() {
+        this.timeout(10000); // Increase timeout for LSP initialization
+        const waitPromise = waitForLSPReady();
         doc = await openDoc('main.bean');
+        await waitPromise;
     });
 
     test('Hover on Assets:Checking', async function() {
@@ -118,6 +121,23 @@ suite('LSP', () => {
 
 async function sleep(ms: number = 10) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitForLSPReady(timeoutMs: number = 8000): Promise<void> {
+    // Set up the listener before opening the document to catch the diagnostic event
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            disposable.dispose();
+            reject(new Error('LSP did not initialize within timeout - no diagnostics received'));
+        }, timeoutMs);
+
+        // Wait for any diagnostic change event (indicating LSP is active)
+        const disposable = vscode.languages.onDidChangeDiagnostics(() => {
+            clearTimeout(timeout);
+            disposable.dispose();
+            resolve();
+        });
+    });
 }
 
 async function openDoc(file: string): Promise<TextDocument> {
