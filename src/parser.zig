@@ -77,11 +77,10 @@ fn addCurrency(p: *Self, currency: []const u8) !usize {
 
 fn failExpected(p: *Self, expected_token: Lexer.Token.Tag) Error {
     return p.failMsg(.{
-        .tag = .expected_token,
+        .tag = .{ .expected_token = expected_token },
         .token = p.currentToken(),
         .uri = p.uri,
         .source = p.source,
-        .expected = expected_token,
     });
 }
 
@@ -95,7 +94,6 @@ fn failAt(p: *Self, token: Lexer.Token, msg: ErrorDetails.Tag) Error {
         .token = token,
         .uri = p.uri,
         .source = p.source,
-        .expected = null,
     });
 }
 
@@ -110,7 +108,6 @@ fn warnAt(p: *Self, token: Lexer.Token, msg: ErrorDetails.Tag) !void {
         .token = token,
         .uri = p.uri,
         .source = p.source,
-        .expected = null,
         .severity = .warn,
     });
 }

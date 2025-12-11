@@ -9,7 +9,7 @@ tests/golden/balance_assertion.bean: [[31mError[0m] The account does not hold 
     9 | 2025-11-23 balance Assets:Foo  1 EUR
                            [31m^^^^^^^^^^[0m
 
-tests/golden/balance_assertion.bean: [[31mError[0m] Balance assertion failed
+tests/golden/balance_assertion.bean: [[31mError[0m] Balance assertion failed. Expected 1.2, but accumulated 1 (0.2 too little).
 
    15 | 2025-11-23 balance Assets:Foo  1.2 USD
         [31m^^^^^^^^^^[0m

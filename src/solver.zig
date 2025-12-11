@@ -168,7 +168,7 @@ pub const Solver = struct {
 
     /// The solver can be reused after this. There is no need to allocate a new one
     /// for each tx that needs balancing.
-    pub fn solve(p: *Solver) SolverError!Solution {
+    pub fn solve(p: *Solver, diagnostics: ?*CurrencyImbalance) SolverError!Solution {
         defer p.clear();
         var assignment: Assignment = .{0} ** MAX_UNKNOWNS;
 
@@ -177,7 +177,7 @@ pub const Solver = struct {
         var err: ?TryAssignmentError = null;
         var prev_solution: ?Solution = null;
         while (true) {
-            const solution = p.try_assignment(assignment) catch |e| blk: {
+            const solution = p.try_assignment(assignment, diagnostics) catch |e| blk: {
                 err = e;
                 break :blk null;
             };
@@ -226,7 +226,16 @@ pub const Solver = struct {
         OutOfMemory,
     };
 
-    fn try_assignment(p: *Solver, assignment: Assignment) TryAssignmentError!Solution {
+    pub const CurrencyImbalance = struct {
+        currency: []const u8,
+        sum: Number,
+    };
+
+    fn try_assignment(
+        p: *Solver,
+        assignment: Assignment,
+        diagnostics: ?*CurrencyImbalance,
+    ) TryAssignmentError!Solution {
         p.sum_by_currency.clearRetainingCapacity();
 
         for (p.triples.items) |triple| {
@@ -319,6 +328,7 @@ pub const Solver = struct {
             } else {
                 // TODO: Take tolerance into account
                 if (!kv.value_ptr.constant.is_zero()) {
+                    if (diagnostics) |diag| diag.* = .{ .currency = kv.key_ptr.*, .sum = kv.value_ptr.constant };
                     return error.DoesNotBalance;
                 }
             }
@@ -343,7 +353,7 @@ test "plain balance" {
     try p.addTriple(&one, &five, &eur);
     try p.addTriple(&one, &neg_five, &eur);
 
-    _ = try p.solve();
+    _ = try p.solve(null);
 }
 
 test "currency solution" {
@@ -370,7 +380,7 @@ test "currency solution" {
     try p.addTriple(&one, &three, &usd);
     try p.addTriple(&one, &neg_three, &c2);
 
-    _ = try p.solve();
+    _ = try p.solve(null);
     try std.testing.expectEqualStrings("EUR", c1.?);
     try std.testing.expectEqualStrings("USD", c2.?);
 }
@@ -397,7 +407,7 @@ test "number solution" {
     try p.addTriple(&one, &six, &usd);
     try p.addTriple(&n2, &three, &usd);
 
-    _ = try p.solve();
+    _ = try p.solve(null);
     try std.testing.expectEqual(Number.fromFloat(-6), n1.?);
     try std.testing.expectEqual(Number.fromFloat(-2), n2.?);
 }
@@ -419,7 +429,7 @@ test "combined solution" {
     try p.addTriple(&one, &six, &eur);
     try p.addTriple(&one, &n1, &c1);
 
-    _ = try p.solve();
+    _ = try p.solve(null);
     try std.testing.expectEqualStrings("EUR", c1.?);
     try std.testing.expectEqual(Number.fromFloat(-6), n1.?);
 }
@@ -442,7 +452,7 @@ test "too many variables" {
     try p.addTriple(&one, &n1, &eur);
     try p.addTriple(&one, &n2, &eur);
 
-    const s = p.solve();
+    const s = p.solve(null);
     try std.testing.expectError(error.TooManyVariables, s);
 }
 
@@ -459,7 +469,7 @@ test "too many variables price" {
 
     try p.addTriple(&n1, &n2, &eur);
 
-    const s = p.solve();
+    const s = p.solve(null);
     try std.testing.expectError(error.TooManyVariables, s);
 }
 
@@ -484,8 +494,11 @@ test "does not balance" {
     try p.addTriple(&one, &n1, &usd);
     try p.addTriple(&one, &three, &c1);
 
-    const s = p.solve();
+    var diag: Solver.CurrencyImbalance = undefined;
+    const s = p.solve(&diag);
     try std.testing.expectError(error.DoesNotBalance, s);
+    try std.testing.expectEqualStrings("EUR", diag.currency);
+    try std.testing.expectEqual(Number.fromFloat(5), diag.sum);
 }
 
 test "single no currency" {
@@ -499,7 +512,7 @@ test "single no currency" {
 
     try p.addTriple(&n1, &one, &c1);
 
-    const s = p.solve();
+    const s = p.solve(null);
     try std.testing.expectError(error.NoCurrency, s);
 }
 
@@ -516,6 +529,6 @@ test "single zero" {
 
     try p.addTriple(&n1, &one, &eur);
 
-    _ = try p.solve();
+    _ = try p.solve(null);
     try std.testing.expectEqual(Number.zero(), n1.?);
 }

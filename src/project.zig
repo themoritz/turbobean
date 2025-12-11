@@ -217,7 +217,7 @@ pub fn printErrors(self: *Self) !void {
                 std.debug.print("... and {d} more errors\n", .{num_errors - 10});
                 return;
             }
-            try err.print(self.alloc, true);
+            try err.print(self.alloc);
             num_printed += 1;
         }
     }
@@ -381,7 +381,10 @@ pub fn check(self: *Self) !void {
                     // Balance check in case of no padding
                     if (!expected.is_within_tolerance(accumulated)) {
                         std.debug.print("Balance assertion failed: Expected {f}, accumulated {f}\n", .{ expected, accumulated });
-                        try self.addError(entry.main_token, sorted.file, .balance_assertion_failed);
+                        try self.addError(entry.main_token, sorted.file, .{ .balance_assertion_failed = .{
+                            .expected = expected,
+                            .accumulated = accumulated,
+                        } });
                     }
                 }
             },
@@ -744,7 +747,6 @@ fn addErrorDetails(self: *Self, token: Token, file_id: u8, tag: ErrorDetails.Tag
         .token = token,
         .uri = uri,
         .source = source,
-        .expected = null,
     });
 }
 

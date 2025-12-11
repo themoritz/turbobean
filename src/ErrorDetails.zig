@@ -3,25 +3,26 @@ const Allocator = std.mem.Allocator;
 const Lexer = @import("lexer.zig").Lexer;
 const Uri = @import("Uri.zig");
 const Self = @This();
+const Number = @import("number.zig").Number;
+const Solver = @import("solver.zig").Solver;
 
 tag: Tag,
 severity: Severity = .err,
 token: Lexer.Token,
 uri: Uri,
 source: [:0]const u8,
-expected: ?Lexer.Token.Tag,
 
 pub const Severity = enum {
     err,
     warn,
 };
 
-pub const Tag = enum {
+pub const Tag = union(enum) {
     expected_declaration,
     invalid_number,
     invalid_date,
     invalid_booking_method,
-    expected_token,
+    expected_token: Lexer.Token.Tag,
     expected_entry,
     expected_key_value,
     expected_value,
@@ -33,7 +34,7 @@ pub const Tag = enum {
     meta_not_pushed,
 
     tx_balance_no_currency,
-    tx_does_not_balance,
+    tx_does_not_balance: Solver.CurrencyImbalance,
     tx_no_solution,
     tx_too_many_variables,
     tx_division_by_zero,
@@ -42,7 +43,10 @@ pub const Tag = enum {
     account_not_open,
     account_already_open,
     multiple_pads,
-    balance_assertion_failed,
+    balance_assertion_failed: struct {
+        expected: Number,
+        accumulated: Number,
+    },
 
     account_does_not_hold_currency,
     account_is_booked,
@@ -55,78 +59,91 @@ pub const Tag = enum {
 
     flagged,
     inferred_price,
-
-    pub fn message(self: Tag) []const u8 {
-        return switch (self) {
-            .expected_declaration => "Expected declaration",
-            .invalid_number => "Invalid number",
-            .invalid_date => "Invalid date",
-            .invalid_booking_method => "Invalid booking method. Choose from FIFO, LIFO, STRICT",
-            .expected_token => unreachable,
-            .expected_entry => "Expected entry",
-            .expected_key_value => "Expected key: value",
-            .expected_value => "Expected value",
-            .expected_amount => "Expected amount",
-            .duplicate_lot_spec => "Duplicate lot spec",
-            .tag_already_pushed => "Tag already pushed",
-            .meta_already_pushed => "Key already pushed",
-            .tag_not_pushed => "Tag has not been pushed before",
-            .meta_not_pushed => "Key has not been pushed before",
-            .tx_balance_no_currency => "No currency to pick to balance transaction",
-            .tx_does_not_balance => "Transaction does not balance",
-            .tx_no_solution => "Transaction can't be balanced",
-            .tx_too_many_variables => "Transaction can't be balanced unambiguously",
-            .tx_division_by_zero => "Division by zero while balancing transaction",
-            .tx_multiple_solutions => "Transaction can't be balanced unambiguously",
-            .account_not_open => "Account is not open or has been closed. Open it with an open entry",
-            .account_already_open => "Account has already been opened",
-            .multiple_pads => "Multiple pads of the same account. You need to have a balance assertion between pads",
-            .balance_assertion_failed => "Balance assertion failed",
-            .account_does_not_hold_currency => "The account does not hold this currency. Check open declaration.",
-            .account_is_booked => "Account only supports positions held at cost. Can only buy or sell.",
-            .account_does_not_support_lot_spec => "Can't use lot spec on an account that doesn't support positions held at cost.",
-            .lot_spec_ambiguous_match => "Ambiguous match. Lot spec needs to match exactly one lot.",
-            .lot_spec_match_too_small => "Matched lot too small. You can cancel at most one lot.",
-            .lot_spec_no_match => "No matching lot found for lot spec.",
-            .ambiguous_strict_booking => "Strict booking requires explicit lot selection, or new lot needs to cancel all existing lots exactly.",
-            .flagged => "Flagged",
-            .inferred_price => "Price inferred from cost spec. Please consider using @ syntax.",
-        };
-    }
 };
 
-pub fn message(e: Self, alloc: Allocator) ![]const u8 {
-    var buffer = std.ArrayList(u8){};
-    switch (e.tag) {
-        .expected_token => {
-            try buffer.print(
-                alloc,
-                "Expected {s}, found {s}\n",
-                .{ @tagName(e.expected.?), @tagName(e.token.tag) },
-            );
-        },
-        else => {
-            try buffer.print(alloc, "{s}\n", .{e.tag.message()});
-        },
-    }
-    return buffer.toOwnedSlice(alloc);
-}
-
-pub fn print(e: Self, alloc: Allocator, colors: bool) !void {
-    const rendered = try dump(e, alloc, colors);
+pub fn print(e: Self, alloc: Allocator) !void {
+    const rendered = try dump(e, alloc, true);
     defer alloc.free(rendered);
     std.debug.print("{s}\n", .{rendered});
 }
 
-pub fn dump(e: Self, alloc: Allocator, colors: bool) ![]const u8 {
-    const color_on = if (colors) switch (e.severity) {
+pub fn dump(e: Self, alloc: Allocator, color: bool) ![]const u8 {
+    var allocating = std.Io.Writer.Allocating.init(alloc);
+    defer allocating.deinit();
+    const writer = &allocating.writer;
+
+    try e.format(writer, alloc, color);
+    return allocating.toOwnedSlice();
+}
+
+pub fn message(e: Self, alloc: Allocator) ![]const u8 {
+    var allocating = std.Io.Writer.Allocating.init(alloc);
+    defer allocating.deinit();
+    const writer = &allocating.writer;
+
+    try e.formatMessage(writer);
+    try writer.writeByte('\n');
+    return allocating.toOwnedSlice();
+}
+
+pub fn formatMessage(self: Self, writer: *std.Io.Writer) !void {
+    switch (self.tag) {
+        .expected_declaration => try writer.writeAll("Expected declaration"),
+        .invalid_number => try writer.writeAll("Invalid number"),
+        .invalid_date => try writer.writeAll("Invalid date"),
+        .invalid_booking_method => try writer.writeAll("Invalid booking method. Choose from FIFO, LIFO, STRICT"),
+        .expected_token => |t| try writer.print("Expected {s}, found {s}", .{ @tagName(t), @tagName(self.token.tag) }),
+        .expected_entry => try writer.writeAll("Expected entry"),
+        .expected_key_value => try writer.writeAll("Expected key: value"),
+        .expected_value => try writer.writeAll("Expected value"),
+        .expected_amount => try writer.writeAll("Expected amount"),
+        .duplicate_lot_spec => try writer.writeAll("Duplicate lot spec"),
+        .tag_already_pushed => try writer.writeAll("Tag already pushed"),
+        .meta_already_pushed => try writer.writeAll("Key already pushed"),
+        .tag_not_pushed => try writer.writeAll("Tag has not been pushed before"),
+        .meta_not_pushed => try writer.writeAll("Key has not been pushed before"),
+        .tx_balance_no_currency => try writer.writeAll("No currency to pick to balance transaction"),
+        .tx_does_not_balance => |imbalance| {
+            try writer.print("Transaction does not balance: Total of {f} for {s}", .{
+                imbalance.sum,
+                imbalance.currency,
+            });
+        },
+        .tx_no_solution => try writer.writeAll("Transaction can't be balanced"),
+        .tx_too_many_variables => try writer.writeAll("Transaction can't be balanced unambiguously"),
+        .tx_division_by_zero => try writer.writeAll("Division by zero while balancing transaction"),
+        .tx_multiple_solutions => try writer.writeAll("Transaction can't be balanced unambiguously"),
+        .account_not_open => try writer.writeAll("Account is not open or has been closed. Open it with an open entry"),
+        .account_already_open => try writer.writeAll("Account has already been opened"),
+        .multiple_pads => try writer.writeAll("Multiple pads of the same account. You need to have a balance assertion between pads"),
+        .balance_assertion_failed => |body| {
+            try writer.print("Balance assertion failed. Expected {f}, but accumulated {f}", .{
+                body.expected,
+                body.accumulated,
+            });
+            const diff = body.accumulated.sub(body.expected);
+            std.debug.assert(!diff.is_zero());
+            if (diff.is_positive()) try writer.print(" ({f} too much).", .{diff});
+            if (diff.is_negative()) try writer.print(" ({f} too little).", .{diff.negate()});
+        },
+        .account_does_not_hold_currency => try writer.writeAll("The account does not hold this currency. Check open declaration."),
+        .account_is_booked => try writer.writeAll("Account only supports positions held at cost. Can only buy or sell."),
+        .account_does_not_support_lot_spec => try writer.writeAll("Can't use lot spec on an account that doesn't support positions held at cost."),
+        .lot_spec_ambiguous_match => try writer.writeAll("Ambiguous match. Lot spec needs to match exactly one lot."),
+        .lot_spec_match_too_small => try writer.writeAll("Matched lot too small. You can cancel at most one lot."),
+        .lot_spec_no_match => try writer.writeAll("No matching lot found for lot spec."),
+        .ambiguous_strict_booking => try writer.writeAll("Strict booking requires explicit lot selection, or new lot needs to cancel all existing lots exactly."),
+        .flagged => try writer.writeAll("Flagged"),
+        .inferred_price => try writer.writeAll("Price inferred from cost spec. Please consider using @ syntax."),
+    }
+}
+
+pub fn format(e: Self, writer: *std.Io.Writer, alloc: Allocator, color: bool) !void {
+    const color_on = if (color) switch (e.severity) {
         .err => "\x1b[31m",
         .warn => "\x1b[33m",
     } else "";
-    const color_off = if (colors) "\x1b[0m" else "";
-
-    var buffer = std.ArrayList(u8){};
-    defer buffer.deinit(alloc);
+    const color_off = if (color) "\x1b[0m" else "";
 
     // Calculate line and col from token.loc
     const loc = e.token.slice;
@@ -173,9 +190,6 @@ pub fn dump(e: Self, alloc: Allocator, colors: bool) ![]const u8 {
         }
     }
 
-    const msg = try e.message(alloc);
-    defer alloc.free(msg);
-
     const severity = switch (e.severity) {
         .err => "Error",
         .warn => "Warning",
@@ -184,25 +198,24 @@ pub fn dump(e: Self, alloc: Allocator, colors: bool) ![]const u8 {
     const relative = try e.uri.relative(alloc);
     defer alloc.free(relative);
 
-    try buffer.print(
-        alloc,
-        "{s}: [{s}{s}{s}] {s}\n",
-        .{ relative, color_on, severity, color_off, msg },
+    try writer.print(
+        "{s}: [{s}{s}{s}] ",
+        .{ relative, color_on, severity, color_off },
     );
 
-    try buffer.print(
-        alloc,
+    try e.formatMessage(writer);
+    try writer.writeAll("\n\n");
+
+    try writer.print(
         "{d:>5} | {s}\n",
         .{ line_start + 1, e.source[line_pos..line_pos_end] },
     );
-    for (0..col_start + 8) |_| try buffer.append(alloc, ' ');
-    try buffer.appendSlice(alloc, color_on);
-    try buffer.appendNTimes(alloc, '^', col_end - col_start);
-    try buffer.appendSlice(alloc, color_off);
+    for (0..col_start + 8) |_| try writer.writeByte(' ');
+    try writer.writeAll(color_on);
+    try writer.splatByteAll('^', col_end - col_start);
+    try writer.writeAll(color_off);
 
-    try buffer.append(alloc, '\n');
-
-    return buffer.toOwnedSlice(alloc);
+    try writer.writeByte('\n');
 }
 
 test "render" {
@@ -232,7 +245,7 @@ fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !vo
     var uri = try Uri.from_relative_to_cwd(alloc, "dummy.bean");
     defer uri.deinit(alloc);
     const e = Self{
-        .tag = .expected_token,
+        .tag = .{ .expected_token = .string },
         .token = Lexer.Token{
             .tag = .number,
             .slice = source[start .. start + len],
@@ -242,10 +255,9 @@ fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !vo
         },
         .uri = uri,
         .source = source,
-        .expected = .string,
     };
     const rendered = try e.dump(alloc, false);
     defer alloc.free(rendered);
 
-    try std.testing.expectEqualSlices(u8, expected, rendered);
+    try std.testing.expectEqualStrings(expected, rendered);
 }

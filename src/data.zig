@@ -326,6 +326,7 @@ pub fn balanceTransactions(self: *Self) !void {
     var one: ?Number = Number.fromFloat(1);
     var solver = Solver.init(self.alloc);
     defer solver.deinit();
+    var diagnostics: Solver.CurrencyImbalance = undefined;
 
     for (self.entries.items) |*entry| {
         switch (entry.payload) {
@@ -363,10 +364,10 @@ pub fn balanceTransactions(self: *Self) !void {
 
                         try solver.addTriple(price, number, currency);
                     }
-                    _ = solver.solve() catch |err| {
+                    _ = solver.solve(&diagnostics) catch |err| {
                         const tag: ErrorDetails.Tag = switch (err) {
                             error.NoCurrency => .tx_balance_no_currency,
-                            error.DoesNotBalance => .tx_does_not_balance,
+                            error.DoesNotBalance => .{ .tx_does_not_balance = diagnostics },
                             error.NoSolution => .tx_no_solution,
                             error.TooManyVariables => .tx_too_many_variables,
                             error.DivisionByZero => .tx_division_by_zero,
@@ -389,7 +390,6 @@ fn addError(self: *Self, token: Lexer.Token, uri: Uri, tag: ErrorDetails.Tag) !v
         .token = token,
         .uri = uri,
         .source = self.source,
-        .expected = null,
     });
 }
 
@@ -400,7 +400,6 @@ fn addWarning(self: *Self, token: Lexer.Token, uri: Uri, tag: ErrorDetails.Tag) 
         .token = token,
         .uri = uri,
         .source = self.source,
-        .expected = null,
     });
 }
 
