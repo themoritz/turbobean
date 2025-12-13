@@ -355,7 +355,8 @@ pub fn check(self: *Self) !void {
                             .flag = .{
                                 .slice = entry.main_token.slice,
                                 .tag = .flag,
-                                .line = 0,
+                                .start_line = 0,
+                                .end_line = 0,
                                 .start_col = 0,
                                 .end_col = 0,
                             },
@@ -576,7 +577,7 @@ fn refreshLspCache(self: *Self) !void {
                 .open => |open| {
                     try self.accounts.put(open.account.slice, .{
                         .file = @intCast(f),
-                        .line = entry.main_token.line,
+                        .line = entry.main_token.start_line,
                     });
                 },
                 else => {},
@@ -617,7 +618,7 @@ pub fn accountInventoryUntilLine(
                     for (postings.start..postings.end) |i| {
                         const posting = data.postings.get(i);
                         if (std.mem.eql(u8, posting.account.slice, account)) {
-                            if (posting.account.line == line and sorted_entry.file == file) {
+                            if (posting.account.start_line == line and sorted_entry.file == file) {
                                 var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
                                 errdefer before.deinit();
                                 try tree.postInventory(entry.date, posting);
@@ -641,7 +642,7 @@ pub fn accountInventoryUntilLine(
                 std.debug.assert(postings.end - postings.start == 2);
                 if (std.mem.eql(u8, pad.account.slice, account)) {
                     const posting = self.synthetic_postings.get(postings.start);
-                    if (pad.account.line == line and sorted_entry.file == file) {
+                    if (pad.account.start_line == line and sorted_entry.file == file) {
                         var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
                         errdefer before.deinit();
                         try tree.postInventory(entry.date, posting);
@@ -654,7 +655,7 @@ pub fn accountInventoryUntilLine(
                 }
                 if (std.mem.eql(u8, pad.pad_to.slice, account)) {
                     const posting = self.synthetic_postings.get(postings.end - 1);
-                    if (pad.pad_to.line == line and sorted_entry.file == file) {
+                    if (pad.pad_to.start_line == line and sorted_entry.file == file) {
                         var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
                         errdefer before.deinit();
                         try tree.postInventory(entry.date, posting);

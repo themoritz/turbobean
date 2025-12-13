@@ -468,8 +468,8 @@ fn parseMeta(p: *Self, add_from_stack: bool) !?Data.Range {
         var meta_iter = p.active_meta.iterator();
         while (meta_iter.next()) |kv| {
             _ = try p.addKeyValue(Data.KeyValue{
-                .key = Lexer.Token{ .slice = kv.key_ptr.*, .tag = .key, .line = 0, .start_col = 0, .end_col = 0 },
-                .value = Lexer.Token{ .slice = kv.value_ptr.*, .tag = .string, .line = 0, .start_col = 0, .end_col = 0 },
+                .key = Lexer.Token{ .slice = kv.key_ptr.*, .tag = .key, .start_line = 0, .end_line = 0, .start_col = 0, .end_col = 0 },
+                .value = Lexer.Token{ .slice = kv.value_ptr.*, .tag = .string, .start_line = 0, .end_line = 0, .start_col = 0, .end_col = 0 },
             });
         }
     }

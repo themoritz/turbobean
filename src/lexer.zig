@@ -17,7 +17,8 @@ pub const Lexer = struct {
     pub const Token = struct {
         tag: Tag,
         slice: []const u8,
-        line: u32,
+        start_line: u32,
+        end_line: u32,
         start_col: u16,
         end_col: u16,
 
@@ -162,7 +163,7 @@ pub const Lexer = struct {
 
     /// Consumes one unicode code point if it is encoded properly. If not
     /// encoded properly returns null, otherwise the number of bytes consumed.
-    fn consumeUnicode(self: *Lexer) ?u3 {
+    fn consumeUnicode(self: *Lexer, accept_single_byte: bool) ?u3 {
         const length = unicode.utf8ByteSequenceLength(self.current()) catch {
             return null;
         };
@@ -173,9 +174,9 @@ pub const Lexer = struct {
         var codepoint: u21 = undefined;
         switch (length) {
             1 => {
-                if (self.current() < 0x80) {
-                    return null;
-                }
+                if (!accept_single_byte) return null;
+                if (self.current() >= 0x80) return null;
+                codepoint = @intCast(self.current());
             },
             2 => {
                 // Decode and consume
@@ -237,7 +238,8 @@ pub const Lexer = struct {
         var result: Token = .{
             .tag = undefined,
             .slice = undefined,
-            .line = undefined,
+            .start_line = undefined,
+            .end_line = undefined,
             .start_col = undefined,
             .end_col = undefined,
         };
@@ -385,7 +387,7 @@ pub const Lexer = struct {
                         continue :state .link;
                     },
                     else => {
-                        if (self.consumeUnicode()) |_| {
+                        if (self.consumeUnicode(false)) |_| {
                             result.tag = .account;
                             continue :state .account;
                         } else {
@@ -460,9 +462,16 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .string_backslash;
                 },
-                else => {
+                '\n' => {
                     self.consume();
                     continue :state .string;
+                },
+                else => {
+                    if (self.consumeUnicode(true)) |_| {
+                        continue :state .string;
+                    } else {
+                        continue :state .invalid;
+                    }
                 },
             },
 
@@ -654,7 +663,7 @@ pub const Lexer = struct {
                     continue :state .account;
                 },
                 else => {
-                    if (self.consumeUnicode()) |_| {
+                    if (self.consumeUnicode(false)) |_| {
                         continue :state .account;
                     } else {
                         continue :state .invalid;
@@ -668,7 +677,7 @@ pub const Lexer = struct {
                     continue :state .account;
                 },
                 else => {
-                    if (self.consumeUnicode()) |_| {
+                    if (self.consumeUnicode(false)) |_| {
                         continue :state .account;
                     } else {
                         continue :state .invalid;
@@ -686,7 +695,7 @@ pub const Lexer = struct {
                     continue :state .accountname_first;
                 },
                 else => {
-                    if (self.consumeUnicode()) |_| {
+                    if (self.consumeUnicode(false)) |_| {
                         continue :state .account;
                     }
                 },
@@ -722,8 +731,9 @@ pub const Lexer = struct {
         }
 
         result.slice = self.buffer[start.pos..self.cursor.pos];
-        result.line = self.cursor.line;
+        result.start_line = start.line;
         result.start_col = start.col;
+        result.end_line = self.cursor.line;
         result.end_col = self.cursor.col;
         return result;
     }

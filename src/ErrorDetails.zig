@@ -249,7 +249,8 @@ fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !vo
         .token = Lexer.Token{
             .tag = .number,
             .slice = source[start .. start + len],
-            .line = 0,
+            .start_line = 0,
+            .end_line = 0,
             .start_col = @intCast(start),
             .end_col = @intCast(start + len),
         },

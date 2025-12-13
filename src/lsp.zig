@@ -94,7 +94,7 @@ const LspState = struct {
         const project = self.getProjectForUri(uri) orelse return null;
         var iter = project.accountIterator(uri);
         return while (iter.next()) |next| {
-            const same_line = next.token.line == position.line;
+            const same_line = next.token.start_line == position.line;
             const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
             if (same_line and within_token) break next.token;
         } else null;
@@ -306,7 +306,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     };
                     var iter = project.accountIterator(uri);
                     const account = while (iter.next()) |next| {
-                        const same_line = next.token.line == position.line;
+                        const same_line = next.token.start_line == position.line;
                         const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
                         if (same_line and within_token and (next.kind == .posting or next.kind == .pad or next.kind == .pad_to)) break next.token;
                     } else {
@@ -690,7 +690,7 @@ const NotificationMethods = union(enum) {
 
 fn tokenRange(token: Token) lsp.types.Range {
     return .{
-        .start = .{ .line = token.line, .character = token.start_col },
-        .end = .{ .line = token.line, .character = token.end_col },
+        .start = .{ .line = token.start_line, .character = token.start_col },
+        .end = .{ .line = token.end_line, .character = token.end_col },
     };
 }
