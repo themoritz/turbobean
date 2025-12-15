@@ -70,7 +70,7 @@ pub fn main() !void {
                 var uri = try Uri.from_relative_to_cwd(alloc, file);
                 defer uri.deinit(alloc);
 
-                var project = try Project.load(alloc, uri);
+                var project = try Project.load(alloc, uri, null);
                 defer project.deinit();
 
                 if (project.hasErrors()) try project.printErrors();
@@ -87,7 +87,7 @@ pub fn main() !void {
                 var uri = try Uri.from_relative_to_cwd(alloc, file);
                 defer uri.deinit(alloc);
 
-                var project = try Project.load(alloc, uri);
+                var project = try Project.load(alloc, uri, null);
                 defer project.deinit();
 
                 if (project.hasErrors()) try project.printErrors();

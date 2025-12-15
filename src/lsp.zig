@@ -117,7 +117,7 @@ const LspState = struct {
         var uri = try Uri.from_absolute(self.alloc, root_file);
         defer uri.deinit(self.alloc);
 
-        try self.openProjectByRootUri(uri);
+        try self.openProjectByRootUri(uri, null);
     }
 
     pub fn removeWorkspaceFolder(self: *LspState, folder: lsp.types.WorkspaceFolder) void {
@@ -139,8 +139,8 @@ const LspState = struct {
         return std.fs.path.join(self.alloc, &.{ uri.absolute(), config.root });
     }
 
-    pub fn openProjectByRootUri(self: *LspState, uri: Uri) !void {
-        var project = try Project.load(self.alloc, uri);
+    pub fn openProjectByRootUri(self: *LspState, uri: Uri, source: ?[:0]const u8) !void {
+        var project = try Project.load(self.alloc, uri, source);
         errdefer project.deinit();
 
         try self.projects.append(self.alloc, project);
@@ -606,7 +606,8 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     if (state.getProjectForUri(uri) == null) {
                         var owned_uri = try Uri.from_raw(alloc, uri);
                         defer owned_uri.deinit(alloc);
-                        try state.openProjectByRootUri(owned_uri);
+                        const source = try alloc.dupeZ(u8, params.textDocument.text);
+                        try state.openProjectByRootUri(owned_uri, source);
                         state.logOpenProjects();
                         try state.sendDiagnostics(alloc, transport);
                     }

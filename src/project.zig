@@ -40,7 +40,10 @@ const FileLine = struct {
 };
 
 /// Load a project from a root file URI.
-pub fn load(alloc: Allocator, uri: Uri) !Self {
+///
+/// If `source` is provided, uses that as the source text of the root
+/// project file, otherwise loads from file.
+pub fn load(alloc: Allocator, uri: Uri, source: ?[:0]const u8) !Self {
     const tracy_zone = ztracy.ZoneNC(@src(), "Load project", 0x00_00_ff_00);
     defer tracy_zone.End();
 
@@ -61,7 +64,7 @@ pub fn load(alloc: Allocator, uri: Uri) !Self {
         .links = std.StringHashMap(void).init(alloc),
     };
     errdefer self.deinit();
-    try self.loadFileRec(uri, true);
+    try self.loadFileRec(uri, true, source);
 
     // Collect number of bytes, tokens, entries and postings
     // var chars: usize = 0;
@@ -115,23 +118,23 @@ pub fn hasRoot(self: *const Self, file_uri: []const u8) bool {
     return std.mem.eql(u8, self.uris.items[0].value, file_uri);
 }
 
-fn loadFileRec(self: *Self, uri: Uri, is_root: bool) !void {
+fn loadFileRec(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !void {
     if (self.files_by_uri.get(uri.value)) |_| return error.ImportCycle;
-    const imports = try self.loadSingleFile(uri, is_root);
+    const imports = try self.loadSingleFile(uri, is_root, source);
     defer self.alloc.free(imports);
     for (imports) |import| {
         var import_uri = try uri.move_relative(self.alloc, import);
         defer import_uri.deinit(self.alloc);
-        try self.loadFileRec(import_uri, false);
+        try self.loadFileRec(import_uri, false, null);
     }
 }
 
 /// Parses a file and balances all transactions.
-fn loadSingleFile(self: *Self, uri: Uri, is_root: bool) !Data.Imports.Slice {
+fn loadSingleFile(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !Data.Imports.Slice {
     const uri_owned = try uri.clone(self.alloc);
     try self.uris.append(self.alloc, uri_owned);
 
-    const null_terminated = try uri_owned.load_nullterminated(self.alloc);
+    const null_terminated = source orelse try uri_owned.load_nullterminated(self.alloc);
 
     var data, const imports = try Data.loadSource(self.alloc, uri_owned, null_terminated, is_root);
     errdefer data.deinit();
