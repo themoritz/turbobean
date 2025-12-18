@@ -192,6 +192,23 @@ pub const Number = struct {
         }
     }
 
+    /// The tolerance is the smallest positive number that can be represented
+    /// given the number's precision. That is, if the precision is 2, the
+    /// tolerance is 0.01.
+    ///
+    /// For integral numbers (precision >= 0), the tolerance is defined to be
+    /// zero.
+    ///
+    /// Tolerances are used to detect whether two numbers are close enough to
+    /// each other: `|a - b| <= tolerance`.
+    pub fn getTolerance(self: Number) Number {
+        if (self.precision == 0) return Number.zero();
+        return .{
+            .value = 1,
+            .precision = self.precision,
+        };
+    }
+
     pub fn zero() Number {
         return Number{
             .value = 0,
@@ -211,13 +228,9 @@ pub const Number = struct {
         return self.value < 0;
     }
 
-    /// For precision of self is 2, checks whether |self - other| <= 0.01
-    pub fn is_within_tolerance(self: Number, other: Number) bool {
+    /// Checks whether |self - other| <= tolerance
+    pub fn is_within_tolerance(self: Number, other: Number, tolerance: Number) bool {
         const diff = self.sub(other).abs();
-        const tolerance = Number{
-            .value = 1,
-            .precision = self.precision,
-        };
 
         // Compare diff <= tolerance by scaling both to same precision
         const p = @max(diff.precision, tolerance.precision);
@@ -326,10 +339,16 @@ test Number {
 
     try std.testing.expectEqual(Number.fromInt(2).abs(), Number.fromInt(2));
     try std.testing.expectEqual(Number.fromInt(-4).abs(), Number.fromInt(4));
+}
 
-    try std.testing.expect(Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.16)));
-    try std.testing.expect(Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.145)));
-    try std.testing.expect(!Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.135)));
+test "tolerance" {
+    const tolerance = Number.fromFloat(1.15).getTolerance();
+    try std.testing.expectEqual(tolerance, Number.fromFloat(0.01));
+    try std.testing.expectEqual(Number.fromFloat(1).getTolerance(), Number.zero());
+
+    try std.testing.expect(Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.16), tolerance));
+    try std.testing.expect(Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.145), tolerance));
+    try std.testing.expect(!Number.fromFloat(1.15).is_within_tolerance(Number.fromFloat(1.135), tolerance));
 }
 
 test "rounding" {

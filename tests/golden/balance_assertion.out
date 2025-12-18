@@ -1,4 +1,3 @@
-Balance assertion failed: Expected 1.2, accumulated 1
 tests/golden/balance_assertion.bean: [[31mError[0m] Account is not open or has been closed. Open it with an open entry
 
     8 | 2025-11-23 balance Assets  -1 USD
@@ -9,9 +8,19 @@ tests/golden/balance_assertion.bean: [[31mError[0m] The account does not hold 
     9 | 2025-11-23 balance Assets:Foo  1 EUR
                            [31m^^^^^^^^^^[0m
 
+tests/golden/balance_assertion.bean: [[31mError[0m] Balance assertion failed. Expected 2, but accumulated 1 (1 too little).
+
+   12 | 2025-11-23 balance Assets:Foo  2 USD
+        [31m^^^^^^^^^^[0m
+
 tests/golden/balance_assertion.bean: [[31mError[0m] Balance assertion failed. Expected 1.2, but accumulated 1 (0.2 too little).
 
    15 | 2025-11-23 balance Assets:Foo  1.2 USD
+        [31m^^^^^^^^^^[0m
+
+tests/golden/balance_assertion.bean: [[31mError[0m] Balance assertion failed. Expected 1.5, but accumulated 1 (0.5 too little).
+
+   18 | 2025-11-23 balance Assets:Foo  1.5 ~ 0.3 USD
         [31m^^^^^^^^^^[0m
 
 Assets     1 USD

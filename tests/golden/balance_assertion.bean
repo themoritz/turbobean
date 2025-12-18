@@ -8,8 +8,11 @@
 2025-11-23 balance Assets  -1 USD
 2025-11-23 balance Assets:Foo  1 EUR
 
-; This is fine because the required precision is so low:
+2025-11-23 balance Assets:Foo  1 USD
 2025-11-23 balance Assets:Foo  2 USD
 
-; This fails because we require a higher precision:
+2025-11-23 balance Assets:Foo  1.1 USD
 2025-11-23 balance Assets:Foo  1.2 USD
+
+2025-11-23 balance Assets:Foo  1.5 ~ 0.5 USD
+2025-11-23 balance Assets:Foo  1.5 ~ 0.3 USD

@@ -383,8 +383,8 @@ pub fn check(self: *Self) !void {
                     _ = lastPads.remove(balance.account.slice);
                 } else {
                     // Balance check in case of no padding
-                    if (!expected.is_within_tolerance(accumulated)) {
-                        std.debug.print("Balance assertion failed: Expected {f}, accumulated {f}\n", .{ expected, accumulated });
+                    const tolerance = if (balance.tolerance) |t| t else balance.amount.number.?.getTolerance();
+                    if (!expected.is_within_tolerance(accumulated, tolerance)) {
                         try self.addError(entry.main_token, sorted.file, .{ .balance_assertion_failed = .{
                             .expected = expected,
                             .accumulated = accumulated,
