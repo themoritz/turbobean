@@ -39,6 +39,7 @@ pub const Tag = union(enum) {
     tx_too_many_variables,
     tx_division_by_zero,
     tx_multiple_solutions,
+    cannot_infer_amount_currency_when_price_set,
 
     account_not_open,
     account_already_open,
@@ -113,6 +114,7 @@ pub fn formatMessage(self: Self, writer: *std.Io.Writer) !void {
         .tx_too_many_variables => try writer.writeAll("Transaction can't be balanced unambiguously"),
         .tx_division_by_zero => try writer.writeAll("Division by zero while balancing transaction"),
         .tx_multiple_solutions => try writer.writeAll("Transaction can't be balanced unambiguously"),
+        .cannot_infer_amount_currency_when_price_set => try writer.writeAll("Cannot infer amount currency when price is set. Please specify what currency is bought/sold"),
         .account_not_open => try writer.writeAll("Account is not open or has been closed. Open it with an open entry"),
         .account_already_open => try writer.writeAll("Account has already been opened"),
         .multiple_pads => try writer.writeAll("Multiple pads of the same account. You need to have a balance assertion between pads"),

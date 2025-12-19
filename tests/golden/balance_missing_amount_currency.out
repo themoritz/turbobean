@@ -1,0 +1,8 @@
+tests/golden/balance_missing_amount_currency.bean: [[31mError[0m] Cannot infer amount currency when price is set. Please specify what currency is bought/sold
+
+    5 |   Assets:Foo   1 @ 1 USD
+          [31m^^^^^^^^^^[0m
+
+Assets
+├ Foo
+└ Bar

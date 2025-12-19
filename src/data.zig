@@ -328,7 +328,7 @@ pub fn balanceTransactions(self: *Self) !void {
     defer solver.deinit();
     var diagnostics: Solver.CurrencyImbalance = undefined;
 
-    for (self.entries.items) |*entry| {
+    entries: for (self.entries.items) |*entry| {
         switch (entry.payload) {
             .transaction => |*tx| {
                 if (tx.postings) |postings| {
@@ -353,8 +353,11 @@ pub fn balanceTransactions(self: *Self) !void {
                         var currency: *?[]const u8 = undefined;
 
                         if (self.postings.items(.price)[i]) |_| {
-                            // TODO: Turn this into proper error
-                            std.debug.assert(self.postings.items(.amount)[i].currency != null);
+                            if (self.postings.items(.amount)[i].currency == null) {
+                                try self.addError(self.postings.items(.account)[i], self.uri, .cannot_infer_amount_currency_when_price_set);
+                                tx.dirty = true;
+                                continue :entries;
+                            }
                             currency = &self.postings.items(.price)[i].?.amount.currency;
                             price = &self.postings.items(.price)[i].?.amount.number;
                         } else {
