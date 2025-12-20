@@ -104,6 +104,14 @@ pub fn accountOpen(self: *Self, name: []const u8) bool {
     return self.node_by_name.contains(name);
 }
 
+pub fn isPlainAccount(self: *Self, account: []const u8) !bool {
+    const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
+    return switch (self.nodes.items[index].inventory) {
+        .lots => false,
+        .plain => true,
+    };
+}
+
 pub fn isDescendant(self: *const Self, parent: []const u8, child: []const u8) !bool {
     const parent_index = self.node_by_name.get(parent) orelse return error.AccountNotOpen;
     const child_index = self.node_by_name.get(child) orelse return error.AccountNotOpen;

@@ -1,0 +1,15 @@
+tests/golden/pad.bean: [[31mError[0m] Pad accounts must be plain
+
+    5 | 2025-12-20 pad Assets:Stocks Equity:Opening
+                       [31m^^^^^^^^^^^^^[0m
+
+tests/golden/pad.bean: [[31mError[0m] Balance assertion failed. Expected 5, but accumulated 0 (5 too little).
+
+    6 | 2025-12-21 balance Assets:Stocks  5 AAPL
+        [31m^^^^^^^^^^[0m
+
+Assets      5 USD
+├ Stocks
+└ Cash      5 USD
+Equity      -5 USD
+└ Opening   -5 USD

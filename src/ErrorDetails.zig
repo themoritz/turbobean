@@ -44,6 +44,7 @@ pub const Tag = union(enum) {
     account_not_open,
     account_already_open,
     multiple_pads,
+    pad_accounts_must_be_plain,
     balance_assertion_failed: struct {
         expected: Number,
         accumulated: Number,
@@ -118,6 +119,7 @@ pub fn formatMessage(self: Self, writer: *std.Io.Writer) !void {
         .account_not_open => try writer.writeAll("Account is not open or has been closed. Open it with an open entry"),
         .account_already_open => try writer.writeAll("Account has already been opened"),
         .multiple_pads => try writer.writeAll("Multiple pads of the same account. You need to have a balance assertion between pads"),
+        .pad_accounts_must_be_plain => try writer.writeAll("Pad accounts must be plain"),
         .balance_assertion_failed => |body| {
             try writer.print("Balance assertion failed. Expected {f}, but accumulated {f}", .{
                 body.expected,

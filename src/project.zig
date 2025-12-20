@@ -289,9 +289,19 @@ pub fn check(self: *Self) !void {
             .pad => |*pad| {
                 if (!tree.accountOpen(pad.account.slice)) {
                     try self.addError(pad.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                    continue;
                 }
                 if (!tree.accountOpen(pad.pad_to.slice)) {
                     try self.addError(pad.pad_to, sorted.file, ErrorDetails.Tag.account_not_open);
+                    continue;
+                }
+                if (!(tree.isPlainAccount(pad.pad_to.slice) catch unreachable)) {
+                    try self.addError(pad.pad_to, sorted.file, ErrorDetails.Tag.pad_accounts_must_be_plain);
+                    continue;
+                }
+                if (!(tree.isPlainAccount(pad.account.slice) catch unreachable)) {
+                    try self.addError(pad.account, sorted.file, ErrorDetails.Tag.pad_accounts_must_be_plain);
+                    continue;
                 }
 
                 if (lastPads.get(pad.account.slice)) |_| {
@@ -336,7 +346,7 @@ pub fn check(self: *Self) !void {
                         .meta = null,
                     };
                     try self.synthetic_postings.append(self.alloc, pad_posting);
-                    try tree.postInventory(entry.date, pad_posting);
+                    try tree.addPosition(pad_posting.account.slice, pad_posting.amount.currency.?, pad_posting.amount.number.?);
 
                     const pad_to_posting = Data.Posting{
                         .flag = null,
@@ -350,7 +360,7 @@ pub fn check(self: *Self) !void {
                         .meta = null,
                     };
                     try self.synthetic_postings.append(self.alloc, pad_to_posting);
-                    try tree.postInventory(entry.date, pad_to_posting);
+                    try tree.addPosition(pad_to_posting.account.slice, pad_to_posting.amount.currency.?, pad_to_posting.amount.number.?);
 
                     const postings = Data.Range.create(postings_top, self.synthetic_postings.len);
                     const payload = Data.Entry.Payload{
