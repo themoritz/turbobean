@@ -108,18 +108,6 @@ pub const Number = struct {
         return Number.fromFloat(self_float / other_float);
     }
 
-    pub fn toString(self: Number, allocator: std.mem.Allocator) ![]const u8 {
-        const float_val = self.toFloat();
-
-        var buf: [64]u8 = undefined;
-
-        const used = try std.fmt.float.render(&buf, float_val, .{
-            .mode = .decimal,
-            .precision = self.precision,
-        });
-        return try allocator.dupe(u8, used);
-    }
-
     pub const WithPrecision = struct {
         inner: Number,
         precision: u32,
@@ -326,20 +314,10 @@ fn pow10(n: u32) i64 {
 }
 
 test Number {
-    const alloc = std.testing.allocator;
-
     try std.testing.expectEqual(Number.fromFloat(1.13), try Number.fromSlice("1.13"));
 
     const a = Number.fromFloat(1.2345);
     const b = Number.fromFloat(2);
-
-    const a_str = try a.toString(alloc);
-    const b_str = try b.toString(alloc);
-    defer alloc.free(a_str);
-    defer alloc.free(b_str);
-
-    try std.testing.expectEqualStrings("1.2345", a_str);
-    try std.testing.expectEqualStrings("2", b_str);
 
     try std.testing.expectEqual(Number.fromFloat(3.2345), a.add(b));
     try std.testing.expectEqual(Number.fromFloat(-0.7655), a.sub(b));
