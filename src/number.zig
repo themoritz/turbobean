@@ -256,6 +256,20 @@ pub const Number = struct {
         }
     }
 
+    pub fn max(self: Number, other: Number) Number {
+        const p = @max(self.precision, other.precision);
+        const self_factor = pow10(p - self.precision);
+        const other_factor = pow10(p - other.precision);
+        const self_scaled = self.value * self_factor;
+        const other_scaled = other.value * other_factor;
+
+        if (self_scaled >= other_scaled) {
+            return self;
+        } else {
+            return other;
+        }
+    }
+
     pub fn abs(self: Number) Number {
         return Number{
             .value = @intCast(@abs(self.value)),

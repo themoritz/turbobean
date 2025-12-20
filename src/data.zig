@@ -366,6 +366,12 @@ pub fn balanceTransactions(self: *Self) !void {
                         }
 
                         try solver.addTriple(price, number, currency);
+
+                        if (self.postings.items(.amount)[i].number) |n| {
+                            if (self.postings.items(.amount)[i].currency) |c| {
+                                try solver.addToleranceInput(n, c);
+                            }
+                        }
                     }
                     _ = solver.solve(&diagnostics) catch |err| {
                         const tag: ErrorDetails.Tag = switch (err) {

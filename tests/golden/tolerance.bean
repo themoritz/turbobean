@@ -1,0 +1,6 @@
+2025-12-20 open Assets:Cash
+2025-12-20 open Assets:Stocks
+
+2025-12-20 txn "Buy"
+  Assets:Cash    -12.08  EUR
+  Assets:Stocks    1.156 AAPL @ 10.45 EUR

@@ -82,6 +82,7 @@ const Solution = struct {
 pub const Solver = struct {
     alloc: Allocator,
     triples: std.ArrayList(Triple),
+    tolerances: std.StringHashMap(Number),
 
     num_number_vars: Variable = 0,
     num_currency_vars: Variable = 0,
@@ -105,12 +106,14 @@ pub const Solver = struct {
         return Solver{
             .alloc = alloc,
             .triples = .{},
+            .tolerances = std.StringHashMap(Number).init(alloc),
             .sum_by_currency = std.StringHashMap(Sum).init(alloc),
         };
     }
 
     pub fn deinit(p: *Solver) void {
         p.triples.deinit(p.alloc);
+        p.tolerances.deinit();
         p.sum_by_currency.deinit();
     }
 
@@ -118,6 +121,7 @@ pub const Solver = struct {
         p.num_number_vars = 0;
         p.num_currency_vars = 0;
         p.num_currencies = 0;
+        p.tolerances.clearRetainingCapacity();
         p.triples.clearRetainingCapacity();
     }
 
@@ -158,6 +162,15 @@ pub const Solver = struct {
 
         const triple = Triple{ .price = m_price, .number = m_number, .currency = m_currency };
         try p.triples.append(p.alloc, triple);
+    }
+
+    pub fn addToleranceInput(self: *Solver, number: Number, currency: []const u8) !void {
+        const tolerance = number.getTolerance();
+        if (self.tolerances.getEntry(currency)) |entry| {
+            entry.value_ptr.* = entry.value_ptr.max(tolerance);
+        } else {
+            try self.tolerances.put(currency, tolerance);
+        }
     }
 
     pub const SolverError = error{
@@ -326,8 +339,11 @@ pub const Solver = struct {
                     solution.numbers[mixed.variable] = result;
                 }
             } else {
-                // TODO: Take tolerance into account
-                if (!kv.value_ptr.constant.is_zero()) {
+                // TODO: Make tolerance factor configurable
+                const tolerance_factor = comptime Number.fromFloat(0.5);
+                var tolerance = p.tolerances.get(kv.key_ptr.*) orelse Number.zero();
+                tolerance = tolerance.mul(tolerance_factor);
+                if (!kv.value_ptr.constant.is_within_tolerance(Number.zero(), tolerance)) {
                     if (diagnostics) |diag| diag.* = .{ .currency = kv.key_ptr.*, .sum = kv.value_ptr.constant };
                     return error.DoesNotBalance;
                 }
