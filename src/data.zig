@@ -352,6 +352,7 @@ pub fn balanceTransactions(self: *Self) !void {
                         var price: *?Number = undefined;
                         var currency: *?[]const u8 = undefined;
 
+                        var rounding_currency: ?[]const u8 = null;
                         if (self.postings.items(.price)[i]) |_| {
                             if (self.postings.items(.amount)[i].currency == null) {
                                 try self.addError(self.postings.items(.account)[i], self.uri, .cannot_infer_amount_currency_when_price_set);
@@ -360,12 +361,19 @@ pub fn balanceTransactions(self: *Self) !void {
                             }
                             currency = &self.postings.items(.price)[i].?.amount.currency;
                             price = &self.postings.items(.price)[i].?.amount.number;
+                            if (number.* == null) {
+                                // Number interpolated: round to amount currency tolerance
+                                rounding_currency = self.postings.items(.amount)[i].currency;
+                            } else if (price.* == null) {
+                                // Price interpolated: round to price currency tolerance
+                                rounding_currency = self.postings.items(.price)[i].?.amount.currency;
+                            }
                         } else {
                             currency = &self.postings.items(.amount)[i].currency;
                             price = &one;
                         }
 
-                        try solver.addTriple(price, number, currency);
+                        try solver.addTriple(price, number, currency, rounding_currency);
 
                         if (self.postings.items(.amount)[i].number) |n| {
                             if (self.postings.items(.amount)[i].currency) |c| {

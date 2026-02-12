@@ -90,6 +90,11 @@ pub const Solver = struct {
     currencies: [MAX_UNKNOWNS][]const u8 = undefined,
     num_currencies: usize = 0,
 
+    /// For each number variable, the currency whose tolerance determines
+    /// rounding precision for the solved value. Set via addTriple when the
+    /// caller provides a rounding_currency.
+    rounding_currencies: [MAX_UNKNOWNS]?[]const u8 = .{null} ** MAX_UNKNOWNS,
+
     sum_by_currency: std.StringHashMap(Sum),
 
     const Sum = struct {
@@ -121,6 +126,7 @@ pub const Solver = struct {
         p.num_number_vars = 0;
         p.num_currency_vars = 0;
         p.num_currencies = 0;
+        p.rounding_currencies = .{null} ** MAX_UNKNOWNS;
         p.tolerances.clearRetainingCapacity();
         p.triples.clearRetainingCapacity();
     }
@@ -131,12 +137,27 @@ pub const Solver = struct {
         return p.num_number_vars - 1;
     }
 
-    /// Add a triple to the problem.
-    pub fn addTriple(p: *Solver, price: *?Number, number: *?Number, currency: *?[]const u8) !void {
+    /// Add a triple to the problem. When rounding_currency is provided and
+    /// the number or price is unknown, the solved value will be rounded to
+    /// the tolerance precision of that currency.
+    pub fn addTriple(
+        p: *Solver,
+        price: *?Number,
+        number: *?Number,
+        currency: *?[]const u8,
+        rounding_currency: ?[]const u8,
+    ) !void {
         const price_var = if (price.*) |_| null else try p.nextNumberVar();
         const m_price = MaybeNumber{ .number = price, .variable = price_var };
         const number_var = if (number.*) |_| null else try p.nextNumberVar();
         const m_number = MaybeNumber{ .number = number, .variable = number_var };
+
+        if (price_var) |v| {
+            p.rounding_currencies[v] = rounding_currency;
+        }
+        if (number_var) |v| {
+            p.rounding_currencies[v] = rounding_currency;
+        }
 
         var currency_var: ?Variable = undefined;
         if (currency.*) |c| {
@@ -217,14 +238,26 @@ pub const Solver = struct {
             if (carry == 1) break;
         }
 
-        if (prev_solution) |s| {
+        if (prev_solution) |*s| {
+            // Round solved numbers to the tolerance precision of their
+            // amount currency.
+            for (0..s.num_number_vars) |v| {
+                if (p.rounding_currencies[v]) |rc| {
+                    if (p.tolerances.get(rc)) |tol| {
+                        if (tol.precision > 0) {
+                            s.numbers[v] = s.numbers[v].roundTo(tol.precision);
+                        }
+                    }
+                }
+            }
+
             // Apply solution to triples
             for (p.triples.items) |triple| {
                 if (triple.price.variable) |v| triple.price.number.* = s.numbers[v];
                 if (triple.number.variable) |v| triple.number.number.* = s.numbers[v];
                 if (triple.currency.variable) |v| triple.currency.currency.* = s.currencies[v];
             }
-            return s;
+            return s.*;
         } else if (err) |e| {
             return e;
         } else {
@@ -366,8 +399,8 @@ test "plain balance" {
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
     defer alloc.free(eur.?);
 
-    try p.addTriple(&one, &five, &eur);
-    try p.addTriple(&one, &neg_five, &eur);
+    try p.addTriple(&one, &five, &eur, null);
+    try p.addTriple(&one, &neg_five, &eur, null);
 
     _ = try p.solve(null);
 }
@@ -391,10 +424,10 @@ test "currency solution" {
     var c1: ?[]const u8 = null;
     var c2: ?[]const u8 = null;
 
-    try p.addTriple(&one, &five, &eur);
-    try p.addTriple(&one, &neg_five, &c1);
-    try p.addTriple(&one, &three, &usd);
-    try p.addTriple(&one, &neg_three, &c2);
+    try p.addTriple(&one, &five, &eur, null);
+    try p.addTriple(&one, &neg_five, &c1, null);
+    try p.addTriple(&one, &three, &usd, null);
+    try p.addTriple(&one, &neg_three, &c2, null);
 
     _ = try p.solve(null);
     try std.testing.expectEqualStrings("EUR", c1.?);
@@ -418,10 +451,10 @@ test "number solution" {
     var n1: ?Number = null;
     var n2: ?Number = null;
 
-    try p.addTriple(&one, &six, &eur);
-    try p.addTriple(&one, &n1, &eur);
-    try p.addTriple(&one, &six, &usd);
-    try p.addTriple(&n2, &three, &usd);
+    try p.addTriple(&one, &six, &eur, null);
+    try p.addTriple(&one, &n1, &eur, null);
+    try p.addTriple(&one, &six, &usd, null);
+    try p.addTriple(&n2, &three, &usd, null);
 
     _ = try p.solve(null);
     try std.testing.expectEqual(Number.fromFloat(-6), n1.?);
@@ -442,8 +475,8 @@ test "combined solution" {
     var n1: ?Number = null;
     var c1: ?[]const u8 = null;
 
-    try p.addTriple(&one, &six, &eur);
-    try p.addTriple(&one, &n1, &c1);
+    try p.addTriple(&one, &six, &eur, null);
+    try p.addTriple(&one, &n1, &c1, null);
 
     _ = try p.solve(null);
     try std.testing.expectEqualStrings("EUR", c1.?);
@@ -464,9 +497,9 @@ test "too many variables" {
     var n1: ?Number = null;
     var n2: ?Number = null;
 
-    try p.addTriple(&one, &five, &eur);
-    try p.addTriple(&one, &n1, &eur);
-    try p.addTriple(&one, &n2, &eur);
+    try p.addTriple(&one, &five, &eur, null);
+    try p.addTriple(&one, &n1, &eur, null);
+    try p.addTriple(&one, &n2, &eur, null);
 
     const s = p.solve(null);
     try std.testing.expectError(error.TooManyVariables, s);
@@ -483,7 +516,7 @@ test "too many variables price" {
     var n1: ?Number = null;
     var n2: ?Number = null;
 
-    try p.addTriple(&n1, &n2, &eur);
+    try p.addTriple(&n1, &n2, &eur, null);
 
     const s = p.solve(null);
     try std.testing.expectError(error.TooManyVariables, s);
@@ -506,9 +539,9 @@ test "does not balance" {
     var n1: ?Number = null;
     var c1: ?[]const u8 = null;
 
-    try p.addTriple(&one, &five, &eur);
-    try p.addTriple(&one, &n1, &usd);
-    try p.addTriple(&one, &three, &c1);
+    try p.addTriple(&one, &five, &eur, null);
+    try p.addTriple(&one, &n1, &usd, null);
+    try p.addTriple(&one, &three, &c1, null);
 
     var diag: Solver.CurrencyImbalance = undefined;
     const s = p.solve(&diag);
@@ -526,7 +559,7 @@ test "single no currency" {
     var one: ?Number = Number.fromFloat(1);
     var c1: ?[]const u8 = null;
 
-    try p.addTriple(&n1, &one, &c1);
+    try p.addTriple(&n1, &one, &c1, null);
 
     const s = p.solve(null);
     try std.testing.expectError(error.NoCurrency, s);
@@ -543,8 +576,36 @@ test "single zero" {
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
     defer alloc.free(eur.?);
 
-    try p.addTriple(&n1, &one, &eur);
+    try p.addTriple(&n1, &one, &eur, null);
 
     _ = try p.solve(null);
     try std.testing.expectEqual(Number.zero(), n1.?);
+}
+
+test "price interpolation rounding" {
+    const alloc = std.testing.allocator;
+    var p = Solver.init(alloc);
+    defer p.deinit();
+
+    var one: ?Number = Number.fromFloat(1);
+    var seven: ?Number = Number.fromFloat(7);
+    var neg_one: ?Number = Number.fromFloat(-1);
+    var small: ?Number = Number.fromFloat(0.01);
+    var neg_small: ?Number = Number.fromFloat(-0.01);
+
+    var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
+    defer alloc.free(eur.?);
+
+    // 7 USD @ ? EUR: price unknown, should solve to 1/7 ≈ 0.142857143
+    // then round to 0.14 based on EUR tolerance of 0.01
+    var price: ?Number = null;
+    try p.addTriple(&price, &seven, &eur, "EUR");
+    try p.addTriple(&one, &neg_one, &eur, null);
+    try p.addTriple(&one, &small, &eur, null);
+    try p.addTriple(&one, &neg_small, &eur, null);
+
+    try p.addToleranceInput(Number.fromFloat(0.01), "EUR");
+
+    _ = try p.solve(null);
+    try std.testing.expectEqual(Number.fromFloat(0.14), price.?);
 }

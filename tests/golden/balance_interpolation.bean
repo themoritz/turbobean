@@ -1,0 +1,8 @@
+2025-01-01 open Assets:Foo
+2025-01-01 open Assets:Bar
+
+2025-11-21 txn "Balance"
+  Assets:Foo         USD @ 7 EUR
+  Assets:Bar    1    EUR
+  Assets:Bar    0.01 USD  ; to indicate tolerance for rounding interpolated value
+  Assets:Bar   -0.01 USD  ; to indicate tolerance for rounding interpolated value
