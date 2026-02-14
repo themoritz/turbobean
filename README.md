@@ -35,6 +35,7 @@ The philosopy is:
   - [x] Highlight tags + links
   - [x] Syntax highlighting via semantic tokens
   - [x] Rename account
+  - [ ] Rename tags and links
   - [ ] Display interpolated values inline
 - [x] Web UI (similar to [fava](https://github.com/beancount/fava))
   - [x] File Watcher (instant reloads)
