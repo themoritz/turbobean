@@ -48,6 +48,28 @@ suite('LSP', () => {
         await assertGolden('highlight-equity-opening-balances', formatHighlights(doc, highlights));
     });
 
+    test('Highlight tag #tag', async function() {
+        const pos = findInLine(doc, 9, '#tag');
+        await moveTo(doc, pos);
+        const highlights = await vscode.commands.executeCommand<vscode.DocumentHighlight[]>(
+            'vscode.executeDocumentHighlights',
+            doc.uri,
+            pos
+        );
+        await assertGolden('highlight-tag', formatHighlights(doc, highlights));
+    });
+
+    test('Highlight link ^mylink', async function() {
+        const pos = findInLine(doc, 9, '^mylink');
+        await moveTo(doc, pos);
+        const highlights = await vscode.commands.executeCommand<vscode.DocumentHighlight[]>(
+            'vscode.executeDocumentHighlights',
+            doc.uri,
+            pos
+        );
+        await assertGolden('highlight-link', formatHighlights(doc, highlights));
+    });
+
     test('Diagnostics', async function() {
         const diagnostics = vscode.languages.getDiagnostics(doc.uri);
         await assertGolden('diagnostics', formatDiagnostics(doc, diagnostics));

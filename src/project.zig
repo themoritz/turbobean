@@ -569,6 +569,70 @@ pub fn accountIterator(self: *const Self, uri: ?[]const u8) AccountIterator {
     return AccountIterator.init(self, file);
 }
 
+pub const TagLinkIterator = struct {
+    self: *const Self,
+    file: u32,
+    file_max: u32, // exclusive
+    entry: u32,
+    taglink_idx: u32,
+
+    pub fn init(self: *const Self, file: ?u32) TagLinkIterator {
+        const file_max: u32 = if (file) |f| f + 1 else @intCast(self.files.items.len);
+        return .{
+            .self = self,
+            .file = file orelse 0,
+            .file_max = file_max,
+            .entry = 0,
+            .taglink_idx = 0,
+        };
+    }
+
+    pub fn next(it: *TagLinkIterator) ?struct { file: u32, token: Token } {
+        const self = it.self;
+        while (it.file < it.file_max) {
+            const data = self.files.items[it.file];
+
+            while (it.entry < data.entries.items.len) {
+                const entry = data.entries.items[it.entry];
+                if (entry.tagslinks) |range| {
+                    while (it.taglink_idx < range.end) {
+                        const idx = it.taglink_idx;
+                        it.taglink_idx += 1;
+
+                        const taglink_token = data.tagslinks.items(.token)[idx];
+                        const taglink_explicit = data.tagslinks.items(.explicit)[idx];
+
+                        // Only return explicit tags/links (filter out pushtag-derived ones)
+                        if (taglink_explicit) {
+                            return .{
+                                .file = it.file,
+                                .token = taglink_token,
+                            };
+                        }
+                    }
+                }
+
+                it.entry += 1;
+                it.taglink_idx = if (it.entry < data.entries.items.len)
+                    if (data.entries.items[it.entry].tagslinks) |range| @intCast(range.start) else 0
+                else
+                    0;
+            }
+
+            it.file += 1;
+            it.entry = 0;
+            it.taglink_idx = 0;
+        }
+
+        return null;
+    }
+};
+
+pub fn tagLinkIterator(self: *const Self, uri: ?[]const u8) TagLinkIterator {
+    const file: ?u32 = if (uri) |u| if (self.files_by_uri.get(u)) |f| @intCast(f) else null else null;
+    return TagLinkIterator.init(self, file);
+}
+
 fn refreshLspCache(self: *Self) !void {
     self.accounts.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
@@ -578,11 +642,11 @@ fn refreshLspCache(self: *Self) !void {
         for (data.entries.items) |entry| {
             if (entry.tagslinks) |range| {
                 for (range.start..range.end) |i| {
-                    const slice = data.tagslinks.items(.slice)[i];
+                    const token = data.tagslinks.items(.token)[i];
                     const kind = data.tagslinks.items(.kind)[i];
                     switch (kind) {
-                        .tag => try self.tags.put(slice, {}),
-                        .link => try self.links.put(slice, {}),
+                        .tag => try self.tags.put(token.slice, {}),
+                        .link => try self.links.put(token.slice, {}),
                     }
                 }
             }

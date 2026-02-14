@@ -32,7 +32,7 @@ The philosopy is:
   - [x] Hover account (before + after balance)
   - [x] Auto completion (accounts, tags, links)
   - [x] Highlight account
-  - [ ] Highlight tags + links
+  - [x] Highlight tags + links
   - [x] Syntax highlighting via semantic tokens
   - [x] Rename account
   - [ ] Display interpolated values inline

@@ -240,7 +240,9 @@ pub const Range = struct {
 
 pub const TagLink = struct {
     kind: Kind,
-    slice: []const u8,
+    token: Lexer.Token,
+    /// True if this tag/link was explicitly written in the source, false if it came from pushtag
+    explicit: bool,
 
     pub const Kind = enum {
         tag,

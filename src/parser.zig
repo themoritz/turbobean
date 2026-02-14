@@ -621,16 +621,25 @@ fn parseTagsLinks(p: *Self) !?Data.Range {
     const tagslinks_top = p.tagslinks.len;
     while (true) {
         if (p.tryToken(.tag)) |tag| {
-            _ = try p.addTagLink(Data.TagLink{ .kind = .tag, .slice = tag.slice });
+            _ = try p.addTagLink(Data.TagLink{ .kind = .tag, .token = tag, .explicit = true });
         } else if (p.tryToken(.link)) |link| {
-            _ = try p.addTagLink(Data.TagLink{ .kind = .link, .slice = link.slice });
+            _ = try p.addTagLink(Data.TagLink{ .kind = .link, .token = link, .explicit = true });
         } else break;
     }
 
     // Add tags that are on the pushtags stack
     var tags_iter = p.active_tags.keyIterator();
     while (tags_iter.next()) |tag| {
-        _ = try p.addTagLink(Data.TagLink{ .kind = .tag, .slice = tag.* });
+        // Create a synthetic token for pushtag-derived tags
+        const synthetic_token = Lexer.Token{
+            .tag = .tag,
+            .slice = tag.*,
+            .start_line = 0,
+            .end_line = 0,
+            .start_col = 0,
+            .end_col = 0,
+        };
+        _ = try p.addTagLink(Data.TagLink{ .kind = .tag, .token = synthetic_token, .explicit = false });
     }
 
     return Data.Range.create(tagslinks_top, p.tagslinks.len);

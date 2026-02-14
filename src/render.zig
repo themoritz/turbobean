@@ -156,7 +156,7 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
     if (entry.tagslinks) |tagslinks| {
         for (tagslinks.start..tagslinks.end) |i| {
             try r.space();
-            try r.slice(r.data.tagslinks.items(.slice)[i]);
+            try r.slice(r.data.tagslinks.items(.token)[i].slice);
         }
     }
     try r.newline();

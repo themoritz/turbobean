@@ -100,6 +100,16 @@ const LspState = struct {
         } else null;
     }
 
+    pub fn findTagOrLink(self: *const LspState, uri: []const u8, position: lsp.types.Position) ?Token {
+        const project = self.getProjectForUri(uri) orelse return null;
+        var iter = project.tagLinkIterator(uri);
+        return while (iter.next()) |next| {
+            const same_line = next.token.start_line == position.line;
+            const within_token = next.token.start_col <= position.character and next.token.end_col >= position.character;
+            if (same_line and within_token) break next.token;
+        } else null;
+    }
+
     pub fn getProjectForUri(self: *const LspState, uri: []const u8) ?*Project {
         for (self.projects.items) |*project| {
             if (project.ownsFile(uri)) return project;
@@ -495,21 +505,35 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
-                    const account = state.findAccount(uri, params.position) orelse {
-                        try transport.writeResponse(alloc, request.id, void, {}, .{});
-                        continue :loop;
-                    };
+
                     var highlights = std.ArrayList(lsp.types.DocumentHighlight){};
                     defer highlights.deinit(alloc);
-                    var iter = project.accountIterator(uri);
-                    while (iter.next()) |next| {
-                        if (std.mem.eql(u8, next.token.slice, account.slice)) {
-                            try highlights.append(alloc, .{
-                                .range = tokenRange(next.token),
-                                .kind = .Text,
-                            });
+
+                    // Try to find an account at the cursor position
+                    if (state.findAccount(uri, params.position)) |account| {
+                        var iter = project.accountIterator(uri);
+                        while (iter.next()) |next| {
+                            if (std.mem.eql(u8, next.token.slice, account.slice)) {
+                                try highlights.append(alloc, .{
+                                    .range = tokenRange(next.token),
+                                    .kind = .Text,
+                                });
+                            }
                         }
                     }
+                    // Try to find a tag or link at the cursor position
+                    else if (state.findTagOrLink(uri, params.position)) |taglink| {
+                        var iter = project.tagLinkIterator(uri);
+                        while (iter.next()) |next| {
+                            if (std.mem.eql(u8, next.token.slice, taglink.slice)) {
+                                try highlights.append(alloc, .{
+                                    .range = tokenRange(next.token),
+                                    .kind = .Text,
+                                });
+                            }
+                        }
+                    }
+
                     try transport.writeResponse(alloc, request.id, []lsp.types.DocumentHighlight, highlights.items, .{});
                 },
                 .@"textDocument/prepareRename" => |params| {
