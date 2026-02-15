@@ -88,12 +88,28 @@ pub const Entry = struct {
         document: Document,
     };
 
+    // Sort entries by date. When dates are equal, sort by entry type "time of day":
+    // commodity/price/open < balance < tx < close
     pub fn compare(ctx: void, self: Entry, other: Entry) bool {
         _ = ctx;
         switch (self.date.compare(other.date)) {
             .after => return true,
-            else => return false,
+            .before => return false,
+            .equal => {
+                const time_self = getTimeOfDay(self);
+                const time_other = getTimeOfDay(other);
+                return time_self < time_other;
+            },
         }
+    }
+
+    fn getTimeOfDay(entry: Entry) u8 {
+        return switch (entry.payload) {
+            .commodity, .price, .open => 0,
+            .balance => 1,
+            .close => 3,
+            else => 2, // Transactions in particular
+        };
     }
 
     pub fn hash(self: Entry) u64 {
