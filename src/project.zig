@@ -204,25 +204,53 @@ pub fn printErrors(self: *Self) !void {
         errors.deinit();
     }
 
-    var num_errors: usize = 0;
+    if (errors.count() == 0) return;
+
+    // Separate errors and warnings
+    var error_list = std.ArrayList(ErrorDetails){};
+    defer error_list.deinit(self.alloc);
+    var warning_list = std.ArrayList(ErrorDetails){};
+    defer warning_list.deinit(self.alloc);
+
     {
         var iter = errors.valueIterator();
-        while (iter.next()) |v| num_errors += v.*.items.len;
+        while (iter.next()) |v| {
+            for (v.items) |err| {
+                if (err.severity == .err) {
+                    try error_list.append(self.alloc, err);
+                } else {
+                    try warning_list.append(self.alloc, err);
+                }
+            }
+        }
     }
-    if (num_errors == 0) return;
+
+    const num_errors = error_list.items.len;
+    const num_warnings = warning_list.items.len;
 
     var num_printed: usize = 0;
 
-    var iter = errors.valueIterator();
-    while (iter.next()) |v| {
-        for (v.items) |err| {
-            if (num_printed == 10) {
-                std.debug.print("... and {d} more errors\n", .{num_errors - 10});
-                return;
-            }
-            try err.print(self.alloc);
-            num_printed += 1;
+    // Print errors first
+    for (error_list.items) |err| {
+        if (num_printed == 10) {
+            const remaining_errors = num_errors - num_printed;
+            const remaining_warnings = num_warnings;
+            std.debug.print("... and {d} errors and {d} warnings more\n", .{ remaining_errors, remaining_warnings });
+            return;
         }
+        try err.print(self.alloc);
+        num_printed += 1;
+    }
+
+    // Then print warnings
+    for (warning_list.items) |warn| {
+        if (num_printed == 10) {
+            const remaining_warnings = num_warnings - (num_printed - num_errors);
+            std.debug.print("... and {d} errors and {d} warnings more\n", .{ 0, remaining_warnings });
+            return;
+        }
+        try warn.print(self.alloc);
+        num_printed += 1;
     }
 }
 
