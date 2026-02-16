@@ -29,13 +29,13 @@ include "open.bean" ; this is a comment
     Expenses:Food
 
 2020-01-01 open Assets:Foo
-2020-01-02 pad Assets:Foo Equity:Ope𝄞ning-Balances
+2020-01-01 pad Assets:Foo Equity:Ope𝄞ning-Balances
 
 2020-01-02 balance Assets:Foo    1 EUR
 
 2020-01-02 pad Assets:Foo Equity:Ope𝄞ning-Balances
 
-2020-01-02 balance Assets:Foo    4 EUR
+2020-01-03 balance Assets:Foo    4 EUR
 
 2020-01-03 txn ""
     Assets:Foo    1 EUR
