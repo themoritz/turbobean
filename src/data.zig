@@ -351,21 +351,6 @@ pub fn balanceTransactions(self: *Self) !void {
             .transaction => |*tx| {
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
-                        // Infer price from cost spec for backwards-compatibility:
-                        if (self.postings.items(.lot_spec)[i]) |lot_spec| {
-                            if (lot_spec.price) |price| {
-                                if (price.isComplete()) {
-                                    if (self.postings.items(.price)[i] == null) {
-                                        self.postings.items(.price)[i] = .{
-                                            .amount = price,
-                                            .total = false,
-                                        };
-                                        try self.addWarning(self.postings.items(.account)[i], self.uri, .inferred_price);
-                                    }
-                                }
-                            }
-                        }
-
                         const number: *?Number = &self.postings.items(.amount)[i].number;
                         var price: *?Number = undefined;
                         var currency: *?[]const u8 = undefined;

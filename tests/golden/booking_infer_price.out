@@ -3,7 +3,11 @@ tests/golden/booking_infer_price.bean: [[33mWarning[0m] Price inferred from co
     5 |   Assets:Stocks  10 AAPL {2 USD}
           [33m^^^^^^^^^^^^^[0m
 
-Assets     10 AAPL @ 2 USD {2025-12-10}
-           -20 USD
-├ Stocks   10 AAPL @ 2 USD {2025-12-10}
-└ Cash     -20 USD
+tests/golden/booking_infer_price.bean: [[33mWarning[0m] Price inferred from cost spec. Please consider using @ syntax.
+
+   13 |   Assets:Stocks  -5 AAPL {4 USD}
+          [33m^^^^^^^^^^^^^[0m
+
+Assets     15 USD
+├ Stocks
+└ Cash     15 USD

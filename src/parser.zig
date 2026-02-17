@@ -500,12 +500,30 @@ fn parsePosting(p: *Self) !?usize {
 
     const meta = try p.parseMeta(false);
 
+    // Infer price from cost spec for backwards-compatibility:
+    var inferred_price = price;
+    var adjusted_lot_spec = lot_spec;
+    if (lot_spec) |ls| {
+        if (ls.price) |lot_price| {
+            if (lot_price.isComplete()) {
+                if (price == null) {
+                    inferred_price = .{
+                        .amount = lot_price,
+                        .total = false,
+                    };
+                    adjusted_lot_spec.?.price = null;
+                    try p.warnAt(account, .inferred_price);
+                }
+            }
+        }
+    }
+
     const posting = Data.Posting{
         .flag = flag,
         .account = account,
         .amount = amount,
-        .lot_spec = lot_spec,
-        .price = price,
+        .lot_spec = adjusted_lot_spec,
+        .price = inferred_price,
         .meta = meta,
     };
 
@@ -830,7 +848,7 @@ test "cost spec" {
     try testRoundtrip(
         \\2020-02-01 txn "a" "b"
         \\  Assets:Foo 10 USD {}
-        \\  Assets:Foo {0 USD, "label"}
+        \\  Assets:Foo {"label"} @ 0 USD
         \\  Assets:Foo {2014-01-01}
         \\
     );
