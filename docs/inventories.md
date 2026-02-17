@@ -5,7 +5,8 @@ with the following two goals in mind:
 
 * Follow the [Booking Rules
   Redesign](https://docs.google.com/document/d/1H0UDD1cKenraIMe40PbdMgnqJdeqI6yKv0og51mXk-0/view?tab=t.0#heading=h.9lk1l7gqxxfs)
-  document to address issues with the existing implementation.
+  document to address issues with the existing implementation. Please refer to
+  that document for the motivations behind the redesign.
 * Make inventories and booking easier to understand and more predictable for
   beginners.
 
@@ -63,7 +64,7 @@ After these transactions, `Assets:Cash` holds `950 USD`.
 
 #### Currency Conversions
 
-A transaction can convert one currency to another in plain inventories:
+A transaction can convert one currency to another in a plain inventory:
 
 ```beancount
 2020-01-02 * "Buy NZD"
@@ -94,131 +95,116 @@ Let's say you open a position in Apple stock:
 
 After this transaction, `Assets:Stocks` contains the following lot: `2 AAPL
 @ 10 EUR {2025-01-01}`. The lot keeps track of the fact that you bought the two
-Apple shares for 10 Euros each on 2025-01-01.
+Apple shares for 10 EUR each on 2025-01-01.
 
-- **units** — how many units of the commodity
-- **cost price** — the per-unit cost at acquisition
-- **cost currency** — what currency the cost is denominated in
-- **cost date** — when the lot was acquired (defaults to the transaction date)
-- **label** — an optional string for explicit lot matching
+In accordance with the Beancount Booking Rules Redesign, the syntax for buying stock
+is the same as for converting currency above. The difference in behavior is just coming
+from the fact that the accounts are of a different kind.
 
-Lots inventories are created when the `open` directive includes a booking
-method string (`"FIFO"`, `"LIFO"`, or `"STRICT"`).
+**Note:** In Beancount, you would write above posting as `Assets:Stocks   2 AAPL {10 EUR}`.
+This is still possible in Turbobean for backwards compatibility. You just get a warning.
 
-## Booking methods
+Let's say you buy more AAPL:
+
+```beancount
+2025-01-02 * "Buy more AAPL"
+  Assets:Stocks  1 AAPL @ 15 EUR
+  Assets:Cash
+```
+
+Now the inventory looks like this:
+
+```
+• 2 AAPL @ 10 EUR {2025-01-01}
+• 1 AAPL @ 15 EUR {2025-01-02}
+```
+
+As you can see, every new lot is individually tracked along with the price and
+date it was added to the inventory.
+
+#### Booking Methods
 
 The booking method determines how lots are consumed when you reduce a position
-(e.g. selling shares). Three methods are supported:
+(e.g. selling shares). The choice of which lot to consume can be automatic (FIFO/LIFO)
+or manual (STRICT).
 
-### FIFO (First In, First Out)
+##### FIFO (First In, First Out)
 
-The oldest lots are consumed first.
-
-```beancount
-2020-01-01 open Assets:Stocks AAPL "FIFO"
-2020-01-01 open Assets:Cash
-
-2020-01-02 * "Buy 10 shares at $10"
-  Assets:Stocks   10 AAPL @ 10 USD
-  Assets:Cash   -100 USD
-
-2020-01-03 * "Buy 10 shares at $15"
-  Assets:Stocks   10 AAPL @ 15 USD
-  Assets:Cash   -150 USD
-
-2020-01-04 * "Sell 15 shares at $30"
-  Assets:Stocks  -15 AAPL @ 30 USD
-  Assets:Cash    450 USD
-```
-
-The sale of 15 shares consumes all 10 shares from the $10 lot (oldest) and 5
-shares from the $15 lot, leaving 5 AAPL at a cost basis of $15.
-
-### LIFO (Last In, First Out)
-
-The newest lots are consumed first.
+The oldest lots are consumed first. Let's say you sell AAPL with the following
+transaction:
 
 ```beancount
-2020-01-01 open Assets:Stocks AAPL "LIFO"
-2020-01-01 open Assets:Cash
+2020-01-01 open Assets:Stocks "FIFO"
 
-2020-01-02 * "Buy 10 shares at $10"
-  Assets:Stocks   10 AAPL @ 10 USD
-  Assets:Cash   -100 USD
+[...]
 
-2020-01-03 * "Buy 10 shares at $15"
-  Assets:Stocks   10 AAPL @ 15 USD
-  Assets:Cash   -150 USD
-
-2020-01-04 * "Sell 10 shares at $30"
-  Assets:Stocks  -10 AAPL @ 30 USD
-  Assets:Cash    300 USD
+2020-01-04 * "Sell some AAPL"
+  Assets:Stocks  -2 AAPL @ 30 USD
+  Assets:Cash    60 EUR
 ```
 
-The sale consumes all 10 shares from the $15 lot (newest), leaving 10 AAPL at
-a cost basis of $10.
+The sale of 2 shares consumes all 2 shares from the 10 EUR lot (oldest) and none
+from the 15 EUR lot, leaving 1 AAPL at a cost basis of 15 EUR:
 
-### STRICT
+```
+• 1 AAPL @ 20 EUR {2025-01-02}
+```
 
-Lot matching must be unambiguous. Either you sell the **exact total** of all
-held lots (closing the entire position), or you provide an explicit lot spec in
-`{}` to identify which lot to reduce.
+##### LIFO (Last In, First Out)
 
-Selling the entire position without a lot spec:
+The newest lots are consumed first. The sale comsumes the 1 share at 15 EUR cost basis
+and one of the two shares at 10 EUR cost. After above transaction the inventory looks
+as follows:
+
+```
+• 1 AAPL @ 10 EUR {2025-01-01}
+```
+
+##### STRICT
+
+You provide an explicit lot spec in `{}` to identify which lot to reduce.
 
 ```beancount
-2020-01-01 open Assets:Stocks AAPL "STRICT"
-2020-01-01 open Assets:Cash
+2020-01-01 open Assets:Stocks "STRICT"
 
-2020-01-02 * "Buy"
-  Assets:Stocks   10 AAPL @ 10 USD
-  Assets:Cash   -100 USD
+[...]
 
-2020-01-03 * "Buy"
-  Assets:Stocks   10 AAPL @ 15 USD
-  Assets:Cash   -150 USD
-
-2020-01-04 * "Sell all 20 shares"
-  Assets:Stocks  -20 AAPL @ 30 USD
-  Assets:Cash    600 USD
+2025-01-04 * "Sell only from the 10 EUR lot"
+  Assets:Stocks  -1 AAPL {10 EUR} @ 30 EUR
+  Assets:Cash    30 EUR
 ```
 
-Selling a partial position requires a lot spec:
+Here, we're saying explicitly to sell one of the AAPL shares we've bought for
+10 EUR. You can also use other properties of the lot to identify it, as long as
+it's unique. We could also identify the same lot by its date:
 
 ```beancount
-2020-01-04 * "Sell only the $10 lot"
-  Assets:Stocks  -10 AAPL {10 USD} @ 30 USD
-  Assets:Cash    300 USD
+2025-01-04 * "Sell from the first lot"
+  Assets:Stocks  -1 AAPL {2025-01-01} @ 30 EUR
+  Assets:Cash    30 EUR
 ```
 
-A partial sale without a lot spec produces an `ambiguous_strict_booking` error.
-
-## Lot specs
-
-A lot spec in `{}` narrows which lot a posting targets. It can contain any
-combination of cost price, date, and label:
+Strict booking also allows to closing the whole existing position if the size
+is equal to the amount sold. Here we're selling the whole inventory of 3 AAPL
+shares:
 
 ```beancount
-; Match by cost price
-Assets:Stocks  -10 AAPL {10 USD} @ 30 USD
-
-; Match by date
-Assets:Stocks  -10 AAPL {2020-01-02} @ 30 USD
-
-; Match by label
-Assets:Stocks  -10 AAPL {"magic lot"} @ 30 USD
-
-; Match by cost price and date
-Assets:Stocks  -10 AAPL {10 USD, 2020-01-02} @ 30 USD
+2025-01-04 * "Sell all my AAPL"
+  Assets:Stocks  -3 AAPL @ 30 EUR
+  Assets:Cash    90 EUR
 ```
 
-All specified fields must match exactly. If the spec matches zero lots, a
-`lot_spec_no_match` error is produced. If it matches more than one lot, a
-`lot_spec_ambiguous_match` error is produced. If the matched lot holds fewer
-units than the posting requests, a `lot_spec_match_too_small` error is
-produced.
+##### Manual Override
 
-### Lot specs when adding
+Even with FIFO or LIFO booking, you can always override which lot to reduce
+with a lot spec in curly braces `{}`. The cost spec can contain any
+combination of cost price, date, and label.
+
+All specified fields in the curly braces must match exactly, and exactly one
+lot has to be matched. The matched lot has to hold at least as many units as the posting
+requests to be reduced.
+
+#### Lot Specs When Adding
 
 Lot specs can also appear on postings that **add** to a position. The spec
 fields override the defaults for the new lot:
@@ -227,7 +213,7 @@ fields override the defaults for the new lot:
 ; Override the cost date (useful for stock splits or transfers)
 2020-01-03 * "Split"
   Assets:Stocks  -10 AAPL {10 USD, 2020-01-02} @ 2 USD
-  Assets:Stocks   20 AAPL {5 USD,  2020-01-02} @ 1 USD
+  Assets:Stocks   20 AAPL { 5 USD, 2020-01-02} @ 1 USD
 ```
 
 This is useful for stock splits (adjusting the number of shares and cost per
@@ -240,7 +226,7 @@ between accounts:
   Assets:MoreStocks   10 AAPL {10 USD, 2020-01-02} @ 1 USD
 ```
 
-### Labels
+#### Lot Labels
 
 Labels are arbitrary strings that tag a lot for later identification, useful
 with `STRICT` booking:
@@ -250,16 +236,16 @@ with `STRICT` booking:
   Assets:Stocks   10 AAPL {"magic lot"} @ 10 USD
   Assets:Cash   -100 USD
 
-2020-01-03 * "Buy"
-  Assets:Stocks   10 AAPL {"magic lot"} @ 15 USD
-  Assets:Cash   -150 USD
+2020-01-03 * "Sell"
+  Assets:Stocks  -10 AAPL {"magic lot"} @ 15 USD
+  Assets:Cash    150 USD
 ```
 
 Note: if multiple lots share the same label and you try to match by label
 alone, the match is ambiguous and produces an error. You would need to combine
 the label with a cost price or date to disambiguate.
 
-## Short positions
+#### Short positions
 
 Lots inventories support short positions. A short is opened by posting a
 negative amount to a booked account that has no existing long position:
@@ -286,6 +272,33 @@ given commodity at any point, never both simultaneously. A posting can cross
 from one side to the other (as in the example above), but the resulting
 inventory will only contain positions on one side.
 
+#### Profit and Loss
+
+*(this is not implemented yet)*
+
+When you reduce a position this incurs a profit or loss, based on the cost that you
+paid when purchasing the stock as well as the sales price. Turbobean can automatically
+post this profit or loss to an account of your choosing:
+
+```beancount
+2020-01-01 open Assets:Cash
+2020-01-01 open Income:Gains
+2020-01-01 open Assets:Stocks "LIFO"
+
+2020-01-01 pnl Assets:Stocks Income:Gains
+
+2025-01-01 * "Buy AAPL"
+  Assets:Stocks  2 AAPL @ 10 EUR
+  Assets:Cash
+
+2025-01-04 * "Sell some AAPL"
+  Assets:Stocks  -1 AAPL @ 30 EUR
+  Assets:Cash
+```
+
+The account `Income:Gains` has `-20 EUR` now (remember that income has
+a negative sign in Beancount).
+
 ## Currency restrictions
 
 The `open` directive can restrict which commodities an account may hold:
@@ -304,65 +317,25 @@ The `open` directive can restrict which commodities an account may hold:
 2020-01-01 open Assets:Cash USD, EUR
 ```
 
-Posting a commodity that is not in the restriction list produces a
-`does_not_hold_currency` error.
+Posting a commodity that is not in the restriction list produces an error.
 
-## Price annotations
+## Compatibility and Migration Guide
 
-The `@` and `@@` annotations specify the cost per unit or total cost:
+My aim (not yet achieved) is to design Turbobean in a way that it is compatible
+with Beancount in the following way:
 
-```beancount
-; Per-unit price: 10 AAPL at 100 USD each
-Assets:Stocks  10 AAPL @ 100 USD
+- Be backwards-compatible with existing .bean files as much as possible.
+- Where this is not possible, you migrate your .bean files with a few simple changes.
+  Ideally, if you don't have transactions with complex bookings, you only have
+  to touch account definitions and no transactions.
+- The migrated .bean files should still work with Beancount.
 
-; Total price: 10 AAPL for 1000 USD total (= 100 USD each)
-Assets:Stocks  10 AAPL @@ 1000 USD
-```
+The following migrations are necessary because the new booking system prevents
+backwards-compatibility:
 
-For lots inventories, the price annotation determines the **cost basis** of the
-new lot. For plain inventories, price annotations are not supported for booking
-but are recorded for price tracking.
-
-A posting with a price annotation goes through `bookPosition` (lots inventory
-path). A posting without one goes through `addPosition` (plain inventory
-path). This means that **any posting with `@` or `@@` requires the target
-account to have a lots inventory** (i.e., a booking method must be specified in
-the `open` directive).
-
-## Inferred prices
-
-When a lot spec provides a cost price but no `@` annotation, the cost price is
-used directly:
-
-```beancount
-2025-12-10 open Assets:Stocks "FIFO"
-2025-12-10 open Assets:Cash
-
-2025-12-10 * "Buy"
-  Assets:Stocks  10 AAPL {2 USD}
-  Assets:Cash
-```
-
-This creates a lot of 10 AAPL with a cost basis of 2 USD per share, and
-auto-balances the cash leg to -20 USD.
-
-## Differences from Python Beancount
-
-### No NONE or AVERAGE booking
-
-Python beancount supports `NONE` (no reduction, lots accumulate) and `AVERAGE`
-(weighted average cost) booking methods. Turbobean only supports `FIFO`,
-`LIFO`, and `STRICT`.
-
-### Cost spec syntax
-
-Python beancount uses `{...}` for both specifying cost on new lots and matching
-existing lots, with fields like `{100 USD, 2020-01-15, "label"}`. Turbobean
-uses the same syntax and supports the same fields (price, date, label), but the
-semantics are slightly different:
-
-- In turbobean, a lot spec on an **adding** posting overrides the lot's stored
-  cost fields (price, date, label). The `@` annotation determines the actual
-  cost price used for booking.
-- In Python beancount, `{...}` on a new posting *is* the cost specification,
-  and `@` is the acquisition price with more complex interpolation rules.
+* If you have accounts that hold lots with and without cost basis, split them
+  into two accounts. For example, I used to have brokerage accounts
+  (e.g. `Assets:Securities:Fidelity`) that contained the securities as well as
+  cash, where the securities had a cost basis and the cash didn't. Now, I have
+  an additional account `Assets:Securities:Fidelity:Cash`.
+* Add an explicit booking method to each lot-based account.

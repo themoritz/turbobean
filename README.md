@@ -26,6 +26,8 @@ The philosopy is:
 
 ## Features
 
+- [ ] Core
+  - [ ] Automatic PnL Postings
 - [x] Speed (processes huge files instantly)
 - [x] LSP Server
   - [x] Jump to account open
