@@ -108,6 +108,12 @@ fn renderEntry(r: *Render, entry: Data.Entry) !void {
             try r.space();
             try r.slice(pad.pad_to.slice);
         },
+        .pnl => |pnl| {
+            try r.slice("pnl ");
+            try r.slice(pnl.account.slice);
+            try r.space();
+            try r.slice(pnl.income_account.slice);
+        },
         .balance => |balance| {
             try r.slice("balance ");
             try r.slice(balance.account.slice);

@@ -1,0 +1,12 @@
+2020-01-01 open Assets:Stocks AAPL "FIFO"
+2020-01-01 open Assets:Cash
+2020-01-01 open Income:Gains
+2020-01-01 pnl Assets:Stocks Income:Gains
+
+2020-01-02 * "Buy"
+  Assets:Stocks   2 AAPL @ 10 EUR
+  Assets:Cash   -20 EUR
+
+2020-01-03 * "Sell"
+  Assets:Stocks  -1 AAPL @ 30 EUR
+  Assets:Cash    30 EUR

@@ -172,7 +172,7 @@ fn render(
                     if (tx.postings) |postings| {
                         for (postings.start..postings.end) |i| {
                             const p = data.postings.get(i);
-                            try tree.postInventory(entry.date, p);
+                            _ = try tree.postInventory(entry.date, p);
                             try net_worth.updateWithPosting(p);
                         }
                     }
@@ -186,7 +186,7 @@ fn render(
                     const postings = tx.postings.?;
                     for (postings.start..postings.end) |i| {
                         const p = project.synthetic_postings.get(i);
-                        try tree.postInventory(entry.date, p);
+                        _ = try tree.postInventory(entry.date, p);
                         try net_worth.updateWithPosting(p);
                     }
                 },

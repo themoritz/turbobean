@@ -266,6 +266,15 @@ fn parseEntry(p: *Self) !?void {
                 .pad_to = pad_to,
             } };
         },
+        .keyword_pnl => {
+            _ = p.advanceToken();
+            const account = try p.expectToken(.account);
+            const income_account = try p.expectToken(.account);
+            payload = .{ .pnl = .{
+                .account = account,
+                .income_account = income_account,
+            } };
+        },
         .keyword_balance => {
             _ = p.advanceToken();
             const account = try p.expectToken(.account);

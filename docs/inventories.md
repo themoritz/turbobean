@@ -328,7 +328,8 @@ with Beancount in the following way:
 - Where this is not possible, you migrate your .bean files with a few simple changes.
   Ideally, if you don't have transactions with complex bookings, you only have
   to touch account definitions and no transactions.
-- The migrated .bean files should still work with Beancount.
+- After the above necessary migrations, your .bean files should still work with
+  Beancount (or at least after Vnext has been implemented).
 
 The following migrations are necessary because the new booking system prevents
 backwards-compatibility:
@@ -339,3 +340,6 @@ backwards-compatibility:
   cash, where the securities had a cost basis and the cash didn't. Now, I have
   an additional account `Assets:Securities:Fidelity:Cash`.
 * Add an explicit booking method to each lot-based account.
+* If you included PnL legs in your transactions, these will now balance to
+  zero-postings. If you want to achieve the same effect, simply add a `pnl`
+  directive as described above.

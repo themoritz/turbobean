@@ -80,6 +80,7 @@ pub const Entry = struct {
         close: Close,
         commodity: Commodity,
         pad: Pad,
+        pnl: Pnl,
         balance: Balance,
         price: PriceDecl,
         event: Event,
@@ -105,7 +106,7 @@ pub const Entry = struct {
 
     fn getTimeOfDay(entry: Entry) u8 {
         return switch (entry.payload) {
-            .commodity, .price, .open => 0,
+            .commodity, .price, .open, .pnl => 0,
             .balance => 1,
             .close => 3,
             else => 2, // Transactions in particular
@@ -197,6 +198,11 @@ pub const Pad = struct {
     synthetic_index: ?usize = null,
 };
 
+pub const Pnl = struct {
+    account: Lexer.Token,
+    income_account: Lexer.Token,
+};
+
 pub const Balance = struct {
     account: Lexer.Token,
     amount: Amount,
@@ -235,6 +241,8 @@ pub const Transaction = struct {
     postings: ?Range,
     /// Set to true in `balance_transactions` in case the transaction can't be balanced.
     dirty: bool = false,
+    /// Synthetic postings added during check (e.g. PnL postings). Points into Project.synthetic_postings.
+    synthetic_postings: ?Range = null,
 };
 
 pub const Range = struct {

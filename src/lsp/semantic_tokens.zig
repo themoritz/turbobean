@@ -74,6 +74,7 @@ fn tagToTokenType(token: Token.Tag) ?TokenType {
         .keyword_close,
         .keyword_commodity,
         .keyword_pad,
+        .keyword_pnl,
         .keyword_event,
         .keyword_query,
         .keyword_custom,

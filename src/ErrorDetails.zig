@@ -45,6 +45,7 @@ pub const Tag = union(enum) {
     account_already_open,
     multiple_pads,
     pad_accounts_must_be_plain,
+    pnl_account_must_be_lots,
     balance_assertion_failed: struct {
         expected: Number,
         accumulated: Number,
@@ -58,6 +59,7 @@ pub const Tag = union(enum) {
     lot_spec_match_too_small,
     lot_spec_no_match,
     ambiguous_strict_booking,
+    cost_currency_mismatch,
 
     flagged,
     inferred_price,
@@ -120,6 +122,7 @@ pub fn formatMessage(self: Self, writer: *std.Io.Writer) !void {
         .account_already_open => try writer.writeAll("Account has already been opened"),
         .multiple_pads => try writer.writeAll("Multiple pads of the same account. You need to have a balance assertion between pads"),
         .pad_accounts_must_be_plain => try writer.writeAll("Pad accounts must be plain"),
+        .pnl_account_must_be_lots => try writer.writeAll("Source account of pnl directive must be a lot-based account (opened with a booking method)"),
         .balance_assertion_failed => |body| {
             try writer.print("Balance assertion failed. Expected {f}, but accumulated {f}", .{
                 body.expected,
@@ -137,6 +140,7 @@ pub fn formatMessage(self: Self, writer: *std.Io.Writer) !void {
         .lot_spec_match_too_small => try writer.writeAll("Matched lot too small. You can cancel at most one lot."),
         .lot_spec_no_match => try writer.writeAll("No matching lot found for lot spec."),
         .ambiguous_strict_booking => try writer.writeAll("Strict booking requires explicit lot selection, or new lot needs to cancel all existing lots exactly."),
+        .cost_currency_mismatch => try writer.writeAll("Cost currency mismatch: the existing lots were purchased in a different currency than the current price. Buy and sell must use the same cost currency."),
         .flagged => try writer.writeAll("Flagged"),
         .inferred_price => try writer.writeAll("Price inferred from cost spec. Please consider using @ syntax."),
     }
