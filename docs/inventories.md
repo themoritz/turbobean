@@ -274,8 +274,6 @@ inventory will only contain positions on one side.
 
 #### Profit and Loss
 
-*(this is not implemented yet)*
-
 When you reduce a position this incurs a profit or loss, based on the cost that you
 paid when purchasing the stock as well as the sales price. Turbobean can automatically
 post this profit or loss to an account of your choosing:

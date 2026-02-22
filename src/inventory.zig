@@ -93,6 +93,8 @@ pub const Lots = struct {
                 var l = &other.items[i];
                 if (lot.units.abs().sub(l.units.abs()).is_positive())
                     return error.LotSpecMatchTooSmall;
+                if (!std.mem.eql(u8, l.cost.currency, lot.cost.currency))
+                    return error.CostCurrencyMismatch;
                 const cost_weight = lot.units.mul(l.cost.price);
                 l.units = l.units.add(lot.units);
                 if (l.units.is_zero()) _ = other.swapRemove(i);
@@ -106,6 +108,8 @@ pub const Lots = struct {
             var sum = Number.zero();
             var cost_weight = Number.zero();
             for (other.items) |l| {
+                if (!std.mem.eql(u8, l.cost.currency, lot.cost.currency))
+                    return error.CostCurrencyMismatch;
                 sum = sum.add(l.units);
                 cost_weight = cost_weight.add(l.units.mul(l.cost.price));
             }
@@ -138,6 +142,9 @@ pub const Lots = struct {
             i -= 1;
             var l = &other.items[i];
             if (remaining.is_zero()) break;
+
+            if (!std.mem.eql(u8, l.cost.currency, lot.cost.currency))
+                return error.CostCurrencyMismatch;
 
             const to_book = if (lot.units.is_positive())
                 l.units.negate().min(remaining)

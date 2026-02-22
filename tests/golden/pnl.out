@@ -1,0 +1,6 @@
+Assets     10 EUR
+           1 AAPL @ 10 EUR {2020-01-02}
+├ Stocks   1 AAPL @ 10 EUR {2020-01-02}
+└ Cash     10 EUR
+Income     -20 EUR
+└ Gains    -20 EUR

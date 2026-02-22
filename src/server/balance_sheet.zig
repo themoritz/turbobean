@@ -172,18 +172,18 @@ fn render(
                     if (tx.postings) |postings| {
                         for (postings.start..postings.end) |i| {
                             const p = data.postings.get(i);
-                            try tree.postInventory(entry.date, p);
+                            _ = try tree.postInventory(entry.date, p);
                             try net_worth.updateWithPosting(p);
                         }
                     }
                 },
                 .pad => |pad| {
                     if (pad.pad_posting) |p| {
-                        try tree.postInventory(entry.date, p);
+                        _ = try tree.postInventory(entry.date, p);
                         try net_worth.updateWithPosting(p);
                     }
                     if (pad.pad_to_posting) |p| {
-                        try tree.postInventory(entry.date, p);
+                        _ = try tree.postInventory(entry.date, p);
                         try net_worth.updateWithPosting(p);
                     }
                 },

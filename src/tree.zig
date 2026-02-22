@@ -138,14 +138,19 @@ pub fn bookPosition(
     currency: []const u8,
     lot: Lot,
     lot_spec: ?Data.LotSpec,
-) !void {
+) !?Number {
     const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
-    _ = try self.nodes.items[index].inventory.book(currency, lot, lot_spec);
+    return try self.nodes.items[index].inventory.book(currency, lot, lot_spec);
 }
 
-pub fn postInventory(self: *Self, date: Date, posting: Data.Posting) !void {
+pub const PostResult = struct {
+    cost_weight: Number,
+    cost_currency: []const u8,
+};
+
+pub fn postInventory(self: *Self, date: Date, posting: Data.Posting) !?PostResult {
     if (posting.price) |price| {
-        try self.bookPosition(
+        const cost_weight = try self.bookPosition(
             posting.account.slice,
             posting.amount.currency.?,
             .{
@@ -158,13 +163,18 @@ pub fn postInventory(self: *Self, date: Date, posting: Data.Posting) !void {
                 },
             },
             posting.lot_spec,
-        );
+        ) orelse return null;
+        return PostResult{
+            .cost_weight = cost_weight,
+            .cost_currency = price.amount.currency.?,
+        };
     } else {
         try self.addPosition(
             posting.account.slice,
             posting.amount.currency.?,
             posting.amount.number.?,
         );
+        return null;
     }
 }
 

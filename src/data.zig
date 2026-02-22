@@ -80,6 +80,7 @@ pub const Entry = struct {
         close: Close,
         commodity: Commodity,
         pad: Pad,
+        pnl: Pnl,
         balance: Balance,
         price: PriceDecl,
         event: Event,
@@ -105,7 +106,7 @@ pub const Entry = struct {
 
     fn getTimeOfDay(entry: Entry) u8 {
         return switch (entry.payload) {
-            .commodity, .price, .open => 0,
+            .commodity, .price, .open, .pnl => 0,
             .balance => 1,
             .close => 3,
             else => 2, // Transactions in particular
@@ -194,6 +195,11 @@ pub const Pad = struct {
     pad_to: Lexer.Token,
     pad_posting: ?Posting = null,
     pad_to_posting: ?Posting = null,
+};
+
+pub const Pnl = struct {
+    account: Lexer.Token,
+    income_account: Lexer.Token,
 };
 
 pub const Balance = struct {

@@ -283,6 +283,10 @@ pub fn check(self: *Self) !void {
     var lastPads: std.StringHashMap(LastPad) = std.StringHashMap(LastPad).init(self.alloc);
     defer lastPads.deinit();
 
+    // pnl directive: lot-based account -> income account token
+    var pnlAccounts: std.StringHashMap(Token) = std.StringHashMap(Token).init(self.alloc);
+    defer pnlAccounts.deinit();
+
     var tree = try Tree.init(self.alloc);
     defer tree.deinit();
 
@@ -392,18 +396,72 @@ pub fn check(self: *Self) !void {
                     }
                 }
             },
+            .pnl => |pnl| {
+                if (!tree.accountOpen(pnl.account.slice)) {
+                    try self.addError(pnl.account, sorted.file, .account_not_open);
+                    continue;
+                }
+                if (!tree.accountOpen(pnl.income_account.slice)) {
+                    try self.addError(pnl.income_account, sorted.file, .account_not_open);
+                    continue;
+                }
+                if (tree.isPlainAccount(pnl.account.slice) catch unreachable) {
+                    try self.addError(pnl.account, sorted.file, .pnl_account_must_be_lots);
+                    continue;
+                }
+                try pnlAccounts.put(pnl.account.slice, pnl.income_account);
+            },
             .transaction => |*tx| {
                 if (tx.dirty) continue;
 
                 if (tx.postings) |postings| {
+                    var pnl_start: usize = 0;
+                    var has_pnl = false;
                     for (postings.start..postings.end) |i| {
-                        try self.postInventoryRecovering(
+                        const posting = data.postings.get(i);
+                        const post_result = try self.postInventoryRecovering(
                             &tree,
                             entry.date,
-                            data.postings.get(i),
+                            posting,
                             sorted.file,
                             tx,
                         );
+                        if (post_result) |pr| {
+                            if (pnlAccounts.get(posting.account.slice)) |income_token| {
+                                if (posting.price) |price| {
+                                    const sale_weight = if (price.total)
+                                        price.amount.number.?
+                                    else
+                                        posting.amount.number.?.mul(price.amount.number.?);
+                                    const pnl = sale_weight.sub(pr.cost_weight);
+                                    if (!pnl.is_zero()) {
+                                        if (!has_pnl) {
+                                            pnl_start = data.postings.len;
+                                            for (postings.start..postings.end) |j| {
+                                                try data.postings.append(self.alloc, data.postings.get(j));
+                                            }
+                                            has_pnl = true;
+                                        }
+                                        const pnl_posting = Data.Posting{
+                                            .flag = null,
+                                            .account = income_token,
+                                            .amount = .{
+                                                .number = pnl,
+                                                .currency = pr.cost_currency,
+                                            },
+                                            .lot_spec = null,
+                                            .price = null,
+                                            .meta = null,
+                                        };
+                                        try data.postings.append(self.alloc, pnl_posting);
+                                        try tree.addPosition(income_token.slice, pr.cost_currency, pnl);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (has_pnl) {
+                        tx.postings = .{ .start = pnl_start, .end = data.postings.len };
                     }
                 }
             },
@@ -429,8 +487,8 @@ fn postInventoryRecovering(
     posting: Data.Posting,
     file_id: u8,
     tx: *Data.Transaction,
-) !void {
-    tree.postInventory(date, posting) catch |err| {
+) !?Tree.PostResult {
+    return tree.postInventory(date, posting) catch |err| {
         tx.dirty = true;
         switch (err) {
             error.DoesNotHoldCurrency => {
@@ -457,8 +515,12 @@ fn postInventoryRecovering(
             error.AmbiguousStrictBooking => {
                 try self.addError(posting.account, file_id, .ambiguous_strict_booking);
             },
+            error.CostCurrencyMismatch => {
+                try self.addError(posting.account, file_id, .cost_currency_mismatch);
+            },
             else => return err,
         }
+        return null;
     };
 }
 
@@ -469,6 +531,7 @@ pub const AccountIterator = struct {
     entry: u32,
     posting: u32,
     pad_to: bool,
+    pnl_income: bool,
 
     pub fn init(self: *const Self, file: ?u32) AccountIterator {
         const file_max: u32 = if (file) |f| f + 1 else @intCast(self.files.items.len);
@@ -479,6 +542,7 @@ pub const AccountIterator = struct {
             .entry = 0,
             .posting = 0,
             .pad_to = false,
+            .pnl_income = false,
         };
     }
 
@@ -487,6 +551,8 @@ pub const AccountIterator = struct {
         close,
         pad,
         pad_to,
+        pnl,
+        pnl_income,
         balance,
         posting,
         note,
@@ -518,6 +584,16 @@ pub const AccountIterator = struct {
                             it.pad_to = false;
                             it.entry += 1;
                             return .{ .file = it.file, .token = pad.pad_to, .kind = .pad_to };
+                        }
+                    },
+                    .pnl => |pnl| {
+                        if (!it.pnl_income) {
+                            it.pnl_income = true;
+                            return .{ .file = it.file, .token = pnl.account, .kind = .pnl_income };
+                        } else {
+                            it.pnl_income = false;
+                            it.entry += 1;
+                            return .{ .file = it.file, .token = pnl.income_account, .kind = .pnl_income };
                         }
                     },
                     .balance => |balance| {
@@ -688,12 +764,12 @@ pub fn accountInventoryUntilLine(
                             if (posting.account.start_line == line and sorted_entry.file == file) {
                                 var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
                                 errdefer before.deinit();
-                                try tree.postInventory(entry.date, posting);
+                                _ = try tree.postInventory(entry.date, posting);
                                 var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
                                 errdefer after.deinit();
                                 return .{ .before = before, .after = after };
                             } else {
-                                try tree.postInventory(entry.date, posting);
+                                _ = try tree.postInventory(entry.date, posting);
                             }
                         }
                     }
@@ -705,12 +781,12 @@ pub fn accountInventoryUntilLine(
                         if (pad.account.start_line == line and sorted_entry.file == file) {
                             var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
                             errdefer before.deinit();
-                            try tree.postInventory(entry.date, posting);
+                            _ = try tree.postInventory(entry.date, posting);
                             var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
                             errdefer after.deinit();
                             return .{ .before = before, .after = after };
                         } else {
-                            try tree.postInventory(entry.date, posting);
+                            _ = try tree.postInventory(entry.date, posting);
                         }
                     }
                 }
@@ -719,12 +795,12 @@ pub fn accountInventoryUntilLine(
                         if (pad.pad_to.start_line == line and sorted_entry.file == file) {
                             var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
                             errdefer before.deinit();
-                            try tree.postInventory(entry.date, posting);
+                            _ = try tree.postInventory(entry.date, posting);
                             var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
                             errdefer after.deinit();
                             return .{ .before = before, .after = after };
                         } else {
-                            try tree.postInventory(entry.date, posting);
+                            _ = try tree.postInventory(entry.date, posting);
                         }
                     }
                 }
@@ -779,13 +855,13 @@ pub fn printTree(self: *Self) !void {
 
                 if (tx.postings) |postings| {
                     for (postings.start..postings.end) |i| {
-                        try tree.postInventory(entry.date, data.postings.get(i));
+                        _ = try tree.postInventory(entry.date, data.postings.get(i));
                     }
                 }
             },
             .pad => |pad| {
-                if (pad.pad_posting) |p| try tree.postInventory(entry.date, p);
-                if (pad.pad_to_posting) |p| try tree.postInventory(entry.date, p);
+                if (pad.pad_posting) |p| _ = try tree.postInventory(entry.date, p);
+                if (pad.pad_to_posting) |p| _ = try tree.postInventory(entry.date, p);
             },
             else => {},
         }
