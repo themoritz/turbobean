@@ -195,15 +195,14 @@ fn render(
                     }
                 },
                 .pad => |pad| {
-                    if (pad.synthetic_index == null) continue;
+                    if (pad.pad_posting == null) continue;
                     if (!display.isWithinDateRange(entry.date)) continue;
 
-                    const index = pad.synthetic_index.?;
-                    const synthetic_entry = project.synthetic_entries.items[index];
-                    const tx = synthetic_entry.payload.transaction;
-                    const postings = tx.postings.?;
-                    for (postings.start..postings.end) |i| {
-                        const p = project.synthetic_postings.get(i);
+                    if (pad.pad_posting) |p| {
+                        try tree.postInventory(entry.date, p);
+                        try data_tracker.updateWithPosting(p);
+                    }
+                    if (pad.pad_to_posting) |p| {
                         try tree.postInventory(entry.date, p);
                         try data_tracker.updateWithPosting(p);
                     }

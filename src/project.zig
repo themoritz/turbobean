@@ -19,9 +19,6 @@ uris: std.ArrayList(Uri),
 files_by_uri: std.StringHashMap(usize),
 sorted_entries: std.ArrayList(SortedEntry),
 
-synthetic_entries: std.ArrayList(Data.Entry),
-synthetic_postings: std.MultiArrayList(Data.Posting),
-
 errors: std.ArrayList(ErrorDetails),
 
 // LSP specific caches
@@ -53,9 +50,6 @@ pub fn load(alloc: Allocator, uri: Uri, source: ?[:0]const u8) !Self {
         .uris = .{},
         .files_by_uri = std.StringHashMap(usize).init(alloc),
         .sorted_entries = .{},
-
-        .synthetic_entries = .{},
-        .synthetic_postings = .{},
 
         .errors = .{},
 
@@ -97,9 +91,6 @@ pub fn deinit(self: *Self) void {
     self.files_by_uri.deinit();
 
     self.sorted_entries.deinit(self.alloc);
-
-    self.synthetic_entries.deinit(self.alloc);
-    self.synthetic_postings.deinit(self.alloc);
 
     self.errors.deinit(self.alloc);
 
@@ -285,7 +276,7 @@ pub fn check(self: *Self) !void {
         date: Date,
         pad: Token,
         pad_to: Token,
-        synthetic_index_ptr: *?usize,
+        pad_ptr: *Data.Pad,
     };
 
     // Padded account -> LastPad
@@ -339,7 +330,7 @@ pub fn check(self: *Self) !void {
                         .date = entry.date,
                         .pad = pad.account,
                         .pad_to = pad.pad_to,
-                        .synthetic_index_ptr = &pad.synthetic_index,
+                        .pad_ptr = pad,
                     });
                 }
             },
@@ -359,8 +350,6 @@ pub fn check(self: *Self) !void {
                 const expected = balance.amount.number.?;
                 if (lastPads.get(balance.account.slice)) |last_pad| {
                     const missing = expected.add(accumulated.negate());
-                    // Build tx
-                    const postings_top = self.synthetic_postings.len;
 
                     const pad_posting = Data.Posting{
                         .flag = null,
@@ -373,8 +362,8 @@ pub fn check(self: *Self) !void {
                         .price = null,
                         .meta = null,
                     };
-                    try self.synthetic_postings.append(self.alloc, pad_posting);
                     try tree.addPosition(pad_posting.account.slice, pad_posting.amount.currency.?, pad_posting.amount.number.?);
+                    last_pad.pad_ptr.pad_posting = pad_posting;
 
                     const pad_to_posting = Data.Posting{
                         .flag = null,
@@ -387,35 +376,8 @@ pub fn check(self: *Self) !void {
                         .price = null,
                         .meta = null,
                     };
-                    try self.synthetic_postings.append(self.alloc, pad_to_posting);
                     try tree.addPosition(pad_to_posting.account.slice, pad_to_posting.amount.currency.?, pad_to_posting.amount.number.?);
-
-                    const postings = Data.Range.create(postings_top, self.synthetic_postings.len);
-                    const payload = Data.Entry.Payload{
-                        .transaction = .{
-                            .flag = .{
-                                .slice = entry.main_token.slice,
-                                .tag = .flag,
-                                .start_line = 0,
-                                .end_line = 0,
-                                .start_col = 0,
-                                .end_col = 0,
-                            },
-                            .payee = null,
-                            .narration = null,
-                            .postings = postings,
-                        },
-                    };
-                    const synthetic_entry = Data.Entry{
-                        .date = last_pad.date,
-                        .main_token = entry.main_token,
-                        .payload = payload,
-                        .tagslinks = null,
-                        .meta = null,
-                    };
-                    const tx_index: u32 = @intCast(self.synthetic_entries.items.len);
-                    try self.synthetic_entries.append(self.alloc, synthetic_entry);
-                    last_pad.synthetic_index_ptr.* = tx_index;
+                    last_pad.pad_ptr.pad_to_posting = pad_to_posting;
 
                     // Remove last pad
                     _ = lastPads.remove(balance.account.slice);
@@ -738,37 +700,32 @@ pub fn accountInventoryUntilLine(
                 }
             },
             .pad => |pad| {
-                if (pad.synthetic_index == null) continue;
-
-                const index = pad.synthetic_index.?;
-                const synthetic_entry = self.synthetic_entries.items[index];
-                const tx = synthetic_entry.payload.transaction;
-                const postings = tx.postings.?;
-                std.debug.assert(postings.end - postings.start == 2);
-                if (std.mem.eql(u8, pad.account.slice, account)) {
-                    const posting = self.synthetic_postings.get(postings.start);
-                    if (pad.account.start_line == line and sorted_entry.file == file) {
-                        var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
-                        errdefer before.deinit();
-                        try tree.postInventory(entry.date, posting);
-                        var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
-                        errdefer after.deinit();
-                        return .{ .before = before, .after = after };
-                    } else {
-                        try tree.postInventory(entry.date, posting);
+                if (pad.pad_posting) |posting| {
+                    if (std.mem.eql(u8, pad.account.slice, account)) {
+                        if (pad.account.start_line == line and sorted_entry.file == file) {
+                            var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                            errdefer before.deinit();
+                            try tree.postInventory(entry.date, posting);
+                            var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                            errdefer after.deinit();
+                            return .{ .before = before, .after = after };
+                        } else {
+                            try tree.postInventory(entry.date, posting);
+                        }
                     }
                 }
-                if (std.mem.eql(u8, pad.pad_to.slice, account)) {
-                    const posting = self.synthetic_postings.get(postings.end - 1);
-                    if (pad.pad_to.start_line == line and sorted_entry.file == file) {
-                        var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
-                        errdefer before.deinit();
-                        try tree.postInventory(entry.date, posting);
-                        var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
-                        errdefer after.deinit();
-                        return .{ .before = before, .after = after };
-                    } else {
-                        try tree.postInventory(entry.date, posting);
+                if (pad.pad_to_posting) |posting| {
+                    if (std.mem.eql(u8, pad.pad_to.slice, account)) {
+                        if (pad.pad_to.start_line == line and sorted_entry.file == file) {
+                            var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                            errdefer before.deinit();
+                            try tree.postInventory(entry.date, posting);
+                            var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                            errdefer after.deinit();
+                            return .{ .before = before, .after = after };
+                        } else {
+                            try tree.postInventory(entry.date, posting);
+                        }
                     }
                 }
             },
@@ -827,15 +784,8 @@ pub fn printTree(self: *Self) !void {
                 }
             },
             .pad => |pad| {
-                if (pad.synthetic_index == null) continue;
-
-                const index = pad.synthetic_index.?;
-                const synthetic_entry = self.synthetic_entries.items[index];
-                const tx = synthetic_entry.payload.transaction;
-                const postings = tx.postings.?;
-                for (postings.start..postings.end) |i| {
-                    try tree.postInventory(entry.date, self.synthetic_postings.get(i));
-                }
+                if (pad.pad_posting) |p| try tree.postInventory(entry.date, p);
+                if (pad.pad_to_posting) |p| try tree.postInventory(entry.date, p);
             },
             else => {},
         }
