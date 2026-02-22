@@ -27,7 +27,7 @@ The philosopy is:
 ## Features
 
 - [ ] Core
-  - [ ] Automatic PnL Postings
+  - [x] Automatic PnL Postings
 - [x] Speed (processes huge files instantly)
 - [x] LSP Server
   - [x] Jump to account open
@@ -206,7 +206,6 @@ Goals
 & Design](https://docs.google.com/document/d/1qPdNXaz5zuDQ8M9uoZFyyFis7hA0G55BEfhWhrVBsfc/edit?tab=t.0),
 notably [Beancount - Vnext: Booking Rules
 Redesign](https://docs.google.com/document/d/1H0UDD1cKenraIMe40PbdMgnqJdeqI6yKv0og51mXk-0/view#).
-This is currently implemented in a non-backwards-compatible way.
 
 #### Known Incompatibilities
 
@@ -225,9 +224,9 @@ This is currently implemented in a non-backwards-compatible way.
   EUR amounts can be put there. This is so that the editor can properly show 
   the inserted amounts inline.
 
-* The booking rules design is not fully formed yet. Right now there is the
-  distinction between "booked" and "plain" accounts. Commodities can only be
-  bought in "booked" accounts, which is not great but simplifies implementation.
+* How inventories work is not fully compatible to the existing Beancount
+  behavior. See [How Inventories Work in Turbobean](docs/inventories.md) for
+  details.
 
 ## Developing
 

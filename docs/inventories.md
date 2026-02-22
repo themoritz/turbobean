@@ -72,16 +72,16 @@ A transaction can convert one currency to another in a plain inventory:
   Assets:Cash    20 NZD
 ```
 
-After this transaction, the `Assets:Cash` account has `10 EUR` less and `20 NZD` more.
-The transaction is balanced through the conversion rate of `2.00 NZD/EUR`, but no cost
-basis for the newly obtained NZD is tracked.
+After this transaction, the `Assets:Cash` account has `10 EUR` less and `20
+NZD` more. The transaction is balanced through the conversion rate of `2.00
+NZD/EUR`, but no cost basis for the newly obtained NZD is tracked.
 
 ### Lot-Based Inventory
 
-In contrast to a plain inventory, a lot-based inventory tracks the cost basis of each
-new position (lot) in the inventory. This is useful for trading accounts or accounts that
-contain securities and where you want to properly calculate profit/loss when closing
-positions.
+In contrast to a plain inventory, a lot-based inventory tracks the cost basis
+of each new position (lot) in the inventory. This is useful for trading
+accounts or accounts that contain securities and where you want to properly
+calculate profit/loss when closing positions.
 
 Let's say you open a position in Apple stock:
 
@@ -97,12 +97,13 @@ After this transaction, `Assets:Stocks` contains the following lot: `2 AAPL
 @ 10 EUR {2025-01-01}`. The lot keeps track of the fact that you bought the two
 Apple shares for 10 EUR each on 2025-01-01.
 
-In accordance with the Beancount Booking Rules Redesign, the syntax for buying stock
-is the same as for converting currency above. The difference in behavior is just coming
-from the fact that the accounts are of a different kind.
+In accordance with the Beancount Booking Rules Redesign, the syntax for buying
+stock is the same as for converting currency above. The difference in behavior
+is just coming from the fact that the accounts are of a different kind.
 
-**Note:** In Beancount, you would write above posting as `Assets:Stocks   2 AAPL {10 EUR}`.
-This is still possible in Turbobean for backwards compatibility. You just get a warning.
+**Note:** In Beancount, you would write above posting as `Assets:Stocks
+2 AAPL {10 EUR}`. This is still possible in Turbobean for backwards
+compatibility. You just get a warning.
 
 Let's say you buy more AAPL:
 
@@ -125,8 +126,8 @@ date it was added to the inventory.
 #### Booking Methods
 
 The booking method determines how lots are consumed when you reduce a position
-(e.g. selling shares). The choice of which lot to consume can be automatic (FIFO/LIFO)
-or manual (STRICT).
+(e.g. selling shares). The choice of which lot to consume can be automatic
+(FIFO/LIFO) or manual (STRICT).
 
 ##### FIFO (First In, First Out)
 
@@ -152,9 +153,9 @@ from the 15 EUR lot, leaving 1 AAPL at a cost basis of 15 EUR:
 
 ##### LIFO (Last In, First Out)
 
-The newest lots are consumed first. The sale comsumes the 1 share at 15 EUR cost basis
-and one of the two shares at 10 EUR cost. After above transaction the inventory looks
-as follows:
+The newest lots are consumed first. The sale comsumes the 1 share at 15 EUR
+cost basis and one of the two shares at 10 EUR cost. After above transaction
+the inventory looks as follows:
 
 ```
 • 1 AAPL @ 10 EUR {2025-01-01}
@@ -201,8 +202,8 @@ with a lot spec in curly braces `{}`. The cost spec can contain any
 combination of cost price, date, and label.
 
 All specified fields in the curly braces must match exactly, and exactly one
-lot has to be matched. The matched lot has to hold at least as many units as the posting
-requests to be reduced.
+lot has to be matched. The matched lot has to hold at least as many units as
+the posting requests to be reduced.
 
 #### Lot Specs When Adding
 
@@ -267,16 +268,16 @@ Booking 2 units against a short of 1 consumes the short and creates a new long
 of 1. The same FIFO/LIFO/STRICT rules apply in reverse: for LIFO shorts, the
 most recently opened short is closed first.
 
-The inventory enforces that an account holds **either longs or shorts** for a
-given commodity at any point, never both simultaneously. A posting can cross
+The inventory enforces that an account holds **either longs or shorts** for
+a given commodity at any point, never both simultaneously. A posting can cross
 from one side to the other (as in the example above), but the resulting
 inventory will only contain positions on one side.
 
 #### Profit and Loss
 
-When you reduce a position this incurs a profit or loss, based on the cost that you
-paid when purchasing the stock as well as the sales price. Turbobean can automatically
-post this profit or loss to an account of your choosing:
+When you reduce a position this incurs a profit or loss, based on the cost that
+you paid when purchasing the stock as well as the sales price. Turbobean can
+automatically post this profit or loss to an account of your choosing:
 
 ```beancount
 2020-01-01 open Assets:Cash
