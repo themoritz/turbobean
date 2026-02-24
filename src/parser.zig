@@ -522,6 +522,10 @@ fn parsePosting(p: *Self) !?usize {
                     };
                     adjusted_lot_spec.?.price = null;
                     try p.warnAt(account, .inferred_price);
+
+                    // Remove the lot spec if it's empty after this operation
+                    if (adjusted_lot_spec.?.date == null and adjusted_lot_spec.?.label == null)
+                        adjusted_lot_spec = null;
                 }
             }
         }

@@ -1,0 +1,19 @@
+tests/golden/booking_spec_inferred_not_ambiguous.bean: [[33mWarning[0m] Price inferred from cost spec. Please consider using @ syntax.
+
+    5 |   Assets:Stocks   10 AAPL {10 USD}
+          [33m^^^^^^^^^^^^^[0m
+
+tests/golden/booking_spec_inferred_not_ambiguous.bean: [[33mWarning[0m] Price inferred from cost spec. Please consider using @ syntax.
+
+    9 |   Assets:Stocks   20 AAPL {15 USD}
+          [33m^^^^^^^^^^^^^[0m
+
+tests/golden/booking_spec_inferred_not_ambiguous.bean: [[33mWarning[0m] Price inferred from cost spec. Please consider using @ syntax.
+
+   13 |   Assets:Stocks  -10 AAPL {30 USD}
+          [33m^^^^^^^^^^^^^[0m
+
+Assets     20 AAPL @ 15 USD {2020-01-03}
+           -100 USD
+├ Stocks   20 AAPL @ 15 USD {2020-01-03}
+└ Cash     -100 USD
