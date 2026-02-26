@@ -61,6 +61,8 @@ pub const Tag = union(enum) {
     ambiguous_strict_booking,
     cost_currency_mismatch,
 
+    include_file_not_found,
+
     flagged,
     inferred_price,
 };
@@ -141,6 +143,7 @@ pub fn formatMessage(self: Self, writer: *std.Io.Writer) !void {
         .lot_spec_no_match => try writer.writeAll("No matching lot found for lot spec."),
         .ambiguous_strict_booking => try writer.writeAll("Strict booking requires explicit lot selection, or new lot needs to cancel all existing lots exactly."),
         .cost_currency_mismatch => try writer.writeAll("Cost currency mismatch: the existing lots were purchased in a different currency than the current price. Buy and sell must use the same cost currency."),
+        .include_file_not_found => try writer.writeAll("Included file not found"),
         .flagged => try writer.writeAll("Flagged"),
         .inferred_price => try writer.writeAll("Price inferred from cost spec. Please consider using @ syntax."),
     }

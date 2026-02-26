@@ -451,7 +451,10 @@ fn parseDirective(p: *Self) !?void {
         .keyword_include => {
             _ = p.advanceToken();
             const file = try p.expectToken(.string);
-            try p.imports.append(p.alloc, file.slice[1 .. file.slice.len - 1]);
+            try p.imports.append(p.alloc, .{
+                .path = file.slice[1 .. file.slice.len - 1],
+                .token = file,
+            });
         },
         .keyword_plugin => {
             _ = p.advanceToken();

@@ -1,0 +1,7 @@
+tests/golden/include_not_found.bean: [[31mError[0m] Included file not found
+
+    1 | include "nonexistent.bean"
+                [31m^^^^^^^^^^^^^^^^^^[0m
+
+Assets
+└ Checking

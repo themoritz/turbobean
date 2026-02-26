@@ -111,17 +111,28 @@ pub fn hasRoot(self: *const Self, file_uri: []const u8) bool {
 
 fn loadFileRec(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !void {
     if (self.files_by_uri.get(uri.value)) |_| return error.ImportCycle;
-    const imports = try self.loadSingleFile(uri, is_root, source);
+    const file_id, const imports = try self.loadSingleFile(uri, is_root, source);
     defer self.alloc.free(imports);
     for (imports) |import| {
-        var import_uri = try uri.move_relative(self.alloc, import);
+        var import_uri = try uri.move_relative(self.alloc, import.path);
         defer import_uri.deinit(self.alloc);
+        // Check if the file exists before recursing
+        std.fs.accessAbsolute(import_uri.absolute(), .{}) catch {
+            const data = &self.files.items[file_id];
+            try data.errors.append(self.alloc, .{
+                .tag = .include_file_not_found,
+                .token = import.token,
+                .uri = self.uris.items[file_id],
+                .source = data.source,
+            });
+            continue;
+        };
         try self.loadFileRec(import_uri, false, null);
     }
 }
 
 /// Parses a file and balances all transactions.
-fn loadSingleFile(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !Data.Imports.Slice {
+fn loadSingleFile(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !struct { usize, Data.Imports.Slice } {
     const uri_owned = try uri.clone(self.alloc);
     try self.uris.append(self.alloc, uri_owned);
 
@@ -135,9 +146,10 @@ fn loadSingleFile(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !
 
     try self.files.append(self.alloc, data);
 
-    try self.files_by_uri.put(uri_owned.value, self.files.items.len - 1);
+    const file_id = self.files.items.len - 1;
+    try self.files_by_uri.put(uri_owned.value, file_id);
 
-    return imports;
+    return .{ file_id, imports };
 }
 
 pub fn getConfig(self: *const Self) *Data.Config {

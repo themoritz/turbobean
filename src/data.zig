@@ -30,7 +30,11 @@ pub const Postings = std.MultiArrayList(Posting);
 pub const TagsLinks = std.MultiArrayList(TagLink);
 pub const Meta = std.MultiArrayList(KeyValue);
 pub const Currencies = std.ArrayList([]const u8);
-pub const Imports = std.ArrayList([]const u8);
+pub const Import = struct {
+    path: []const u8,
+    token: Lexer.Token,
+};
+pub const Imports = std.ArrayList(Import);
 
 pub const Tokens = std.ArrayList(Lexer.Token);
 
