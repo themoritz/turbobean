@@ -261,11 +261,20 @@ pub fn loadModule(file_path: [*:0]const u8) Error!Module {
 /// Caller owns the returned memory.
 pub fn findLibPath(alloc: std.mem.Allocator) ![:0]const u8 {
     const script =
-        \\import sysconfig, sys
+        \\import sysconfig, sys, os
         \\libdir = sysconfig.get_config_var('LIBDIR')
         \\version = sysconfig.get_config_var('VERSION')
-        \\ext = '.dylib' if sys.platform == 'darwin' else '.so'
-        \\print(f'{libdir}/libpython{version}{ext}')
+        \\if sys.platform == 'darwin':
+        \\    # On macOS, libpythonX.Y.dylib is a symlink in LIBDIR
+        \\    print(os.path.join(libdir, f'libpython{version}.dylib'))
+        \\else:
+        \\    # On Linux, the unversioned .so may not exist (needs -dev package),
+        \\    # so use INSTSONAME which gives the actual file (e.g. libpython3.12.so.1.0)
+        \\    soname = sysconfig.get_config_var('INSTSONAME')
+        \\    if soname:
+        \\        print(os.path.join(libdir, soname))
+        \\    else:
+        \\        print(os.path.join(libdir, f'libpython{version}.so'))
     ;
     const result = try std.process.Child.run(.{
         .allocator = alloc,
