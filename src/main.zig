@@ -122,4 +122,5 @@ test {
     _ = @import("solver.zig");
     _ = @import("server/DisplaySettings.zig");
     _ = semantic_tokens;
+    _ = @import("python.zig");
 }
