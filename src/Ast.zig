@@ -21,9 +21,20 @@ pub fn parse(alloc: std.mem.Allocator, uri: Uri, source: [:0]const u8) !Self {
         .extra_data = .{},
         .errors = .{},
     };
+
+    // Average 10 bytes per token:
+    try self.tokens.ensureTotalCapacity(alloc, source.len / 10);
+    var lexer = Lexer.init(source);
+    while (true) {
+        const token = lexer.next();
+        try self.tokens.append(alloc, token);
+        if (token.tag == .eof) break;
+    }
+
     var parser = Parser.init(alloc, uri, &self);
     defer parser.deinit();
     try parser.parse();
+    return self;
 }
 
 pub fn deinit(self: *Self) void {
@@ -111,22 +122,30 @@ pub const Node = union(enum) {
 };
 
 pub fn node(self: *Self, index: Node.Index) Node {
-    return self.nodes.items[index];
+    return self.nodes.items[@intFromEnum(index)];
 }
 
 pub fn getExtra(self: *Self, index: ExtraIndex, comptime T: type) T {
     const fields = std.meta.fields(T);
     var result: T = undefined;
-    inline for (fields, 0..) |field, i| {
+    var i: usize = 0;
+    inline for (fields) |field| {
         @field(result, field.name) = switch (field.type) {
             Node.Index,
-            Node.OptionalIndex,
             TokenIndex,
             OptionalTokenIndex,
             ExtraIndex,
-            => @enumFromInt(self.extra_data[@intFromEnum(index) + i]),
+            => @enumFromInt(self.extra_data.items[@intFromEnum(index) + i]),
+            Node.Range => blk: {
+                var range: Node.Range = undefined;
+                range.start = @enumFromInt(self.extra_data.items[@intFromEnum(index) + i]);
+                i += 1;
+                range.end = @enumFromInt(self.extra_data.items[@intFromEnum(index) + i]);
+                break :blk range;
+            },
             else => @compileError("unexpected field type: " ++ @typeName(field.type)),
         };
+        i += 1;
     }
     return result;
 }
@@ -141,5 +160,5 @@ pub fn root(self: *Self) []const Node.Index {
 }
 
 pub fn list(self: *Self, range: Node.Range) []const Node.Index {
-    return @ptrCast(self.ast.extra_data[range.start..range.end]);
+    return @ptrCast(self.extra_data.items[@intFromEnum(range.start)..@intFromEnum(range.end)]);
 }

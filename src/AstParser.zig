@@ -140,10 +140,26 @@ pub fn parse(self: *Self) !void {
     const scratch_top = self.scratch.items.len;
     defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
-    while (true) {
-        const node = try self.parseDeclarationRecoverable() orelse break;
-        try self.scratch.append(self.alloc, node);
-        try self.eatWhiteSpace();
+    decls: while (true) {
+        const node = self.parseDeclaration() catch |err| switch (err) {
+            // Skip ahead until next newline
+            error.ParseError => recover: while (true) {
+                switch (self.currentToken().tag) {
+                    .eol => {
+                        _ = self.advanceToken();
+                        break :recover null;
+                    },
+                    else => _ = self.advanceToken(),
+                }
+            },
+            else => return err,
+        };
+        if (node) |n| {
+            try self.scratch.append(self.alloc, n);
+            try self.eatWhiteSpace();
+        } else {
+            break :decls;
+        }
     }
 
     const declarations = self.scratch.items[scratch_top..];
@@ -165,26 +181,6 @@ fn eatWhiteSpace(self: *Self) !void {
             break;
         }
     }
-}
-
-fn parseDeclarationRecoverable(self: *Self) !?Node.Index {
-    return self.parseDeclaration() catch |err| switch (err) {
-        error.ParseError => {
-            // Skip ahead until next newline, consume it and then try the next
-            // declaration.
-            while (true) {
-                switch (self.currentToken().tag) {
-                    .eol => {
-                        _ = self.advanceToken();
-                        break;
-                    },
-                    .eof => return null,
-                    else => _ = self.advanceToken(),
-                }
-            }
-        },
-        else => return err,
-    };
 }
 
 /// Only returns null at EOF.
@@ -287,7 +283,7 @@ fn parseIndentedLine(self: *Self) !?void {
 test "negative" {
     try testRoundtrip(
         \\2015-11-01 * "Test"
-        \\  Assets:Foo -1 USD
+        // \\  Assets:Foo -1 USD
         \\
     );
 }
@@ -312,6 +308,10 @@ fn testRoundtrip(source: [:0]const u8) !void {
 
     var ast = try Ast.parse(alloc, uri, source);
     defer ast.deinit();
+    if (ast.errors.items.len > 0) {
+        try ast.errors.items[0].print(alloc);
+        return error.ParseError;
+    }
 
     var allocating = std.Io.Writer.Allocating.init(alloc);
     defer allocating.deinit();

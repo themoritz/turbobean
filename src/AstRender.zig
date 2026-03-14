@@ -17,6 +17,7 @@ pub fn render(alloc: std.mem.Allocator, w: *std.Io.Writer, ast: *Ast) !void {
     };
 
     try self.renderRoot();
+    try self.w.flush();
 }
 
 fn renderRoot(self: *Self) !void {
@@ -57,6 +58,7 @@ fn renderEntry(self: *Self, entry: Node.Entry) !void {
                 //
             }
         },
+        else => {},
     }
 }
 
@@ -65,7 +67,7 @@ fn space(self: *Self) !void {
 }
 
 fn renderToken(self: *Self, token: Ast.TokenIndex) !void {
-    try self.w.write(self.ast.tokens.items[@intFromEnum(token)].slice);
+    _ = try self.w.write(self.ast.tokens.items[@intFromEnum(token)].slice);
 }
 
 fn renderOptionalToken(self: *Self, token: Ast.OptionalTokenIndex) !void {
