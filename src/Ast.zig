@@ -71,21 +71,63 @@ pub const OptionalTokenIndex = enum(u32) {
     }
 };
 
+pub const KeyValue = struct { key: TokenIndex, value: TokenIndex };
+
 pub const Node = union(enum) {
     /// Node index for every declaration
     root: Range,
-    /// Filename string
+    /// Directives
     include: TokenIndex,
+    option: KeyValue,
+    plugin: TokenIndex,
+    pushtag: TokenIndex,
+    poptag: TokenIndex,
+    pushmeta: KeyValue,
+    popmeta: KeyValue,
+    /// Entries
     entry: ExtraIndex,
     transaction: ExtraIndex,
-    // posting: Posting,
+    posting: ExtraIndex,
+    open: ExtraIndex,
+    close: TokenIndex,
+    commodity: TokenIndex,
+    pad: struct { account: TokenIndex, pad_to: TokenIndex },
+    pnl: struct { account: TokenIndex, income_account: TokenIndex },
+    balance: ExtraIndex,
+    price_decl: struct { currency: TokenIndex, amount: Index },
+    event: KeyValue,
+    query: KeyValue,
+    note: KeyValue,
+    document: KeyValue,
+    /// Sub-nodes
     amount: struct {
         number: OptionalTokenIndex,
         currency: OptionalTokenIndex,
     },
+    lot_spec: ExtraIndex,
+    price_annotation: struct { total: TokenIndex, amount: Index },
+    key_value: KeyValue,
 
     pub const Index = enum(u32) {
         _,
+        pub fn toOptional(i: Index) OptionalIndex {
+            const result: OptionalIndex = @enumFromInt(@intFromEnum(i));
+            std.debug.assert(result != .none);
+            return result;
+        }
+    };
+
+    pub const OptionalIndex = enum(u32) {
+        none = std.math.maxInt(u32),
+        _,
+
+        pub fn unwrap(oi: OptionalIndex) ?Index {
+            return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+        }
+
+        pub fn fromOptional(oi: ?Index) OptionalIndex {
+            return if (oi) |i| i.toOptional() else .none;
+        }
     };
 
     pub const Entry = struct {
@@ -103,22 +145,40 @@ pub const Node = union(enum) {
     };
 
     pub const Posting = struct {
-        flag: ?TokenIndex,
+        flag: OptionalTokenIndex,
         account: TokenIndex,
         amount: Index,
-        lot_spec: Index,
-        price: ?TokenIndex,
+        lot_spec: OptionalIndex,
+        price: OptionalIndex,
         meta: Range,
     };
 
-    comptime {
-        std.debug.assert(@sizeOf(Node) <= 12);
-    }
+    pub const Open = struct {
+        account: TokenIndex,
+        booking_method: OptionalTokenIndex,
+        currencies: Range,
+    };
+
+    pub const Balance = struct {
+        account: TokenIndex,
+        amount: Index,
+        tolerance: OptionalTokenIndex,
+    };
+
+    pub const LotSpec = struct {
+        price: OptionalIndex,
+        date: OptionalTokenIndex,
+        label: OptionalTokenIndex,
+    };
 
     pub const Range = struct {
         start: ExtraIndex,
         end: ExtraIndex,
     };
+
+    comptime {
+        std.debug.assert(@sizeOf(Node) <= 12);
+    }
 };
 
 pub fn node(self: *Self, index: Node.Index) Node {
@@ -132,6 +192,7 @@ pub fn getExtra(self: *Self, index: ExtraIndex, comptime T: type) T {
     inline for (fields) |field| {
         @field(result, field.name) = switch (field.type) {
             Node.Index,
+            Node.OptionalIndex,
             TokenIndex,
             OptionalTokenIndex,
             ExtraIndex,
@@ -160,5 +221,9 @@ pub fn root(self: *Self) []const Node.Index {
 }
 
 pub fn list(self: *Self, range: Node.Range) []const Node.Index {
+    return @ptrCast(self.extra_data.items[@intFromEnum(range.start)..@intFromEnum(range.end)]);
+}
+
+pub fn tokenList(self: *Self, range: Node.Range) []const TokenIndex {
     return @ptrCast(self.extra_data.items[@intFromEnum(range.start)..@intFromEnum(range.end)]);
 }
