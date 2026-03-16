@@ -492,7 +492,7 @@ fn parseKeyValueLine(self: *Self) !?Node.Index {
 
     _ = try self.expectToken(.indent);
     const kv_node = try self.parseKeyValue() orelse return self.fail(.expected_key_value);
-    _ = try self.expectToken(.eol);
+    try self.expectEolOrEof();
     return kv_node;
 }
 
@@ -569,7 +569,7 @@ fn parseAmount(self: *Self) !?Node.Index {
 }
 
 fn parseLotSpec(self: *Self) !?Node.Index {
-    _ = self.tryToken(.lcurl) orelse return null;
+    const lcurl = self.tryToken(.lcurl) orelse return null;
 
     var price_node: ?Node.Index = null;
     var lot_date: ?Ast.TokenIndex = null;
@@ -594,9 +594,11 @@ fn parseLotSpec(self: *Self) !?Node.Index {
         if (self.tryToken(.comma) == null) break;
     }
 
-    _ = try self.expectToken(.rcurl);
+    const rcurl = try self.expectToken(.rcurl);
 
     const extra = try self.addExtra(Node.LotSpec{
+        .lcurl = lcurl,
+        .rcurl = rcurl,
         .price = Node.OptionalIndex.fromOptional(price_node),
         .date = Ast.OptionalTokenIndex.fromOptional(lot_date),
         .label = Ast.OptionalTokenIndex.fromOptional(label),
@@ -1089,6 +1091,169 @@ test "indent normalization" {
         \\    ; wrong indent for posting meta comment
         \\    pkey: "pval"
         \\  Expenses:Food
+        \\
+    );
+}
+
+test "eol comment on close" {
+    try testRoundtrip(
+        \\2021-01-01 open Assets:Cash
+        \\2021-12-31 close Assets:Cash ; closed
+        \\
+    );
+}
+
+test "eol comment on commodity" {
+    try testRoundtrip(
+        \\2021-01-01 commodity USD ; US Dollar
+        \\
+    );
+}
+
+test "eol comment on balance" {
+    try testRoundtrip(
+        \\2021-01-01 open Assets:Cash
+        \\2021-01-01 balance Assets:Cash 100 USD ; check
+        \\
+    );
+}
+
+test "eol comment on pad" {
+    try testRoundtrip(
+        \\2021-01-01 open Assets:Cash
+        \\2021-01-01 open Equity:Opening
+        \\2021-01-01 pad Assets:Cash Equity:Opening ; padding
+        \\
+    );
+}
+
+test "eol comment on event" {
+    try testRoundtrip(
+        \\2021-01-01 event "location" "Berlin" ; moved
+        \\
+    );
+}
+
+test "eol comment on query" {
+    try testRoundtrip(
+        \\2021-01-01 query "cash" "SELECT *" ; all cash
+        \\
+    );
+}
+
+test "eol comment on note" {
+    try testRoundtrip(
+        \\2021-01-01 open Assets:Cash
+        \\2021-01-01 note Assets:Cash "hello" ; noted
+        \\
+    );
+}
+
+test "eol comment on price" {
+    try testRoundtrip(
+        \\2021-01-01 price USD 0.85 EUR ; exchange rate
+        \\
+    );
+}
+
+test "eol comment on include" {
+    try testRoundtrip(
+        \\include "other.bean" ; included
+        \\
+    );
+}
+
+test "eol comment on plugin" {
+    try testRoundtrip(
+        \\plugin "mymodule" ; loaded
+        \\
+    );
+}
+
+test "eol comment on pushtag" {
+    try testRoundtrip(
+        \\pushtag #trip ; start of trip
+        \\poptag #trip ; end of trip
+        \\
+    );
+}
+
+test "eol comment on pushmeta" {
+    try testRoundtrip(
+        \\pushmeta foo: "bar" ; meta start
+        \\popmeta foo: "bar" ; meta end
+        \\
+    );
+}
+
+test "eol comment on posting without amount" {
+    try testRoundtrip(
+        \\2021-01-01 open Assets:Cash
+        \\2021-01-01 open Expenses:Food
+        \\
+        \\2021-06-01 * "Lunch"
+        \\  Assets:Cash -10 USD
+        \\  Expenses:Food ; auto-balanced
+        \\
+    );
+}
+
+test "eol comment on entry meta" {
+    try testRoundtrip(
+        \\2021-01-01 open Assets:Cash
+        \\  foo: "bar" ; meta comment
+        \\
+    );
+}
+
+test "eol comment on posting meta" {
+    try testRoundtrip(
+        \\2021-01-01 * "Test"
+        \\  Assets:Cash 100 USD
+        \\    pkey: "pval" ; posting meta comment
+        \\  Expenses:Food
+        \\
+    );
+}
+
+test "eol comment on transaction narration only" {
+    try testRoundtrip(
+        \\2021-01-01 open Assets:Cash
+        \\2021-01-01 open Expenses:Food
+        \\
+        \\2021-06-01 * "Lunch" ; simple tx
+        \\  Assets:Cash -10 USD
+        \\  Expenses:Food
+        \\
+    );
+}
+
+test "eol comment on transaction with payee" {
+    try testRoundtrip(
+        \\2021-01-01 open Assets:Cash
+        \\2021-01-01 open Expenses:Food
+        \\
+        \\2021-06-01 * "Restaurant" "Lunch" ; with payee
+        \\  Assets:Cash -10 USD
+        \\  Expenses:Food
+        \\
+    );
+}
+
+test "eol comment space normalization" {
+    try testNormalize(
+        \\2021-01-01 open Assets:Cash     ; too many spaces
+        \\
+    ,
+        \\2021-01-01 open Assets:Cash ; too many spaces
+        \\
+    );
+}
+
+test "comment after cost spec" {
+    try testRoundtrip(
+        \\2025-01-01 * "Buy AAPL for EUR"
+        \\  Assets:Stocks 10 AAPL {10.00 EUR} ; fkjsel
         \\
     );
 }

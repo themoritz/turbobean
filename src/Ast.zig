@@ -166,6 +166,8 @@ pub const Node = union(enum) {
     };
 
     pub const LotSpec = struct {
+        lcurl: TokenIndex,
+        rcurl: TokenIndex,
         price: OptionalIndex,
         date: OptionalTokenIndex,
         label: OptionalTokenIndex,
