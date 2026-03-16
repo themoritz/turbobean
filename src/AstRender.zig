@@ -413,7 +413,8 @@ fn renderLotSpec(self: *Self, idx: Node.Index) !void {
         Node.LotSpec,
     );
 
-    _ = try self.w.write(" {");
+    try self.space();
+    try self.renderToken(ls.lcurl);
     var first = true;
 
     if (ls.price.unwrap()) |price_idx| {
@@ -429,7 +430,7 @@ fn renderLotSpec(self: *Self, idx: Node.Index) !void {
         if (!first) _ = try self.w.write(", ");
         try self.renderToken(l);
     }
-    _ = try self.w.write("}");
+    try self.renderToken(ls.rcurl);
 }
 
 fn renderPriceAnnotation(self: *Self, idx: Node.Index) !void {
@@ -438,12 +439,9 @@ fn renderPriceAnnotation(self: *Self, idx: Node.Index) !void {
         else => @panic("expected price_annotation node"),
     };
 
-    const tok = self.ast.tokens.items[@intFromEnum(pa.total)];
-    if (tok.tag == .atat) {
-        _ = try self.w.write(" @@ ");
-    } else {
-        _ = try self.w.write(" @ ");
-    }
+    try self.space();
+    try self.renderToken(pa.total);
+    try self.space();
     try self.renderAmount(pa.amount);
 }
 
