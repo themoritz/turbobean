@@ -227,3 +227,29 @@ pub fn list(self: *Self, range: Node.Range) []const Node.Index {
 pub fn tokenList(self: *Self, range: Node.Range) []const TokenIndex {
     return @ptrCast(self.extra_data.items[@intFromEnum(range.start)..@intFromEnum(range.end)]);
 }
+
+/// Returns the first token index for a declaration node (entry or directive).
+/// For entries, this is the date token. For directives, it's the keyword token
+/// (one before the stored token).
+pub fn firstToken(self: *Self, index: Node.Index) usize {
+    const n = self.node(index);
+    return switch (n) {
+        .entry => |extra| @intFromEnum(self.getExtra(extra, Node.Entry).date),
+        // Directives store the token after the keyword
+        .include => |tok| @intFromEnum(tok) - 1,
+        .option => |kv| @intFromEnum(kv.key) - 1,
+        .plugin => |tok| @intFromEnum(tok) - 1,
+        .pushtag => |tok| @intFromEnum(tok) - 1,
+        .poptag => |tok| @intFromEnum(tok) - 1,
+        .pushmeta => |kv| @intFromEnum(kv.key) - 1,
+        .popmeta => |kv| @intFromEnum(kv.key) - 1,
+        .posting => |extra| {
+            const p = self.getExtra(extra, Node.Posting);
+            // indent is before flag (if present) or account
+            if (p.flag.unwrap()) |f| return @intFromEnum(f) - 1;
+            return @intFromEnum(p.account) - 1;
+        },
+        .key_value => |kv| @intFromEnum(kv.key) - 1, // indent before key
+        else => unreachable,
+    };
+}
