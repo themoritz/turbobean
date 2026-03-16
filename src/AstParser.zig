@@ -13,6 +13,7 @@ tokens: []const Lexer.Token,
 tok_i: usize,
 
 scratch: std.ArrayList(Node.Index),
+token_scratch: std.ArrayList(Ast.TokenIndex),
 
 nodes: *std.ArrayList(Node),
 extra_data: *std.ArrayList(u32),
@@ -26,6 +27,7 @@ pub fn init(alloc: std.mem.Allocator, uri: Uri, ast: *Ast) Self {
         .tokens = ast.tokens.items,
         .tok_i = 0,
         .scratch = .{},
+        .token_scratch = .{},
         .nodes = &ast.nodes,
         .extra_data = &ast.extra_data,
         .errors = &ast.errors,
@@ -34,6 +36,7 @@ pub fn init(alloc: std.mem.Allocator, uri: Uri, ast: *Ast) Self {
 
 pub fn deinit(self: *Self) void {
     self.scratch.deinit(self.alloc);
+    self.token_scratch.deinit(self.alloc);
 }
 
 fn addNode(self: *Self, node: Node) !Node.Index {
@@ -47,7 +50,12 @@ fn addExtra(self: *Self, extra: anytype) !Ast.ExtraIndex {
     const fields = std.meta.fields(@TypeOf(extra));
     inline for (fields) |field| {
         switch (field.type) {
-            Node.Index, Ast.TokenIndex, Ast.OptionalTokenIndex, Ast.ExtraIndex => {
+            Node.Index,
+            Node.OptionalIndex,
+            Ast.TokenIndex,
+            Ast.OptionalTokenIndex,
+            Ast.ExtraIndex,
+            => {
                 try self.extra_data.append(self.alloc, @intFromEnum(@field(extra, field.name)));
             },
             Node.Range => {
@@ -62,6 +70,14 @@ fn addExtra(self: *Self, extra: anytype) !Ast.ExtraIndex {
 }
 
 fn makeRange(self: *Self, slice: []const Node.Index) !Node.Range {
+    try self.extra_data.appendSlice(self.alloc, @ptrCast(slice));
+    return .{
+        .start = @enumFromInt(self.extra_data.items.len - slice.len),
+        .end = @enumFromInt(self.extra_data.items.len),
+    };
+}
+
+fn makeTokenRange(self: *Self, slice: []const Ast.TokenIndex) !Node.Range {
     try self.extra_data.appendSlice(self.alloc, @ptrCast(slice));
     return .{
         .start = @enumFromInt(self.extra_data.items.len - slice.len),
@@ -143,14 +159,18 @@ pub fn parse(self: *Self) !void {
     decls: while (true) {
         const node = self.parseDeclaration() catch |err| switch (err) {
             // Skip ahead until next newline
-            error.ParseError => recover: while (true) {
-                switch (self.currentToken().tag) {
-                    .eol => {
-                        _ = self.advanceToken();
-                        break :recover null;
-                    },
-                    else => _ = self.advanceToken(),
+            error.ParseError => blk: {
+                while (true) {
+                    switch (self.currentToken().tag) {
+                        .eol => {
+                            _ = self.advanceToken();
+                            break;
+                        },
+                        .eof => break,
+                        else => _ = self.advanceToken(),
+                    }
                 }
+                break :blk null;
             },
             else => return err,
         };
@@ -199,60 +219,404 @@ fn parseDeclaration(self: *Self) !?Node.Index {
 fn parseEntry(self: *Self) !?Node.Index {
     const date = self.tryToken(.date) orelse return null;
 
-    const entry_extra: Ast.ExtraIndex = blk: switch (self.currentToken().tag) {
-        .keyword_txn, .flag, .asterisk, .hash => {
-            const flag = self.advanceToken();
+    switch (self.currentToken().tag) {
+        .keyword_txn,
+        .flag,
+        .asterisk,
+        .hash,
+        => return try self.parseTransactionEntry(date),
+        else => {},
+    }
 
-            var payee = self.tryToken(.string);
-            var narration = self.tryToken(.string);
+    const payload_node: Node.Index = switch (self.currentToken().tag) {
+        .keyword_open => blk: {
+            _ = self.advanceToken();
+            const account = try self.expectToken(.account);
 
-            if (narration == null) {
-                narration = payee;
-                payee = null;
+            const tscratch_top = self.token_scratch.items.len;
+            defer self.token_scratch.shrinkRetainingCapacity(tscratch_top);
+
+            if (self.tryToken(.currency)) |cur| {
+                try self.token_scratch.append(self.alloc, cur);
+                while (self.tryToken(.comma) != null) {
+                    const c = try self.expectToken(.currency);
+                    try self.token_scratch.append(self.alloc, c);
+                }
             }
 
-            // tagslinks
-            try self.expectEolOrEof();
+            const currencies = try self.makeTokenRange(self.token_scratch.items[tscratch_top..]);
+            const booking_method = self.tryToken(.string);
 
-            // meta
-
-            const scratch_top = self.scratch.items.len;
-            defer self.scratch.shrinkRetainingCapacity(scratch_top);
-
-            // while (true) {
-            //     if (try p.parsePosting())
-            // }
-
-            const postings = self.scratch.items[scratch_top..];
-
-            const tx_extra = try self.addExtra(Node.Transaction{
-                .flag = flag,
-                .narration = Ast.OptionalTokenIndex.fromOptional(narration),
-                .payee = Ast.OptionalTokenIndex.fromOptional(payee),
-                .postings = try self.makeRange(postings),
+            const extra = try self.addExtra(Node.Open{
+                .account = account,
+                .booking_method = Ast.OptionalTokenIndex.fromOptional(booking_method),
+                .currencies = currencies,
             });
-            const tx_node = try self.addNode(Node{
-                .transaction = tx_extra,
-            });
-
-            const entry_extra = try self.addExtra(Node.Entry{
-                .date = date,
-                .tagslinks = undefined,
-                .meta = undefined,
-                .payload = tx_node,
-            });
-
-            break :blk entry_extra;
+            break :blk try self.addNode(.{ .open = extra });
         },
-        else => @panic("TODO"),
+        .keyword_close => blk: {
+            _ = self.advanceToken();
+            const account = try self.expectToken(.account);
+            break :blk try self.addNode(.{ .close = account });
+        },
+        .keyword_commodity => blk: {
+            _ = self.advanceToken();
+            const currency = try self.expectToken(.currency);
+            break :blk try self.addNode(.{ .commodity = currency });
+        },
+        .keyword_pad => blk: {
+            _ = self.advanceToken();
+            const account = try self.expectToken(.account);
+            const pad_to = try self.expectToken(.account);
+            break :blk try self.addNode(.{ .pad = .{ .account = account, .pad_to = pad_to } });
+        },
+        .keyword_pnl => blk: {
+            _ = self.advanceToken();
+            const account = try self.expectToken(.account);
+            const income_account = try self.expectToken(.account);
+            break :blk try self.addNode(.{ .pnl = .{ .account = account, .income_account = income_account } });
+        },
+        .keyword_balance => blk: {
+            _ = self.advanceToken();
+            const account = try self.expectToken(.account);
+
+            _ = self.tryToken(.minus);
+            const number = try self.expectToken(.number);
+            var tolerance: ?Ast.TokenIndex = null;
+            if (self.tryToken(.tilde) != null) {
+                _ = self.tryToken(.minus);
+                tolerance = try self.expectToken(.number);
+            }
+            const currency = try self.expectToken(.currency);
+
+            const amount_node = try self.addNode(.{ .amount = .{
+                .number = number.toOptional(),
+                .currency = currency.toOptional(),
+            } });
+
+            const extra = try self.addExtra(Node.Balance{
+                .account = account,
+                .amount = amount_node,
+                .tolerance = Ast.OptionalTokenIndex.fromOptional(tolerance),
+            });
+            break :blk try self.addNode(.{ .balance = extra });
+        },
+        .keyword_price => blk: {
+            _ = self.advanceToken();
+            const currency = try self.expectToken(.currency);
+            const amount = try self.parseAmount() orelse return self.fail(.expected_amount);
+            break :blk try self.addNode(.{ .price_decl = .{ .currency = currency, .amount = amount } });
+        },
+        .keyword_event => blk: {
+            _ = self.advanceToken();
+            const variable = try self.expectToken(.string);
+            const value = try self.expectToken(.string);
+            break :blk try self.addNode(.{ .event = .{ .key = variable, .value = value } });
+        },
+        .keyword_query => blk: {
+            _ = self.advanceToken();
+            const name = try self.expectToken(.string);
+            const sql = try self.expectToken(.string);
+            break :blk try self.addNode(.{ .query = .{ .key = name, .value = sql } });
+        },
+        .keyword_note => blk: {
+            _ = self.advanceToken();
+            const account = try self.expectToken(.account);
+            const note = try self.expectToken(.string);
+            break :blk try self.addNode(.{ .note = .{ .key = account, .value = note } });
+        },
+        .keyword_document => blk: {
+            _ = self.advanceToken();
+            const account = try self.expectToken(.account);
+            const filename = try self.expectToken(.string);
+            break :blk try self.addNode(.{ .document = .{ .key = account, .value = filename } });
+        },
+        else => return self.fail(.expected_entry),
     };
+
+    const tagslinks = try self.parseTagsLinks();
+    try self.expectEolOrEof();
+    const meta = try self.parseMeta();
+
+    const entry_extra = try self.addExtra(Node.Entry{
+        .date = date,
+        .tagslinks = tagslinks,
+        .meta = meta,
+        .payload = payload_node,
+    });
+
+    return try self.addNode(.{ .entry = entry_extra });
+}
+
+fn parseTransactionEntry(self: *Self, date: Ast.TokenIndex) !Node.Index {
+    const flag = self.advanceToken();
+
+    var payee = self.tryToken(.string);
+    var narration = self.tryToken(.string);
+
+    if (narration == null) {
+        narration = payee;
+        payee = null;
+    }
+
+    const tagslinks = try self.parseTagsLinks();
+    try self.expectEolOrEof();
+    const meta = try self.parseMeta();
+
+    // Parse postings
+    const scratch_top = self.scratch.items.len;
+    defer self.scratch.shrinkRetainingCapacity(scratch_top);
+
+    while (true) {
+        if (try self.parsePosting()) |posting_node| {
+            try self.scratch.append(self.alloc, posting_node);
+        } else if (try self.parseIndentedLine()) |_| {
+            //
+        } else break;
+    }
+
+    const postings = try self.makeRange(self.scratch.items[scratch_top..]);
+
+    const tx_extra = try self.addExtra(Node.Transaction{
+        .flag = flag,
+        .payee = Ast.OptionalTokenIndex.fromOptional(payee),
+        .narration = Ast.OptionalTokenIndex.fromOptional(narration),
+        .postings = postings,
+    });
+    const tx_node = try self.addNode(.{ .transaction = tx_extra });
+
+    const entry_extra = try self.addExtra(Node.Entry{
+        .date = date,
+        .tagslinks = tagslinks,
+        .meta = meta,
+        .payload = tx_node,
+    });
 
     return try self.addNode(.{ .entry = entry_extra });
 }
 
 fn parseDirective(self: *Self) !?Node.Index {
-    _ = self;
-    return null;
+    switch (self.currentToken().tag) {
+        .keyword_pushtag => {
+            _ = self.advanceToken();
+            const tag = try self.expectToken(.tag);
+            try self.expectEolOrEof();
+            return try self.addNode(.{ .pushtag = tag });
+        },
+        .keyword_poptag => {
+            _ = self.advanceToken();
+            const tag = try self.expectToken(.tag);
+            try self.expectEolOrEof();
+            return try self.addNode(.{ .poptag = tag });
+        },
+        .keyword_pushmeta => {
+            _ = self.advanceToken();
+            const key = self.tryToken(.key) orelse return self.fail(.expected_key_value);
+            _ = try self.expectToken(.colon);
+            const value = switch (self.currentToken().tag) {
+                .string, .account, .date, .currency, .tag, .true, .false, .none, .number => self.advanceToken(),
+                else => return self.fail(.expected_value),
+            };
+            try self.expectEolOrEof();
+            return try self.addNode(.{ .pushmeta = .{ .key = key, .value = value } });
+        },
+        .keyword_popmeta => {
+            _ = self.advanceToken();
+            const key = self.tryToken(.key) orelse return self.fail(.expected_key_value);
+            _ = try self.expectToken(.colon);
+            const value = switch (self.currentToken().tag) {
+                .string, .account, .date, .currency, .tag, .true, .false, .none, .number => self.advanceToken(),
+                else => return self.fail(.expected_value),
+            };
+            try self.expectEolOrEof();
+            return try self.addNode(.{ .popmeta = .{ .key = key, .value = value } });
+        },
+        .keyword_option => {
+            _ = self.advanceToken();
+            const opt_key = try self.expectToken(.string);
+            const opt_value = try self.expectToken(.string);
+            try self.expectEolOrEof();
+            return try self.addNode(.{ .option = .{ .key = opt_key, .value = opt_value } });
+        },
+        .keyword_include => {
+            _ = self.advanceToken();
+            const file = try self.expectToken(.string);
+            try self.expectEolOrEof();
+            return try self.addNode(.{ .include = file });
+        },
+        .keyword_plugin => {
+            _ = self.advanceToken();
+            const plugin = try self.expectToken(.string);
+            try self.expectEolOrEof();
+            return try self.addNode(.{ .plugin = plugin });
+        },
+        else => return null,
+    }
+}
+
+fn parseTagsLinks(self: *Self) !Node.Range {
+    const tscratch_top = self.token_scratch.items.len;
+    defer self.token_scratch.shrinkRetainingCapacity(tscratch_top);
+
+    while (true) {
+        if (self.tryToken(.tag)) |tag| {
+            try self.token_scratch.append(self.alloc, tag);
+        } else if (self.tryToken(.link)) |link| {
+            try self.token_scratch.append(self.alloc, link);
+        } else break;
+    }
+
+    return try self.makeTokenRange(self.token_scratch.items[tscratch_top..]);
+}
+
+fn parseMeta(self: *Self) !Node.Range {
+    const scratch_top = self.scratch.items.len;
+    defer self.scratch.shrinkRetainingCapacity(scratch_top);
+
+    while (true) {
+        if (try self.parseKeyValueLine()) |kv_node| {
+            try self.scratch.append(self.alloc, kv_node);
+        } else if (try self.parseIndentedLine()) |_| {
+            //
+        } else break;
+    }
+
+    return try self.makeRange(self.scratch.items[scratch_top..]);
+}
+
+fn parseKeyValueLine(self: *Self) !?Node.Index {
+    // Lookahead
+    if (self.currentToken().tag != .indent) return null;
+    const next = self.nextToken() orelse return null;
+    if (next.tag != .key) return null;
+
+    _ = try self.expectToken(.indent);
+    const kv_node = try self.parseKeyValue() orelse return self.fail(.expected_key_value);
+    _ = try self.expectToken(.eol);
+    return kv_node;
+}
+
+fn parseKeyValue(self: *Self) !?Node.Index {
+    const key = self.tryToken(.key) orelse return null;
+    _ = try self.expectToken(.colon);
+    switch (self.currentToken().tag) {
+        .string, .account, .date, .currency, .tag, .true, .false, .none, .number => {
+            const value = self.advanceToken();
+            return try self.addNode(.{ .key_value = .{ .key = key, .value = value } });
+        },
+        else => return self.fail(.expected_value),
+    }
+}
+
+fn parsePosting(self: *Self) !?Node.Index {
+    // Lookahead
+    if (self.currentToken().tag != .indent) return null;
+    const next = self.nextToken() orelse return null;
+    switch (next.tag) {
+        .account, .flag, .asterisk, .hash => {},
+        else => return null,
+    }
+
+    _ = try self.expectToken(.indent);
+    const flag = self.parseFlag();
+    const account = self.tryToken(.account) orelse return null;
+    const amount = try self.parseIncompleteAmount();
+    const lot_spec = try self.parseLotSpec();
+    const price = try self.parsePriceAnnotation();
+    _ = self.tryToken(.comment);
+    _ = self.tryToken(.eol);
+
+    const meta = try self.parseMeta();
+
+    const extra = try self.addExtra(Node.Posting{
+        .flag = Ast.OptionalTokenIndex.fromOptional(flag),
+        .account = account,
+        .amount = amount,
+        .lot_spec = Node.OptionalIndex.fromOptional(lot_spec),
+        .price = Node.OptionalIndex.fromOptional(price),
+        .meta = meta,
+    });
+
+    return try self.addNode(.{ .posting = extra });
+}
+
+fn parseIncompleteAmount(self: *Self) !Node.Index {
+    // If we see a minus, consume it. The number token follows immediately.
+    // We store the number token index; the renderer checks token[number-1]
+    // for a minus sign to reproduce negative numbers.
+    const has_minus = self.tryToken(.minus) != null;
+    var number: ?Ast.TokenIndex = null;
+    if (has_minus) {
+        number = try self.expectToken(.number);
+    } else {
+        number = self.tryToken(.number);
+    }
+    const currency = self.tryToken(.currency);
+    return try self.addNode(.{ .amount = .{
+        .number = Ast.OptionalTokenIndex.fromOptional(number),
+        .currency = Ast.OptionalTokenIndex.fromOptional(currency),
+    } });
+}
+
+fn parseAmount(self: *Self) !?Node.Index {
+    _ = self.tryToken(.minus);
+    const number = self.tryToken(.number) orelse return null;
+    const currency = try self.expectToken(.currency);
+    return try self.addNode(.{ .amount = .{
+        .number = number.toOptional(),
+        .currency = currency.toOptional(),
+    } });
+}
+
+fn parseLotSpec(self: *Self) !?Node.Index {
+    _ = self.tryToken(.lcurl) orelse return null;
+
+    var price_node: ?Node.Index = null;
+    var lot_date: ?Ast.TokenIndex = null;
+    var label: ?Ast.TokenIndex = null;
+
+    while (self.currentToken().tag != .rcurl) {
+        switch (self.currentToken().tag) {
+            .date => {
+                if (lot_date != null) return self.fail(.duplicate_lot_spec);
+                lot_date = self.advanceToken();
+            },
+            .string => {
+                if (label != null) return self.fail(.duplicate_lot_spec);
+                label = self.advanceToken();
+            },
+            .number, .minus => {
+                if (price_node != null) return self.fail(.duplicate_lot_spec);
+                price_node = try self.parseAmount();
+            },
+            else => break,
+        }
+        if (self.tryToken(.comma) == null) break;
+    }
+
+    _ = try self.expectToken(.rcurl);
+
+    const extra = try self.addExtra(Node.LotSpec{
+        .price = Node.OptionalIndex.fromOptional(price_node),
+        .date = Ast.OptionalTokenIndex.fromOptional(lot_date),
+        .label = Ast.OptionalTokenIndex.fromOptional(label),
+    });
+
+    return try self.addNode(.{ .lot_spec = extra });
+}
+
+fn parsePriceAnnotation(self: *Self) !?Node.Index {
+    switch (self.currentToken().tag) {
+        .at, .atat => {
+            const at_token = self.advanceToken();
+            const amount = try self.parseIncompleteAmount();
+            return try self.addNode(.{ .price_annotation = .{
+                .total = at_token,
+                .amount = amount,
+            } });
+        },
+        else => return null,
+    }
 }
 
 fn parseFlag(self: *Self) ?Ast.TokenIndex {
@@ -271,7 +635,6 @@ fn expectEolOrEof(self: *Self) !void {
     }
 }
 
-// TODO: rename to parseIndentedComment
 fn parseIndentedLine(self: *Self) !?void {
     if (self.currentToken().tag == .indent and self.nextToken() != null and (self.nextToken().?.tag == .eol or self.nextToken().?.tag == .comment)) {
         _ = try self.expectToken(.indent);
@@ -283,8 +646,266 @@ fn parseIndentedLine(self: *Self) !?void {
 test "negative" {
     try testRoundtrip(
         \\2015-11-01 * "Test"
-        // \\  Assets:Foo -1 USD
+        \\  Assets:Foo -1 USD
         \\
+    );
+}
+
+test "tx" {
+    try testRoundtrip(
+        \\2015-11-01 * "Test"
+        \\  Foo 100 USD
+        \\  Bar 2 EUR
+        \\
+    );
+
+    try testRoundtrip(
+        \\2024-12-01 * "Foo"
+        \\
+    );
+
+    try testRoundtrip(
+        \\2015-01-01 * ""
+        \\  ! Aa 10 USD
+        \\  Ba 30 USD
+        \\
+        \\2016-01-01 * ""
+        \\  Ca 10 USD
+        \\  Da 20 USD
+        \\
+    );
+}
+
+test "tagslinks" {
+    try testRoundtrip(
+        \\2019-05-15 # #tag ^link
+        \\
+    );
+}
+
+test "directives" {
+    try testRoundtrip(
+        \\pushtag #nz
+        \\
+        \\poptag #nz
+        \\
+        \\pushmeta k: "Val"
+        \\
+        \\popmeta k: Assets:Val
+        \\
+        \\option "some" "option"
+        \\
+        \\include "file.bean"
+        \\
+        \\plugin "some_plugin"
+        \\
+    );
+}
+
+test "meta" {
+    try testRoundtrip(
+        \\2020-01-01 txn
+        \\  foo: TRUE
+        \\
+        \\2020-02-01 txn "a" "b"
+        \\  foo: FALSE
+        \\  Assets:Foo 10.00 USD
+        \\    bar: NULL
+        \\
+    );
+}
+
+test "price annotation" {
+    try testRoundtrip(
+        \\2020-02-01 txn "a" "b"
+        \\  Assets:Foo 10 USD @ 2 EUR
+        \\  Assets:Foo @@ 4 EUR
+        \\
+    );
+}
+
+test "cost spec" {
+    try testRoundtrip(
+        \\2020-02-01 txn "a" "b"
+        \\  Assets:Foo 10 USD {}
+        \\  Assets:Foo {"label"} @ 0 USD
+        \\  Assets:Foo {2014-01-01}
+        \\
+    );
+}
+
+test "open" {
+    try testRoundtrip(
+        \\1985-08-17 open Assets:Foo USD,EUR "STRICT"
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 open Assets:Bar NZD
+        \\
+        \\1985-09-24 open Assets:Bar "FIFO"
+        \\
+    );
+}
+
+test "close" {
+    try testRoundtrip(
+        \\1985-08-17 close Assets:Foo
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 close Assets:Bar
+        \\
+    );
+}
+
+test "commodity" {
+    try testRoundtrip(
+        \\1985-08-17 commodity USD
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 commodity EUR
+        \\
+    );
+}
+
+test "pad" {
+    try testRoundtrip(
+        \\1985-08-17 pad Assets:Foo Equity:Opening-Balances
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 pad Assets:Bar Equity:Opening-Balances
+        \\
+    );
+}
+
+test "balance" {
+    try testRoundtrip(
+        \\1985-08-17 balance Assets:Foo 0.0 USD
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 balance Assets:Bar 0.10 ~ 0.01 EUR
+        \\
+    );
+}
+
+test "price" {
+    try testRoundtrip(
+        \\1985-08-17 price TGT 0 USD
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 price TGT 200 USD
+        \\
+    );
+}
+
+test "event" {
+    try testRoundtrip(
+        \\1985-08-17 event "location" "Paris"
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 event "location" "London"
+        \\
+    );
+}
+
+test "query" {
+    try testRoundtrip(
+        \\1985-08-17 query "france-balances" "SELECT ..."
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 query "london-balances" "SELECT ..."
+        \\
+    );
+}
+
+test "note" {
+    try testRoundtrip(
+        \\1985-08-17 note Assets:Foo "Called them"
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 note Assets:Bar "Called them"
+        \\
+    );
+}
+
+test "document" {
+    try testRoundtrip(
+        \\1985-08-17 document Assets:Foo "/usr/bin/foo"
+        \\  a: "Yes"
+        \\
+        \\1985-09-24 document Assets:Bar "/usr/bin/bar" #tag ^link
+        \\
+    );
+}
+
+test "indent continue" {
+    try testParse(
+        \\2021-06-23 * "SATURN" ^HO22036653030652/175962
+        \\  ; Washing machine?
+        \\  Assets:Currency -442.89 EUR
+        \\  Expenses:Home
+        \\
+    );
+
+    try testParse(
+        \\2021-06-23 * "SATURN ONLINE INGOLSTADT 000" ^HO22036653030652/175962
+        \\  Assets:Currency -442.89 EUR
+        \\    key: "value"
+        \\    ; Todo
+        \\    key2: "value2"
+        \\  Expenses:Home
+        \\
+    );
+}
+
+test "org mode" {
+    try testParse(
+        \\2024-09-01 open Assets:Foo
+        \\
+        \\
+        \\* This sentence is an org-mode title.
+        \\
+        \\2013-03-01 open Assets:Foo
+    );
+
+    try testParse(
+        \\* 2024
+        \\
+        \\** June
+        \\
+        \\2024-06-01 balance Assets:Currency:ING:Giro 0.00 EUR
+    );
+}
+
+test "comments" {
+    try testParse(
+        \\2021-01-01 open Assets:Cash
+        \\
+        \\; TODO:
+        \\; - More historical prices
+        \\
+        \\2021-01-01 open Assets:Cash
+        \\  ; indented comment
+        \\
+        \\2021-01-01 open Assets:Cash
+    );
+}
+
+test "recover without final newline" {
+    // Just verifies the parser doesn't crash - errors are expected
+    const alloc = std.testing.allocator;
+    var uri = try Uri.from_relative_to_cwd(alloc, "dummy.bean");
+    defer uri.deinit(alloc);
+    var ast = try Ast.parse(alloc, uri, "2015-01-01");
+    defer ast.deinit();
+}
+
+test "eol comments" {
+    try testParse(
+        \\2021-01-01 open Assets:Cash ; Cash
+        \\
+        \\; Tx
+        \\2021-06-23 * "SATURN" ; Saturn
+        \\  Assets:Currency -442.89 EUR ; EUR
+        \\  Expenses:Foo
     );
 }
 
@@ -297,7 +918,10 @@ fn testParse(source: [:0]const u8) !void {
     var ast = try Ast.parse(alloc, uri, source);
     defer ast.deinit();
 
-    if (ast.errors.items.len > 0) return error.ParseError;
+    if (ast.errors.items.len > 0) {
+        try ast.errors.items[0].print(alloc);
+        return error.ParseError;
+    }
 }
 
 fn testRoundtrip(source: [:0]const u8) !void {
