@@ -32,6 +32,7 @@ pub fn printHelp() void {
         \\  {[b]s}{[magenta]s}lsp{[r]s}                  Start the LSP server
         \\  {[b]s}{[magenta]s}serve{[r]s}  {[d]s}main.bean{[r]s}     Start web server for a Beancount project
         \\  {[b]s}{[magenta]s}tree{[r]s}   {[d]s}file.bean{[r]s}     Show final balances of all accounts as a tree
+        \\  {[b]s}{[magenta]s}fmt{[r]s}    {[d]s}[file.bean]{[r]s}   Format a Beancount file (reads stdin if no file given)
         \\
         \\Learn more: {[blue]s}https://github.com/themoritz/turbobean{[r]s}
         \\
