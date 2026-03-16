@@ -203,7 +203,7 @@ fn eatWhiteSpace(self: *Self) !void {
     }
 }
 
-/// Only returns null at EOF.
+// Only returns null at EOF.
 fn parseDeclaration(self: *Self) !?Node.Index {
     if (try self.parseEntry() orelse try self.parseDirective()) |node| {
         return node;
@@ -837,7 +837,7 @@ test "document" {
 }
 
 test "indent continue" {
-    try testParse(
+    try testRoundtrip(
         \\2021-06-23 * "SATURN" ^HO22036653030652/175962
         \\  ; Washing machine?
         \\  Assets:Currency -442.89 EUR
@@ -857,35 +857,36 @@ test "indent continue" {
 }
 
 test "org mode" {
-    try testParse(
+    try testRoundtrip(
         \\2024-09-01 open Assets:Foo
-        \\
         \\
         \\* This sentence is an org-mode title.
         \\
         \\2013-03-01 open Assets:Foo
+        \\
     );
 
-    try testParse(
+    try testRoundtrip(
         \\* 2024
         \\
         \\** June
         \\
         \\2024-06-01 balance Assets:Currency:ING:Giro 0.00 EUR
+        \\
     );
 }
 
 test "comments" {
-    try testParse(
+    try testRoundtrip(
         \\2021-01-01 open Assets:Cash
         \\
         \\; TODO:
         \\; - More historical prices
         \\
         \\2021-01-01 open Assets:Cash
-        \\  ; indented comment
         \\
         \\2021-01-01 open Assets:Cash
+        \\
     );
 }
 
@@ -899,13 +900,196 @@ test "recover without final newline" {
 }
 
 test "eol comments" {
-    try testParse(
+    try testRoundtrip(
         \\2021-01-01 open Assets:Cash ; Cash
         \\
         \\; Tx
         \\2021-06-23 * "SATURN" ; Saturn
         \\  Assets:Currency -442.89 EUR ; EUR
         \\  Expenses:Foo
+        \\
+    );
+}
+
+test "comments before first declaration" {
+    try testRoundtrip(
+        \\; File header comment
+        \\; Another line
+        \\2021-01-01 open Assets:Cash
+        \\
+    );
+}
+
+test "blank line normalization" {
+    // Multiple blank lines between decls should be collapsed to one
+    try testNormalize(
+        \\2021-01-01 open Assets:Cash
+        \\
+        \\
+        \\
+        \\2021-01-01 open Assets:Bank
+        \\
+    ,
+        \\2021-01-01 open Assets:Cash
+        \\
+        \\2021-01-01 open Assets:Bank
+        \\
+    );
+}
+
+test "org mode blank lines" {
+    // Org headings get one blank line around them
+    try testRoundtrip(
+        \\; comment
+        \\
+        \\* Heading
+        \\
+        \\2021-01-01 open Assets:Cash
+        \\
+    );
+}
+
+test "eol comment on directive" {
+    try testRoundtrip(
+        \\option "title" "Test" ; My ledger
+        \\
+    );
+}
+
+test "indented comment between postings" {
+    try testRoundtrip(
+        \\2021-01-01 * "Test"
+        \\  Assets:Cash 100 USD
+        \\  ; between postings
+        \\  Expenses:Food -100 USD
+        \\
+    );
+}
+
+test "eol comment on posting" {
+    try testRoundtrip(
+        \\2021-01-01 * "Test"
+        \\  Assets:Cash 100 USD ; cash account
+        \\  Expenses:Food
+        \\
+    );
+}
+
+test "comment after last posting" {
+    try testRoundtrip(
+        \\2021-01-01 * "Test"
+        \\  Assets:Cash 100 USD
+        \\  Expenses:Food
+        \\  ; trailing comment
+        \\
+        \\2021-02-01 open Assets:Bank
+        \\
+    );
+}
+
+test "indented comment between meta lines" {
+    try testRoundtrip(
+        \\2021-01-01 * "Test"
+        \\  foo: "bar"
+        \\  ; comment between meta
+        \\  baz: "qux"
+        \\  Assets:Cash 100 USD
+        \\  Expenses:Food
+        \\
+    );
+}
+
+test "indented comment before meta" {
+    try testRoundtrip(
+        \\2021-01-01 open Assets:Cash
+        \\  ; comment before meta
+        \\  foo: "bar"
+        \\
+    );
+}
+
+test "indented comment after meta" {
+    try testRoundtrip(
+        \\2021-01-01 * "Test"
+        \\  Assets:Cash 100 USD
+        \\    pkey: "pval"
+        \\    ; comment after posting meta
+        \\    pkey2: "pval2"
+        \\  Expenses:Food
+        \\
+    );
+}
+
+test "indent normalization" {
+    // Posting with wrong indentation (4 spaces) normalized to 2
+    try testNormalize(
+        \\2021-01-01 * "Test"
+        \\    Assets:Cash 100 USD
+        \\    Expenses:Food
+        \\
+    ,
+        \\2021-01-01 * "Test"
+        \\  Assets:Cash 100 USD
+        \\  Expenses:Food
+        \\
+    );
+
+    // Entry meta with wrong indentation (4 spaces) normalized to 2
+    try testNormalize(
+        \\2021-01-01 open Assets:Cash
+        \\    foo: "bar"
+        \\
+    ,
+        \\2021-01-01 open Assets:Cash
+        \\  foo: "bar"
+        \\
+    );
+
+    // Posting meta with wrong indentation (2 spaces) normalized to 4
+    try testNormalize(
+        \\2021-01-01 * "Test"
+        \\  Assets:Cash 100 USD
+        \\  pkey: "pval"
+        \\  Expenses:Food
+        \\
+    ,
+        \\2021-01-01 * "Test"
+        \\  Assets:Cash 100 USD
+        \\    pkey: "pval"
+        \\  Expenses:Food
+        \\
+    );
+
+    // Indented comment with wrong indentation normalized
+    try testNormalize(
+        \\2021-01-01 * "Test"
+        \\      ; over-indented comment
+        \\  Assets:Cash 100 USD
+        \\  Expenses:Food
+        \\
+    ,
+        \\2021-01-01 * "Test"
+        \\  ; over-indented comment
+        \\  Assets:Cash 100 USD
+        \\  Expenses:Food
+        \\
+    );
+
+    // Posting meta comment with wrong indentation normalized to 4 spaces
+    try testNormalize(
+        \\2021-01-01 * "Test"
+        \\  Assets:Cash 100 USD
+        \\  ; wrong indent for posting meta comment
+        \\    pkey: "pval"
+        \\  Expenses:Food
+        \\
+    ,
+        \\2021-01-01 * "Test"
+        \\  Assets:Cash 100 USD
+        \\    ; wrong indent for posting meta comment
+        \\    pkey: "pval"
+        \\  Expenses:Food
+        \\
     );
 }
 
@@ -922,6 +1106,28 @@ fn testParse(source: [:0]const u8) !void {
         try ast.errors.items[0].print(alloc);
         return error.ParseError;
     }
+}
+
+fn testNormalize(source: [:0]const u8, expected: [:0]const u8) !void {
+    const alloc = std.testing.allocator;
+
+    var uri = try Uri.from_relative_to_cwd(alloc, "dummy.bean");
+    defer uri.deinit(alloc);
+
+    var ast = try Ast.parse(alloc, uri, source);
+    defer ast.deinit();
+    if (ast.errors.items.len > 0) {
+        try ast.errors.items[0].print(alloc);
+        return error.ParseError;
+    }
+
+    var allocating = std.Io.Writer.Allocating.init(alloc);
+    defer allocating.deinit();
+
+    const Render = @import("AstRender.zig");
+    try Render.render(alloc, &allocating.writer, &ast);
+
+    try std.testing.expectEqualStrings(expected, allocating.written());
 }
 
 fn testRoundtrip(source: [:0]const u8) !void {
