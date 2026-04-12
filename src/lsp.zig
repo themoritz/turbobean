@@ -600,7 +600,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
-                    const tokens = project.files.items[file].tokens;
+                    const tokens = project.files.items[file].ast.tokens;
                     var data = try semantic_tokens.tokensToData(alloc, tokens.items);
                     defer data.deinit(alloc);
                     try transport.writeResponse(alloc, request.id, lsp.types.SemanticTokens, .{ .data = data.items }, .{});
