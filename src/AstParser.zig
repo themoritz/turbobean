@@ -648,7 +648,7 @@ fn parseIndentedLine(self: *Self) !?void {
 test "negative" {
     try testRoundtrip(
         \\2015-11-01 * "Test"
-        \\  Assets:Foo -1 USD
+        \\  Assets:Foo                            -1 USD
         \\
     );
 }
@@ -656,8 +656,8 @@ test "negative" {
 test "tx" {
     try testRoundtrip(
         \\2015-11-01 * "Test"
-        \\  Foo 100 USD
-        \\  Bar 2 EUR
+        \\  Foo                                  100 USD
+        \\  Bar                                    2 EUR
         \\
     );
 
@@ -668,12 +668,12 @@ test "tx" {
 
     try testRoundtrip(
         \\2015-01-01 * ""
-        \\  ! Aa 10 USD
-        \\  Ba 30 USD
+        \\  ! Aa                                  10 USD
+        \\  Ba                                    30 USD
         \\
         \\2016-01-01 * ""
-        \\  Ca 10 USD
-        \\  Da 20 USD
+        \\  Ca                                    10 USD
+        \\  Da                                    20 USD
         \\
     );
 }
@@ -711,7 +711,7 @@ test "meta" {
         \\
         \\2020-02-01 txn "a" "b"
         \\  foo: FALSE
-        \\  Assets:Foo 10.00 USD
+        \\  Assets:Foo                         10.00 USD
         \\    bar: NULL
         \\
     );
@@ -720,8 +720,8 @@ test "meta" {
 test "price annotation" {
     try testRoundtrip(
         \\2020-02-01 txn "a" "b"
-        \\  Assets:Foo 10 USD @ 2 EUR
-        \\  Assets:Foo @@ 4 EUR
+        \\  Assets:Foo                            10 USD @  2 EUR
+        \\  Assets:Foo                                   @@ 4 EUR
         \\
     );
 }
@@ -729,9 +729,9 @@ test "price annotation" {
 test "cost spec" {
     try testRoundtrip(
         \\2020-02-01 txn "a" "b"
-        \\  Assets:Foo 10 USD {}
-        \\  Assets:Foo {"label"} @ 0 USD
-        \\  Assets:Foo {2014-01-01}
+        \\  Assets:Foo                            10 USD {}
+        \\  Assets:Foo                                   {"label"}    @ 0 USD
+        \\  Assets:Foo                                   {2014-01-01}
         \\
     );
 }
@@ -842,14 +842,14 @@ test "indent continue" {
     try testRoundtrip(
         \\2021-06-23 * "SATURN" ^HO22036653030652/175962
         \\  ; Washing machine?
-        \\  Assets:Currency -442.89 EUR
+        \\  Assets:Currency                  -442.89 EUR
         \\  Expenses:Home
         \\
     );
 
     try testParse(
         \\2021-06-23 * "SATURN ONLINE INGOLSTADT 000" ^HO22036653030652/175962
-        \\  Assets:Currency -442.89 EUR
+        \\  Assets:Currency  -442.89 EUR
         \\    key: "value"
         \\    ; Todo
         \\    key2: "value2"
@@ -901,13 +901,15 @@ test "recover without final newline" {
     defer ast.deinit();
 }
 
+// Formatter -------------
+
 test "eol comments" {
     try testRoundtrip(
         \\2021-01-01 open Assets:Cash ; Cash
         \\
         \\; Tx
         \\2021-06-23 * "SATURN" ; Saturn
-        \\  Assets:Currency -442.89 EUR ; EUR
+        \\  Assets:Currency                  -442.89 EUR ; EUR
         \\  Expenses:Foo
         \\
     );
@@ -961,9 +963,9 @@ test "eol comment on directive" {
 test "indented comment between postings" {
     try testRoundtrip(
         \\2021-01-01 * "Test"
-        \\  Assets:Cash 100 USD
+        \\  Assets:Cash                          100 USD
         \\  ; between postings
-        \\  Expenses:Food -100 USD
+        \\  Expenses:Food                       -100 USD
         \\
     );
 }
@@ -971,7 +973,7 @@ test "indented comment between postings" {
 test "eol comment on posting" {
     try testRoundtrip(
         \\2021-01-01 * "Test"
-        \\  Assets:Cash 100 USD ; cash account
+        \\  Assets:Cash                          100 USD ; cash account
         \\  Expenses:Food
         \\
     );
@@ -980,7 +982,7 @@ test "eol comment on posting" {
 test "comment after last posting" {
     try testRoundtrip(
         \\2021-01-01 * "Test"
-        \\  Assets:Cash 100 USD
+        \\  Assets:Cash                          100 USD
         \\  Expenses:Food
         \\  ; trailing comment
         \\
@@ -995,7 +997,7 @@ test "indented comment between meta lines" {
         \\  foo: "bar"
         \\  ; comment between meta
         \\  baz: "qux"
-        \\  Assets:Cash 100 USD
+        \\  Assets:Cash                          100 USD
         \\  Expenses:Food
         \\
     );
@@ -1013,7 +1015,7 @@ test "indented comment before meta" {
 test "indented comment after meta" {
     try testRoundtrip(
         \\2021-01-01 * "Test"
-        \\  Assets:Cash 100 USD
+        \\  Assets:Cash                          100 USD
         \\    pkey: "pval"
         \\    ; comment after posting meta
         \\    pkey2: "pval2"
@@ -1026,12 +1028,12 @@ test "indent normalization" {
     // Posting with wrong indentation (4 spaces) normalized to 2
     try testNormalize(
         \\2021-01-01 * "Test"
-        \\    Assets:Cash 100 USD
+        \\    Assets:Cash    100 USD
         \\    Expenses:Food
         \\
     ,
         \\2021-01-01 * "Test"
-        \\  Assets:Cash 100 USD
+        \\  Assets:Cash                          100 USD
         \\  Expenses:Food
         \\
     );
@@ -1056,7 +1058,7 @@ test "indent normalization" {
         \\
     ,
         \\2021-01-01 * "Test"
-        \\  Assets:Cash 100 USD
+        \\  Assets:Cash                          100 USD
         \\    pkey: "pval"
         \\  Expenses:Food
         \\
@@ -1072,7 +1074,7 @@ test "indent normalization" {
     ,
         \\2021-01-01 * "Test"
         \\  ; over-indented comment
-        \\  Assets:Cash 100 USD
+        \\  Assets:Cash                          100 USD
         \\  Expenses:Food
         \\
     );
@@ -1087,7 +1089,7 @@ test "indent normalization" {
         \\
     ,
         \\2021-01-01 * "Test"
-        \\  Assets:Cash 100 USD
+        \\  Assets:Cash                          100 USD
         \\    ; wrong indent for posting meta comment
         \\    pkey: "pval"
         \\  Expenses:Food
@@ -1192,7 +1194,7 @@ test "eol comment on posting without amount" {
         \\2021-01-01 open Expenses:Food
         \\
         \\2021-06-01 * "Lunch"
-        \\  Assets:Cash -10 USD
+        \\  Assets:Cash                          -10 USD
         \\  Expenses:Food ; auto-balanced
         \\
     );
@@ -1209,7 +1211,7 @@ test "eol comment on entry meta" {
 test "eol comment on posting meta" {
     try testRoundtrip(
         \\2021-01-01 * "Test"
-        \\  Assets:Cash 100 USD
+        \\  Assets:Cash                          100 USD
         \\    pkey: "pval" ; posting meta comment
         \\  Expenses:Food
         \\
@@ -1222,7 +1224,7 @@ test "eol comment on transaction narration only" {
         \\2021-01-01 open Expenses:Food
         \\
         \\2021-06-01 * "Lunch" ; simple tx
-        \\  Assets:Cash -10 USD
+        \\  Assets:Cash                          -10 USD
         \\  Expenses:Food
         \\
     );
@@ -1234,7 +1236,7 @@ test "eol comment on transaction with payee" {
         \\2021-01-01 open Expenses:Food
         \\
         \\2021-06-01 * "Restaurant" "Lunch" ; with payee
-        \\  Assets:Cash -10 USD
+        \\  Assets:Cash                          -10 USD
         \\  Expenses:Food
         \\
     );
@@ -1253,7 +1255,51 @@ test "eol comment space normalization" {
 test "comment after cost spec" {
     try testRoundtrip(
         \\2025-01-01 * "Buy AAPL for EUR"
-        \\  Assets:Stocks 10 AAPL {10.00 EUR} ; fkjsel
+        \\  Assets:Stocks                         10 AAPL {10.00 EUR} ; fkjsel
+        \\
+    );
+}
+
+// Formatter alignment -----
+
+test "posting alignment" {
+    // Basic: align to longest account + 2 spaces
+    try testRoundtrip(
+        \\2021-01-01 * "Test"
+        \\  Assets:Cash                       100    USD
+        \\  Expenses:Food                       2.50 EUR
+        \\
+    );
+
+    try testRoundtrip(
+        \\2021-01-01 * "Test"
+        \\  Assets:Bank:Checking:Main        1000.00 USD
+        \\  Expenses:Food:Restaurant           50.0  USD
+        \\  Equity:Opening-Balances         -1050.00 USD
+        \\
+    );
+
+    // Flag
+    try testRoundtrip(
+        \\2021-01-01 * "Test"
+        \\  ! Assets:Cash                        100 USD
+        \\  Expenses:Food                       -100 USD
+        \\
+    );
+
+    // Price annotation
+    try testRoundtrip(
+        \\2021-01-01 * "Test"
+        \\  Assets:Stocks                         10 AAPL @ 150 USD
+        \\  Assets:Cash                        -1500 USD
+        \\
+    );
+
+    // Cost spec and price annotation
+    try testRoundtrip(
+        \\2021-01-01 * "Test"
+        \\  Assets:Stocks                         10 AAPL {2022-01-01} @   15 USD
+        \\  Assets:Cash                        -1500 USD  {4 USD}      @@ 200 APPL
         \\
     );
 }
