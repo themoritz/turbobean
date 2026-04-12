@@ -2,10 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const lex = @import("lexer.zig");
-const render = @import("render.zig");
 const number = @import("number.zig");
 const Data = @import("data.zig");
-const parser = @import("parser.zig");
 const Project = @import("project.zig");
 const Uri = @import("Uri.zig");
 const Ast = @import("Ast.zig");
@@ -144,10 +142,9 @@ pub fn main() !void {
 
 test {
     _ = lex.Lexer;
-    _ = render;
     _ = number;
     _ = Data;
-    _ = parser;
+    _ = @import("AstParser.zig");
     _ = Project;
     _ = @import("tree.zig");
     _ = @import("ErrorDetails.zig");

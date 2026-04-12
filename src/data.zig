@@ -2,7 +2,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Date = @import("date.zig").Date;
-const Parser = @import("parser.zig");
+const Ast = @import("Ast.zig");
+const AstToData = @import("AstToData.zig");
 const Number = @import("number.zig").Number;
 const Lexer = @import("lexer.zig").Lexer;
 const Solver = @import("solver.zig").Solver;
@@ -291,62 +292,10 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
 
 /// Takes ownership of source.
 pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: bool) !struct { Self, Imports.Slice } {
-    var self = Self{
-        .alloc = alloc,
-        .postings = .{},
-        .tagslinks = .{},
-        .meta = .{},
-        .currencies = .{},
-        .tokens = .{},
-        .entries = .{},
-        .source = source,
-        .uri = uri,
-        .config = Config.init(alloc),
-        .errors = .{},
-    };
-    errdefer self.deinit();
+    var ast = try Ast.parse(alloc, uri, source);
+    defer ast.deinit();
 
-    var lexer = Lexer.init(source);
-
-    // Average 10 bytes per token:
-    try self.tokens.ensureTotalCapacity(alloc, source.len / 10);
-
-    while (true) {
-        const token = lexer.next();
-        try self.tokens.append(alloc, token);
-        if (token.tag == .eof) break;
-    }
-
-    // Average 11 entries per token:
-    try self.entries.ensureTotalCapacity(alloc, self.tokens.items.len / 11);
-    // Average 9 postings per token:
-    try self.postings.ensureTotalCapacity(alloc, self.tokens.items.len / 9);
-
-    var parser: Parser = .{
-        .alloc = self.alloc,
-        .tokens = self.tokens,
-        .tok_i = 0,
-        .is_root = is_root,
-        .uri = uri,
-        .source = source,
-        .entries = &self.entries,
-        .postings = &self.postings,
-        .tagslinks = &self.tagslinks,
-        .meta = &self.meta,
-        .currencies = &self.currencies,
-        .config = &self.config,
-        .imports = .{},
-        .active_tags = std.StringHashMap(void).init(alloc),
-        .active_meta = std.StringHashMap([]const u8).init(alloc),
-        .errors = &self.errors,
-    };
-    defer parser.imports.deinit(alloc);
-    defer parser.active_tags.deinit();
-    defer parser.active_meta.deinit();
-
-    try parser.parse();
-
-    return .{ self, try parser.imports.toOwnedSlice(alloc) };
+    return try AstToData.convert(alloc, &ast, uri, is_root);
 }
 
 pub fn balanceTransactions(self: *Self) !void {
