@@ -2,7 +2,7 @@ const std = @import("std");
 const Lexer = @import("lexer.zig").Lexer;
 const Self = @This();
 const ErrorDetails = @import("ErrorDetails.zig");
-const Parser = @import("AstParser.zig");
+const Parser = @import("Parser.zig");
 const Uri = @import("Uri.zig");
 
 alloc: std.mem.Allocator,

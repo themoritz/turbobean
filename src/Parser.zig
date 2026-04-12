@@ -1335,7 +1335,7 @@ fn testNormalize(source: [:0]const u8, expected: [:0]const u8) !void {
     var allocating = std.Io.Writer.Allocating.init(alloc);
     defer allocating.deinit();
 
-    const Render = @import("AstRender.zig");
+    const Render = @import("Renderer.zig");
     try Render.render(alloc, &allocating.writer, &ast);
 
     try std.testing.expectEqualStrings(expected, allocating.written());
@@ -1357,7 +1357,7 @@ fn testRoundtrip(source: [:0]const u8) !void {
     var allocating = std.Io.Writer.Allocating.init(alloc);
     defer allocating.deinit();
 
-    const Render = @import("AstRender.zig");
+    const Render = @import("Renderer.zig");
     try Render.render(alloc, &allocating.writer, &ast);
 
     try std.testing.expectEqualStrings(source, allocating.written());
