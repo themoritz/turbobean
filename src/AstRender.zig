@@ -214,13 +214,14 @@ fn renderEntry(self: *Self, entry: Node.Entry) !void {
             try self.newline();
             try self.renderMeta(entry.meta, 1);
             const postings = self.ast.list(tx.postings);
+            const columns = self.measurePostings(postings);
             for (postings, 0..) |p, i| {
                 // Render indented comments between postings
                 const posting_first = self.ast.firstToken(p);
                 if (i > 0 or self.last_tok < posting_first) {
                     try self.renderIndentedComments(posting_first, 1);
                 }
-                try self.renderPosting(p);
+                try self.renderPosting(p, columns);
             }
         },
         .open => |extra| {
@@ -359,7 +360,7 @@ fn renderEntry(self: *Self, entry: Node.Entry) !void {
     }
 }
 
-fn renderPosting(self: *Self, idx: Node.Index) !void {
+fn renderPosting(self: *Self, idx: Node.Index, columns: Columns) !void {
     const posting = self.ast.getExtra(
         switch (self.ast.node(idx)) {
             .posting => |e| e,
@@ -379,23 +380,66 @@ fn renderPosting(self: *Self, idx: Node.Index) !void {
 
     // Amount
     const amount_node = self.ast.node(posting.amount);
-    switch (amount_node) {
-        .amount => |a| {
-            const has_content = a.number.unwrap() != null or a.currency.unwrap() != null;
-            if (has_content) try self.space();
-            try self.renderAmountFields(a);
-        },
-        else => {},
+    const has_amount = switch (amount_node) {
+        .amount => |a| a.number.unwrap() != null or a.currency.unwrap() != null,
+        else => false,
+    };
+    const has_lot_spec = posting.lot_spec.unwrap() != null;
+    const has_price = posting.price.unwrap() != null;
+
+    if (has_amount or has_lot_spec or has_price) {
+        // Pad account to alignment column
+        const account_width = self.accountWidth(posting);
+        try self.writeSpaces(columns.account + 2 - account_width);
+
+        switch (amount_node) {
+            .amount => |a| {
+                if (a.number.unwrap()) |n| {
+                    const nw = self.numberWidths(n);
+                    try self.writeSpaces(columns.amount.int - nw.int);
+                    try self.renderNumberWithSign(n);
+                    try self.writeSpaces(columns.amount.frac - nw.frac);
+                } else {
+                    try self.writeSpaces(columns.amount.int + columns.amount.frac);
+                }
+                if (a.currency.unwrap()) |c| {
+                    try self.space();
+                    try self.renderToken(c);
+                    const cw = self.tokenSlice(c).len;
+                    if (has_lot_spec or has_price) {
+                        try self.writeSpaces(columns.currency - cw);
+                    }
+                } else if (columns.currency > 0) {
+                    // No currency on this posting but others have one
+                    if (has_lot_spec or has_price) {
+                        try self.writeSpaces(1 + columns.currency);
+                    }
+                }
+            },
+            else => {
+                // No amount node at all, pad through number + currency columns
+                if (has_lot_spec or has_price) {
+                    try self.writeSpaces(columns.amount.int + columns.amount.frac + 1 + columns.currency);
+                }
+            },
+        }
     }
 
     // Lot spec
     if (posting.lot_spec.unwrap()) |ls_idx| {
-        try self.renderLotSpec(ls_idx);
+        try self.space();
+        const ls_width = try self.renderLotSpec(ls_idx);
+        if (has_price) {
+            try self.writeSpaces(columns.lot_spec - ls_width);
+        }
+    } else if (columns.lot_spec > 0 and has_price) {
+        try self.writeSpaces(1 + columns.lot_spec);
     }
 
     // Price annotation
     if (posting.price.unwrap()) |price_idx| {
-        try self.renderPriceAnnotation(price_idx);
+        try self.space();
+        try self.renderPriceAnnotation(price_idx, columns);
     }
 
     try self.newline();
@@ -404,7 +448,138 @@ fn renderPosting(self: *Self, idx: Node.Index) !void {
     try self.renderMeta(posting.meta, 2);
 }
 
-fn renderLotSpec(self: *Self, idx: Node.Index) !void {
+const Columns = struct {
+    account: usize,
+    amount: NumberCols,
+    currency: usize,
+    lot_spec: usize,
+    at: usize,
+    price_amount: NumberCols,
+    price_currency: usize,
+};
+
+const NumberCols = struct {
+    int: usize,
+    frac: usize,
+};
+
+fn measurePostings(self: *Self, postings: []const Node.Index) Columns {
+    var result = Columns{
+        .account = 0,
+        .amount = NumberCols{ .int = 0, .frac = 0 },
+        .currency = 0,
+        .lot_spec = 0,
+        .at = 0,
+        .price_amount = NumberCols{ .int = 0, .frac = 0 },
+        .price_currency = 0,
+    };
+
+    for (postings) |idx| {
+        const posting = self.ast.getExtra(
+            switch (self.ast.node(idx)) {
+                .posting => |e| e,
+                else => @panic("expected posting node"),
+            },
+            Node.Posting,
+        );
+
+        const amount_node = self.ast.node(posting.amount);
+        const has_amount = switch (amount_node) {
+            .amount => |a| a.number.unwrap() != null or a.currency.unwrap() != null,
+            else => false,
+        };
+        const has_content = has_amount or posting.lot_spec.unwrap() != null or posting.price.unwrap() != null;
+
+        if (has_content) {
+            const aw = self.accountWidth(posting);
+            result.account = @max(result.account, aw);
+        }
+
+
+        switch (amount_node) {
+            .amount => |a| {
+                if (a.number.unwrap()) |n| {
+                    const nw = self.numberWidths(n);
+                    result.amount.int = @max(result.amount.int, nw.int);
+                    result.amount.frac = @max(result.amount.frac, nw.frac);
+                }
+                if (a.currency.unwrap()) |c| {
+                    result.currency = @max(result.currency, self.tokenSlice(c).len);
+                }
+            },
+            else => {},
+        }
+
+        if (posting.lot_spec.unwrap()) |ls_idx| {
+            result.lot_spec = @max(result.lot_spec, self.measureLotSpec(ls_idx));
+        }
+
+        if (posting.price.unwrap()) |price_idx| {
+            const pa = switch (self.ast.node(price_idx)) {
+                .price_annotation => |p| p,
+                else => @panic("expected price_annotation node"),
+            };
+            result.at = @max(result.at, self.tokenSlice(pa.total).len);
+            const price_amount = self.ast.node(pa.amount);
+            switch (price_amount) {
+                .amount => |a| {
+                    if (a.number.unwrap()) |n| {
+                        const nw = self.numberWidths(n);
+                        result.price_amount.int = @max(result.price_amount.int, nw.int);
+                        result.price_amount.frac = @max(result.price_amount.frac, nw.frac);
+                    }
+                    if (a.currency.unwrap()) |c| {
+                        result.price_currency = @max(result.price_currency, self.tokenSlice(c).len);
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+
+    // Ensure the space after the number block is at least at column 40 (from after indent).
+    const min_col: usize = 40;
+    const natural = result.account + 2 + result.amount.int + result.amount.frac;
+    if (natural < min_col) {
+        result.account = min_col - 2 - result.amount.int - result.amount.frac;
+    }
+
+    return result;
+}
+
+fn accountWidth(self: *Self, posting: Node.Posting) usize {
+    var width: usize = 0;
+    if (posting.flag.unwrap()) |f| {
+        width += self.tokenSlice(f).len + 1; // flag + space
+    }
+    width += self.tokenSlice(posting.account).len;
+    return width;
+}
+
+fn numberWidths(self: *Self, token: Ast.TokenIndex) NumberCols {
+    const idx = @intFromEnum(token);
+    var int_width: usize = 0;
+    // Check for minus sign
+    if (idx > 0) {
+        const prev = self.ast.tokens.items[idx - 1];
+        if (prev.tag == .minus) {
+            int_width = 1;
+        }
+    }
+    const slice = self.ast.tokens.items[idx].slice;
+    if (std.mem.indexOf(u8, slice, ".")) |dot_pos| {
+        int_width += dot_pos;
+        return .{ .int = int_width, .frac = slice.len - dot_pos };
+    }
+    int_width += slice.len;
+    return .{ .int = int_width, .frac = 0 };
+}
+
+fn tokenSlice(self: *Self, token: Ast.TokenIndex) []const u8 {
+    return self.ast.tokens.items[@intFromEnum(token)].slice;
+}
+
+fn measureLotSpec(self: *Self, idx: Node.Index) usize {
     const ls = self.ast.getExtra(
         switch (self.ast.node(idx)) {
             .lot_spec => |e| e,
@@ -413,36 +588,157 @@ fn renderLotSpec(self: *Self, idx: Node.Index) !void {
         Node.LotSpec,
     );
 
-    try self.space();
-    try self.renderToken(ls.lcurl);
-    var first = true;
+    var width: usize = 0;
+    width += self.tokenSlice(ls.lcurl).len; // { or {{
 
     if (ls.price.unwrap()) |price_idx| {
-        try self.renderAmount(price_idx);
+        width += self.measureAmount(price_idx);
+    }
+    if (ls.date.unwrap()) |d| {
+        if (ls.price.unwrap() != null) width += 2; // ", "
+        width += self.tokenSlice(d).len;
+    }
+    if (ls.label.unwrap()) |l| {
+        if (ls.price.unwrap() != null or ls.date.unwrap() != null) width += 2; // ", "
+        width += self.tokenSlice(l).len;
+    }
+    width += self.tokenSlice(ls.rcurl).len; // } or }}
+    return width;
+}
+
+fn measureAmount(self: *Self, idx: Node.Index) usize {
+    const n = self.ast.node(idx);
+    switch (n) {
+        .amount => |a| {
+            var width: usize = 0;
+            if (a.number.unwrap()) |num| {
+                const nw = self.numberWidths(num);
+                width += nw.int + nw.frac;
+            }
+            if (a.number.unwrap() != null and a.currency.unwrap() != null) {
+                width += 1; // space
+            }
+            if (a.currency.unwrap()) |c| {
+                width += self.tokenSlice(c).len;
+            }
+            return width;
+        },
+        else => return 0,
+    }
+}
+
+/// Render lot spec and return its rendered width.
+fn renderLotSpec(self: *Self, idx: Node.Index) !usize {
+    const ls = self.ast.getExtra(
+        switch (self.ast.node(idx)) {
+            .lot_spec => |e| e,
+            else => @panic("expected lot_spec node"),
+        },
+        Node.LotSpec,
+    );
+
+    var width: usize = 0;
+
+    const lcurl = self.tokenSlice(ls.lcurl);
+    _ = try self.w.write(lcurl);
+    self.last_tok = @intFromEnum(ls.lcurl) + 1;
+    width += lcurl.len;
+
+    var first = true;
+    if (ls.price.unwrap()) |price_idx| {
+        const aw = try self.renderAmountInline(price_idx);
+        width += aw;
         first = false;
     }
     if (ls.date.unwrap()) |d| {
-        if (!first) _ = try self.w.write(", ");
-        try self.renderToken(d);
+        if (!first) {
+            _ = try self.w.write(", ");
+            width += 2;
+        }
+        const s = self.tokenSlice(d);
+        _ = try self.w.write(s);
+        self.last_tok = @intFromEnum(d) + 1;
+        width += s.len;
         first = false;
     }
     if (ls.label.unwrap()) |l| {
-        if (!first) _ = try self.w.write(", ");
-        try self.renderToken(l);
+        if (!first) {
+            _ = try self.w.write(", ");
+            width += 2;
+        }
+        const s = self.tokenSlice(l);
+        _ = try self.w.write(s);
+        self.last_tok = @intFromEnum(l) + 1;
+        width += s.len;
     }
-    try self.renderToken(ls.rcurl);
+
+    const rcurl = self.tokenSlice(ls.rcurl);
+    _ = try self.w.write(rcurl);
+    self.last_tok = @intFromEnum(ls.rcurl) + 1;
+    width += rcurl.len;
+
+    return width;
 }
 
-fn renderPriceAnnotation(self: *Self, idx: Node.Index) !void {
+/// Render amount inline (for use inside lot specs), return rendered width.
+fn renderAmountInline(self: *Self, idx: Node.Index) !usize {
+    const n = self.ast.node(idx);
+    switch (n) {
+        .amount => |a| {
+            var width: usize = 0;
+            if (a.number.unwrap()) |num| {
+                const nw = self.numberWidths(num);
+                try self.renderNumberWithSign(num);
+                width += nw.int + nw.frac;
+            }
+            if (a.number.unwrap() != null and a.currency.unwrap() != null) {
+                try self.space();
+                width += 1;
+            }
+            if (a.currency.unwrap()) |c| {
+                const s = self.tokenSlice(c);
+                _ = try self.w.write(s);
+                self.last_tok = @intFromEnum(c) + 1;
+                width += s.len;
+            }
+            return width;
+        },
+        else => return 0,
+    }
+}
+
+fn renderPriceAnnotation(self: *Self, idx: Node.Index, columns: Columns) !void {
     const pa = switch (self.ast.node(idx)) {
         .price_annotation => |p| p,
         else => @panic("expected price_annotation node"),
     };
 
-    try self.space();
-    try self.renderToken(pa.total);
-    try self.space();
-    try self.renderAmount(pa.amount);
+    const at_slice = self.tokenSlice(pa.total);
+    _ = try self.w.write(at_slice);
+    self.last_tok = @intFromEnum(pa.total) + 1;
+    try self.writeSpaces(columns.at - at_slice.len);
+
+    const price_amount = self.ast.node(pa.amount);
+    switch (price_amount) {
+        .amount => |a| {
+            if (a.number.unwrap()) |n| {
+                try self.space();
+                const nw = self.numberWidths(n);
+                try self.writeSpaces(columns.price_amount.int - nw.int);
+                try self.renderNumberWithSign(n);
+                try self.writeSpaces(columns.price_amount.frac - nw.frac);
+            }
+            if (a.currency.unwrap()) |c| {
+                try self.space();
+                try self.renderToken(c);
+            }
+        },
+        else => {},
+    }
+}
+
+fn writeSpaces(self: *Self, n: usize) !void {
+    for (0..n) |_| try self.w.writeByte(' ');
 }
 
 fn renderTagsLinks(self: *Self, range: Node.Range) !void {
