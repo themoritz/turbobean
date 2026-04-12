@@ -1,4 +1,4 @@
-//! Converts an AST into Data (the semantic representation).
+//! Converts an AST into Data (semantic analysis)
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Ast = @import("Ast.zig");

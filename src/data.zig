@@ -3,7 +3,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Date = @import("date.zig").Date;
 const Ast = @import("Ast.zig");
-const AstToData = @import("AstToData.zig");
+const sema = @import("sema.zig");
 const Number = @import("number.zig").Number;
 const Lexer = @import("lexer.zig").Lexer;
 const Solver = @import("solver.zig").Solver;
@@ -295,7 +295,7 @@ pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: boo
     var ast = try Ast.parse(alloc, uri, source);
     defer ast.deinit();
 
-    return try AstToData.convert(alloc, &ast, uri, is_root);
+    return try sema.convert(alloc, &ast, uri, is_root);
 }
 
 pub fn balanceTransactions(self: *Self) !void {

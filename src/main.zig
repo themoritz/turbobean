@@ -7,7 +7,7 @@ const Data = @import("data.zig");
 const Project = @import("project.zig");
 const Uri = @import("Uri.zig");
 const Ast = @import("Ast.zig");
-const AstRender = @import("AstRender.zig");
+const Renderer = @import("Renderer.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
 
 const lsp = @import("lsp.zig");
@@ -126,7 +126,7 @@ pub fn main() !void {
 
             var stdout_buf: [4096]u8 = undefined;
             var stdout_w = std.fs.File.stdout().writer(&stdout_buf);
-            try AstRender.render(alloc, &stdout_w.interface, &ast);
+            try Renderer.render(alloc, &stdout_w.interface, &ast);
             return;
         }
         if (std.mem.eql(u8, command, "-h")) {
@@ -144,13 +144,13 @@ test {
     _ = lex.Lexer;
     _ = number;
     _ = Data;
-    _ = @import("AstParser.zig");
+    _ = @import("Parser.zig");
     _ = Project;
     _ = @import("tree.zig");
     _ = @import("ErrorDetails.zig");
     _ = @import("Uri.zig");
     _ = Ast;
-    _ = AstRender;
+    _ = Renderer;
     _ = @import("solver.zig");
     _ = @import("server/DisplaySettings.zig");
     _ = semantic_tokens;
