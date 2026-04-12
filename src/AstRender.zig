@@ -57,7 +57,7 @@ fn renderInterDeclComments(self: *Self, up_to: usize) !void {
                     try self.rawNewline();
                     pending_blank_lines = 0;
                 }
-                _ = try self.w.write(slice);
+                try self.w.writeAll(slice);
                 // Skip the eol that terminates this comment line
                 if (i + 1 < up_to and tokens[i + 1].tag == .eol) {
                     i += 1;
@@ -75,8 +75,8 @@ fn renderInterDeclComments(self: *Self, up_to: usize) !void {
                         pending_blank_lines = 0;
                     }
                     i += 1;
-                    _ = try self.w.write(tokens[i - 1].slice); // indent
-                    _ = try self.w.write(tokens[i].slice); // comment
+                    try self.w.writeAll(tokens[i - 1].slice); // indent
+                    try self.w.writeAll(tokens[i].slice); // comment
                     // Skip the eol that terminates this comment line
                     if (i + 1 < up_to and tokens[i + 1].tag == .eol) {
                         i += 1;
@@ -115,7 +115,7 @@ fn renderIndentedComments(self: *Self, up_to: usize, indent_level: usize) !void 
                 if (i + 1 < up_to and tokens[i + 1].tag == .comment) {
                     i += 1;
                     try self.writeIndent(indent_level);
-                    _ = try self.w.write(tokens[i].slice); // comment
+                    try self.w.writeAll(tokens[i].slice); // comment
                     if (i + 1 < up_to and tokens[i + 1].tag == .eol) {
                         i += 1;
                     }
@@ -175,7 +175,7 @@ fn renderDeclaration(self: *Self, idx: Node.Index) !void {
             try self.renderToken(prevToken(kv.key));
             try self.space();
             try self.renderToken(kv.key);
-            _ = try self.w.write(": ");
+            try self.w.writeAll(": ");
             try self.renderToken(kv.value);
             try self.newline();
         },
@@ -183,7 +183,7 @@ fn renderDeclaration(self: *Self, idx: Node.Index) !void {
             try self.renderToken(prevToken(kv.key));
             try self.space();
             try self.renderToken(kv.key);
-            _ = try self.w.write(": ");
+            try self.w.writeAll(": ");
             try self.renderToken(kv.value);
             try self.newline();
         },
@@ -232,7 +232,7 @@ fn renderEntry(self: *Self, entry: Node.Entry) !void {
             const currencies = self.ast.tokenList(open.currencies);
             for (currencies, 0..) |cur_tok, i| {
                 if (i == 0) try self.space();
-                if (i > 0) _ = try self.w.write(",");
+                if (i > 0) try self.w.writeAll(",");
                 try self.renderToken(cur_tok);
             }
             if (open.booking_method.unwrap()) |bm| {
@@ -292,7 +292,7 @@ fn renderEntry(self: *Self, entry: Node.Entry) !void {
                         try self.renderNumberWithSign(n);
                     }
                     if (bal.tolerance.unwrap()) |tol| {
-                        _ = try self.w.write(" ~ ");
+                        try self.w.writeAll(" ~ ");
                         try self.renderNumberWithSign(tol);
                     }
                     if (a.currency.unwrap()) |c| {
@@ -640,7 +640,7 @@ fn renderLotSpec(self: *Self, idx: Node.Index) !usize {
     var width: usize = 0;
 
     const lcurl = self.tokenSlice(ls.lcurl);
-    _ = try self.w.write(lcurl);
+    try self.w.writeAll(lcurl);
     self.last_tok = @intFromEnum(ls.lcurl) + 1;
     width += lcurl.len;
 
@@ -652,28 +652,28 @@ fn renderLotSpec(self: *Self, idx: Node.Index) !usize {
     }
     if (ls.date.unwrap()) |d| {
         if (!first) {
-            _ = try self.w.write(", ");
+            try self.w.writeAll(", ");
             width += 2;
         }
         const s = self.tokenSlice(d);
-        _ = try self.w.write(s);
+        try self.w.writeAll(s);
         self.last_tok = @intFromEnum(d) + 1;
         width += s.len;
         first = false;
     }
     if (ls.label.unwrap()) |l| {
         if (!first) {
-            _ = try self.w.write(", ");
+            try self.w.writeAll(", ");
             width += 2;
         }
         const s = self.tokenSlice(l);
-        _ = try self.w.write(s);
+        try self.w.writeAll(s);
         self.last_tok = @intFromEnum(l) + 1;
         width += s.len;
     }
 
     const rcurl = self.tokenSlice(ls.rcurl);
-    _ = try self.w.write(rcurl);
+    try self.w.writeAll(rcurl);
     self.last_tok = @intFromEnum(ls.rcurl) + 1;
     width += rcurl.len;
 
@@ -697,7 +697,7 @@ fn renderAmountInline(self: *Self, idx: Node.Index) !usize {
             }
             if (a.currency.unwrap()) |c| {
                 const s = self.tokenSlice(c);
-                _ = try self.w.write(s);
+                try self.w.writeAll(s);
                 self.last_tok = @intFromEnum(c) + 1;
                 width += s.len;
             }
@@ -714,7 +714,7 @@ fn renderPriceAnnotation(self: *Self, idx: Node.Index, columns: Columns) !void {
     };
 
     const at_slice = self.tokenSlice(pa.total);
-    _ = try self.w.write(at_slice);
+    try self.w.writeAll(at_slice);
     self.last_tok = @intFromEnum(pa.total) + 1;
     try self.writeSpaces(columns.at - at_slice.len);
 
@@ -759,7 +759,7 @@ fn renderMeta(self: *Self, range: Node.Range, indent_level: usize) !void {
             .key_value => |kv| {
                 try self.writeIndent(indent_level);
                 try self.renderToken(kv.key);
-                _ = try self.w.write(": ");
+                try self.w.writeAll(": ");
                 try self.renderToken(kv.value);
                 try self.newline();
             },
@@ -794,18 +794,18 @@ fn renderNumberWithSign(self: *Self, token: Ast.TokenIndex) !void {
     if (idx > 0) {
         const prev = self.ast.tokens.items[idx - 1];
         if (prev.tag == .minus) {
-            _ = try self.w.write(prev.slice);
+            try self.w.writeAll(prev.slice);
         }
     }
     const slice = self.ast.tokens.items[idx].slice;
-    _ = try self.w.write(slice);
+    try self.w.writeAll(slice);
     self.last_tok = idx + 1;
 }
 
 fn renderToken(self: *Self, token: Ast.TokenIndex) !void {
     const idx = @intFromEnum(token);
     const slice = self.ast.tokens.items[idx].slice;
-    _ = try self.w.write(slice);
+    try self.w.writeAll(slice);
     self.last_tok = idx + 1;
 }
 
@@ -817,8 +817,8 @@ fn newline(self: *Self) !void {
     // last_tok points to the token after the last rendered one.
     // Check if there's a comment before the eol.
     if (i < tokens.len and tokens[i].tag == .comment) {
-        _ = try self.w.write(" ");
-        _ = try self.w.write(tokens[i].slice);
+        try self.w.writeAll(" ");
+        try self.w.writeAll(tokens[i].slice);
         i += 1;
     }
     // Advance past the eol token
@@ -834,7 +834,7 @@ fn space(self: *Self) !void {
 }
 
 fn indent(self: *Self) !void {
-    _ = try self.w.write("  ");
+    try self.w.writeAll("  ");
 }
 
 fn writeIndent(self: *Self, level: usize) !void {
