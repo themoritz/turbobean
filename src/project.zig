@@ -132,7 +132,7 @@ fn loadFileRec(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !voi
 }
 
 /// Parses a file and balances all transactions.
-fn loadSingleFile(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !struct { usize, Data.Imports.Slice } {
+fn loadSingleFile(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !struct { usize, Data.Imports } {
     const uri_owned = try uri.clone(self.alloc);
     try self.uris.append(self.alloc, uri_owned);
 

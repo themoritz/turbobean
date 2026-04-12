@@ -3,7 +3,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Date = @import("date.zig").Date;
 const Ast = @import("Ast.zig");
-const sema = @import("sema.zig");
+const Sema = @import("Sema.zig");
 const Number = @import("number.zig").Number;
 const Lexer = @import("lexer.zig").Lexer;
 const Solver = @import("solver.zig").Solver;
@@ -16,7 +16,7 @@ const Self = @This();
 alloc: Allocator,
 source: [:0]const u8,
 uri: Uri,
-tokens: Tokens,
+ast: Ast,
 entries: Entries,
 config: Config,
 postings: Postings,
@@ -35,7 +35,7 @@ pub const Import = struct {
     path: []const u8,
     token: Lexer.Token,
 };
-pub const Imports = std.ArrayList(Import);
+pub const Imports = []Import;
 
 pub const Tokens = std.ArrayList(Lexer.Token);
 
@@ -291,11 +291,18 @@ pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
 }
 
 /// Takes ownership of source.
-pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: bool) !struct { Self, Imports.Slice } {
+pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: bool) !struct { Self, Imports } {
     var ast = try Ast.parse(alloc, uri, source);
-    defer ast.deinit();
+    errdefer ast.deinit();
 
-    return try sema.convert(alloc, &ast, uri, is_root);
+    var data = try init(alloc, ast, uri);
+    errdefer data.deinit();
+
+    var sem = Sema.init(alloc, &data, is_root);
+    defer sem.deinit();
+
+    const imports = try sem.run();
+    return .{ data, imports };
 }
 
 pub fn balanceTransactions(self: *Self) !void {
@@ -381,10 +388,27 @@ fn addWarning(self: *Self, token: Lexer.Token, uri: Uri, tag: ErrorDetails.Tag) 
     });
 }
 
+// Takes ownership of ast.
+pub fn init(alloc: Allocator, ast: Ast, uri: Uri) !Self {
+    return .{
+        .alloc = alloc,
+        .postings = .{},
+        .tagslinks = .{},
+        .meta = .{},
+        .currencies = .{},
+        .ast = ast,
+        .entries = .{},
+        .source = ast.source,
+        .uri = uri,
+        .config = Config.init(alloc),
+        .errors = try ast.errors.clone(alloc),
+    };
+}
+
 pub fn deinit(self: *Self) void {
     self.alloc.free(self.source);
 
-    self.tokens.deinit(self.alloc);
+    self.ast.deinit();
     self.entries.deinit(self.alloc);
     self.currencies.deinit(self.alloc);
     self.postings.deinit(self.alloc);
