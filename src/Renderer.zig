@@ -484,16 +484,9 @@ fn measurePostings(self: *Self, postings: []const Node.Index) Columns {
         );
 
         const amount_node = self.ast.node(posting.amount);
-        const has_amount = switch (amount_node) {
-            .amount => |a| a.number.unwrap() != null or a.currency.unwrap() != null,
-            else => false,
-        };
-        const has_content = has_amount or posting.lot_spec.unwrap() != null or posting.price.unwrap() != null;
 
-        if (has_content) {
-            const aw = self.accountWidth(posting);
-            result.account = @max(result.account, aw);
-        }
+        const aw = self.accountWidth(posting);
+        result.account = @max(result.account, aw);
 
         switch (amount_node) {
             .amount => |a| {
