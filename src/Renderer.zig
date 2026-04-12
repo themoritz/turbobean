@@ -495,7 +495,6 @@ fn measurePostings(self: *Self, postings: []const Node.Index) Columns {
             result.account = @max(result.account, aw);
         }
 
-
         switch (amount_node) {
             .amount => |a| {
                 if (a.number.unwrap()) |n| {
