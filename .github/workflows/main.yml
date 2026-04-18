@@ -31,7 +31,7 @@ jobs:
           zig build golden --summary all
 
       - name: Run zig build
-        run: zig build
+        run: zig build --release=safe
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
@@ -41,7 +41,7 @@ jobs:
 
       - name: Cross-compile for Windows
         if: matrix.os == 'ubuntu-latest'
-        run: zig build -Dtarget=x86_64-windows
+        run: zig build --release=safe -Dtarget=x86_64-windows
 
       - name: Upload Windows binary
         if: matrix.os == 'ubuntu-latest'
