@@ -542,14 +542,19 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     try transport.writeResponse(alloc, request.id, []lsp.types.DocumentHighlight, highlights.items, .{});
                 },
                 .@"textDocument/prepareRename" => |params| {
-                    const account = state.findAccount(params.textDocument.uri, params.position) orelse {
-                        try transport.writeResponse(alloc, request.id, void, {}, .{});
-                        continue :loop;
-                    };
+                    const range: lsp.types.Range, const placeholder: []const u8 =
+                        if (state.findAccount(params.textDocument.uri, params.position)) |acc|
+                            .{ tokenRange(acc), acc.slice }
+                        else if (state.findTagOrLink(params.textDocument.uri, params.position)) |tl|
+                            .{ tokenRangeSkipPrefix(tl), tl.slice[1..] }
+                        else {
+                            try transport.writeResponse(alloc, request.id, void, {}, .{});
+                            continue :loop;
+                        };
                     try transport.writeResponse(alloc, request.id, lsp.types.PrepareRenameResult, .{
                         .literal_1 = .{
-                            .range = tokenRange(account),
-                            .placeholder = account.slice,
+                            .range = range,
+                            .placeholder = placeholder,
                         },
                     }, .{});
                 },
@@ -559,10 +564,17 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
-                    const account = state.findAccount(uri, params.position) orelse {
-                        try transport.writeResponse(alloc, request.id, void, {}, .{});
-                        continue :loop;
-                    };
+
+                    const RenameKind = enum { account, taglink };
+                    const target_kind: RenameKind, const target_slice: []const u8 =
+                        if (state.findAccount(uri, params.position)) |acc|
+                            .{ .account, acc.slice }
+                        else if (state.findTagOrLink(uri, params.position)) |tl|
+                            .{ .taglink, tl.slice }
+                        else {
+                            try transport.writeResponse(alloc, request.id, void, {}, .{});
+                            continue :loop;
+                        };
 
                     var map = std.AutoHashMap(u32, std.ArrayList(lsp.types.TextEdit)).init(alloc);
                     defer {
@@ -571,17 +583,35 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         map.deinit();
                     }
 
-                    var iter = project.accountIterator(null);
-                    while (iter.next()) |next| {
-                        const token = next.token;
-                        if (std.mem.eql(u8, token.slice, account.slice)) {
-                            const entry = try map.getOrPut(next.file);
-                            if (!entry.found_existing) entry.value_ptr.* = std.ArrayList(lsp.types.TextEdit){};
-                            try entry.value_ptr.append(alloc, .{
-                                .range = tokenRange(token),
-                                .newText = params.newName,
-                            });
-                        }
+                    switch (target_kind) {
+                        .account => {
+                            var iter = project.accountIterator(null);
+                            while (iter.next()) |next| {
+                                const token = next.token;
+                                if (std.mem.eql(u8, token.slice, target_slice)) {
+                                    const entry = try map.getOrPut(next.file);
+                                    if (!entry.found_existing) entry.value_ptr.* = std.ArrayList(lsp.types.TextEdit){};
+                                    try entry.value_ptr.append(alloc, .{
+                                        .range = tokenRange(token),
+                                        .newText = params.newName,
+                                    });
+                                }
+                            }
+                        },
+                        .taglink => {
+                            var iter = project.tagLinkIterator(null);
+                            while (iter.next()) |next| {
+                                const token = next.token;
+                                if (std.mem.eql(u8, token.slice, target_slice)) {
+                                    const entry = try map.getOrPut(next.file);
+                                    if (!entry.found_existing) entry.value_ptr.* = std.ArrayList(lsp.types.TextEdit){};
+                                    try entry.value_ptr.append(alloc, .{
+                                        .range = tokenRangeSkipPrefix(token),
+                                        .newText = params.newName,
+                                    });
+                                }
+                            }
+                        },
                     }
 
                     var changes = lsp.parser.Map([]const u8, []const lsp.types.TextEdit){};
@@ -846,6 +876,15 @@ const NotificationMethods = union(enum) {
 fn tokenRange(token: Token) lsp.types.Range {
     return .{
         .start = .{ .line = token.start_line, .character = token.start_col },
+        .end = .{ .line = token.end_line, .character = token.end_col },
+    };
+}
+
+/// Like tokenRange, but skips the first character of the token (e.g. the
+/// leading `#` of a tag or `^` of a link).
+fn tokenRangeSkipPrefix(token: Token) lsp.types.Range {
+    return .{
+        .start = .{ .line = token.start_line, .character = token.start_col + 1 },
         .end = .{ .line = token.end_line, .character = token.end_col },
     };
 }
