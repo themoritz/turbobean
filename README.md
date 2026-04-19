@@ -84,6 +84,10 @@ zig build --release=safe -Dembed-static --prefix ~/.local
 * Navigate to `http://localhost:8080` in your browser.
 * Press the `g` key to fuzzy-navigate (e.g. balance sheet, income statement, journal).
 
+### Formatter
+
+To format a file in-place, run `turbobean fmt -i file.bean`.
+
 ## Editor Setup
 
 Any editor that supports LSP should work. You just need to tell it to use
@@ -136,6 +140,31 @@ return {
 
 Maybe there's a way we can keep treesitter enabled and then overwrite with
 the sematic tokens info?
+
+#### Conform
+
+You can integrate the turbobean formatter with NeoVim's conform plugin:
+
+
+```lua
+{
+  'stevearc/conform.nvim',
+  event = { 'BufWritePre' },
+  cmd = { 'ConformInfo' },
+  opts = {
+    formatters_by_ft = {
+      beancount = { 'turbobean' },
+    },
+    formatters = {
+      turbobean = {
+        command = 'turbobean',
+        args = { 'fmt' },
+        stdin = true,
+      },
+    },
+  },
+}
+```
 
 ### VSCode
 

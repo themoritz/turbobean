@@ -26,13 +26,14 @@ pub fn printHelp() void {
     std.debug.print(
         \\{[r]s}{[b]s}Turbobean{[r]s} is a fast Beancount implementation. {[d]s}(version {[version]f}){[r]s}
         \\
-        \\{[b]s}Usage:{[r]s} turbobean {[magenta]s}<command>{[r]s} {[d]s}[...args]{[r]s}
+        \\{[b]s}Usage:{[r]s} turbobean {[magenta]s}<command>{[r]s} {[c]s}[...flags]{[r]s} {[d]s}[...args]{[r]s}
         \\
         \\{[b]s}Commands:{[r]s}
-        \\  {[b]s}{[magenta]s}lsp{[r]s}                  Start the LSP server
-        \\  {[b]s}{[magenta]s}serve{[r]s}  {[d]s}main.bean{[r]s}     Start web server for a Beancount project
-        \\  {[b]s}{[magenta]s}tree{[r]s}   {[d]s}file.bean{[r]s}     Show final balances of all accounts as a tree
-        \\  {[b]s}{[magenta]s}fmt{[r]s}    {[d]s}[file.bean]{[r]s}   Format a Beancount file (reads stdin if no file given)
+        \\  {[b]s}{[magenta]s}lsp{[r]s}                      Start the LSP server
+        \\  {[b]s}{[magenta]s}serve{[r]s}  {[d]s}main.bean{[r]s}         Start web server for a Beancount project
+        \\  {[b]s}{[magenta]s}tree{[r]s}   {[d]s}file.bean{[r]s}         Show final balances of all accounts as a tree
+        \\  {[b]s}{[magenta]s}fmt{[r]s}    {[c]s}[-i]{[r]s} {[d]s}[file.bean]{[r]s}  Format a Beancount file (reads stdin if no file given).
+        \\                           Pass {[c]s}-i{[r]s} to rewrite the file in place.
         \\
         \\Learn more: {[blue]s}https://github.com/themoritz/turbobean{[r]s}
         \\
@@ -40,6 +41,7 @@ pub fn printHelp() void {
         .version = version,
         .b = colors.BOLD,
         .d = colors.DIM,
+        .c = colors.CYAN,
         .r = colors.RESET,
         .magenta = colors.MAGENTA,
         .blue = colors.BLUE,

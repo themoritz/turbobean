@@ -100,7 +100,22 @@ pub fn main() !void {
             }
         }
         if (std.mem.eql(u8, command, "fmt")) {
-            const file_arg = iter.next();
+            var in_place = false;
+            var file_arg: ?[]const u8 = null;
+            while (iter.next()) |arg| {
+                if (std.mem.eql(u8, arg, "-i")) {
+                    in_place = true;
+                } else {
+                    file_arg = arg;
+                    break;
+                }
+            }
+
+            if (in_place and file_arg == null) {
+                std.debug.print("-i requires a file argument\n", .{});
+                std.process.exit(1);
+            }
+
             const source = if (file_arg) |file| blk: {
                 const f = try std.fs.cwd().openFile(file, .{});
                 defer f.close();
@@ -124,9 +139,18 @@ pub fn main() !void {
                 std.process.exit(1);
             }
 
-            var stdout_buf: [4096]u8 = undefined;
-            var stdout_w = std.fs.File.stdout().writer(&stdout_buf);
-            try Renderer.render(alloc, &stdout_w.interface, &ast);
+            if (in_place) {
+                var write_buf: [4096]u8 = undefined;
+                var atomic = try std.fs.cwd().atomicFile(file_arg.?, .{ .write_buffer = &write_buf });
+                defer atomic.deinit();
+                try Renderer.render(alloc, &atomic.file_writer.interface, &ast);
+                try atomic.finish();
+            } else {
+                var stdout_buf: [4096]u8 = undefined;
+                var stdout_w = std.fs.File.stdout().writer(&stdout_buf);
+                try Renderer.render(alloc, &stdout_w.interface, &ast);
+                try stdout_w.interface.flush();
+            }
             return;
         }
         if (std.mem.eql(u8, command, "-h")) {
