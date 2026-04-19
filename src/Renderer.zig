@@ -458,7 +458,7 @@ const Columns = struct {
     price_currency: usize,
 };
 
-const NumberCols = struct {
+pub const NumberCols = struct {
     int: usize,
     frac: usize,
 };
@@ -550,21 +550,23 @@ fn accountWidth(self: *Self, posting: Node.Posting) usize {
 
 fn numberWidths(self: *Self, token: Ast.TokenIndex) NumberCols {
     const idx = @intFromEnum(token);
-    var int_width: usize = 0;
-    // Check for minus sign
+    var sign_width: usize = 0;
     if (idx > 0) {
         const prev = self.ast.tokens.items[idx - 1];
         if (prev.tag == .minus) {
-            int_width = 1;
+            sign_width = 1;
         }
     }
-    const slice = self.ast.tokens.items[idx].slice;
+    const nw = sliceNumberWidths(self.ast.tokens.items[idx].slice);
+    return .{ .int = sign_width + nw.int, .frac = nw.frac };
+}
+
+/// Measure a number string (e.g. "1,234.56") into int/frac column widths.
+pub fn sliceNumberWidths(slice: []const u8) NumberCols {
     if (std.mem.indexOf(u8, slice, ".")) |dot_pos| {
-        int_width += dot_pos;
-        return .{ .int = int_width, .frac = slice.len - dot_pos };
+        return .{ .int = dot_pos, .frac = slice.len - dot_pos };
     }
-    int_width += slice.len;
-    return .{ .int = int_width, .frac = 0 };
+    return .{ .int = slice.len, .frac = 0 };
 }
 
 fn tokenSlice(self: *Self, token: Ast.TokenIndex) []const u8 {

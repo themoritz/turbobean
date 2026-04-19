@@ -265,6 +265,7 @@ fn convertPosting(self: *Self, posting_index: Node.Index) !void {
         .lot_spec = lot_spec,
         .price = price,
         .meta = meta,
+        .ast_node = posting_index.toOptional(),
     });
 }
 

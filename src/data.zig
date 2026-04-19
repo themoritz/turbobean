@@ -46,6 +46,9 @@ pub const Posting = struct {
     lot_spec: ?LotSpec,
     price: ?Price,
     meta: ?Range,
+    /// The AST posting node, used to link back to the AST for measurement.
+    /// Synthetic postings (pad, pnl) have no AST node.
+    ast_node: Ast.Node.OptionalIndex = .none,
 };
 
 pub const Amount = struct {

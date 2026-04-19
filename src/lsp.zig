@@ -11,6 +11,10 @@ const semantic_tokens = @import("lsp/semantic_tokens.zig");
 const Date = @import("date.zig").Date;
 const Uri = @import("Uri.zig");
 
+const Data = @import("data.zig");
+const Ast = @import("Ast.zig");
+const Renderer = @import("Renderer.zig");
+
 const LspState = struct {
     alloc: Allocator,
     projects: std.ArrayList(Project),
@@ -279,6 +283,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                             },
                                             .full = .{ .bool = true },
                                         } },
+                                        .inlayHintProvider = .{ .InlayHintOptions = .{} },
                                         .workspace = .{ .workspaceFolders = .{
                                             .supported = true,
                                             .changeNotifications = .{ .bool = true },
@@ -605,6 +610,130 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     defer data.deinit(alloc);
                     try transport.writeResponse(alloc, request.id, lsp.types.SemanticTokens, .{ .data = data.items }, .{});
                 },
+                .@"textDocument/inlayHint" => |params| {
+                    const uri = params.textDocument.uri;
+                    const project = state.getProjectForUri(uri) orelse {
+                        try transport.writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
+                    const file_idx = project.files_by_uri.get(uri) orelse {
+                        try transport.writeResponse(alloc, request.id, void, {}, .{});
+                        continue :loop;
+                    };
+                    const file_data = &project.files.items[file_idx];
+
+                    var hints = std.ArrayList(lsp.types.InlayHint){};
+                    defer {
+                        for (hints.items) |hint| {
+                            switch (hint.label) {
+                                .string => |s| alloc.free(s),
+                                else => {},
+                            }
+                        }
+                        hints.deinit(alloc);
+                    }
+
+                    for (file_data.entries.items) |entry| {
+                        switch (entry.payload) {
+                            .transaction => |tx| {
+                                if (tx.dirty) continue;
+                                const postings = tx.postings orelse continue;
+
+                                // Measure source dot-column for alignment and
+                                // max frac width across source and inferred numbers.
+                                // Also count plain vs number-inferred postings so we can
+                                // suppress the lone hint when the user can trivially
+                                // mirror a single plain posting.
+                                var amount_dot_col: ?u32 = null;
+                                var frac_width: usize = 0;
+                                var plain_count: u32 = 0;
+                                var num_inferred_count: u32 = 0;
+                                for (postings.start..postings.end) |i| {
+                                    const ast_node_idx = file_data.postings.items(.ast_node)[i].unwrap() orelse continue;
+                                    const ap = file_data.ast.getExtra(
+                                        file_data.ast.node(ast_node_idx).posting,
+                                        Ast.Node.Posting,
+                                    );
+                                    const has_extras = ap.price.unwrap() != null or ap.lot_spec.unwrap() != null;
+                                    switch (file_data.ast.node(ap.amount)) {
+                                        .amount => |a| {
+                                            if (a.number.unwrap()) |n| {
+                                                const tok = file_data.ast.tokens.items[@intFromEnum(n)];
+                                                const nw = Renderer.sliceNumberWidths(tok.slice);
+                                                amount_dot_col = @max(amount_dot_col orelse 0, tok.start_col + @as(u32, @intCast(nw.int)));
+                                                frac_width = @max(frac_width, nw.frac);
+                                                if (!has_extras) plain_count += 1;
+                                            } else if (file_data.postings.items(.amount)[i].number) |num| {
+                                                var num_buf: [64]u8 = undefined;
+                                                const formatted = try std.fmt.bufPrint(&num_buf, "{f}", .{num});
+                                                frac_width = @max(frac_width, Renderer.sliceNumberWidths(formatted).frac);
+                                                if (!has_extras) num_inferred_count += 1;
+                                            }
+                                        },
+                                        else => {},
+                                    }
+                                }
+                                const skip_lone_inferred = (postings.end - postings.start) == 2 and
+                                    plain_count == 1 and num_inferred_count == 1;
+
+                                // Emit hints
+                                for (postings.start..postings.end) |i| {
+                                    const account = file_data.postings.items(.account)[i];
+                                    if (account.start_line < params.range.start.line or
+                                        account.start_line > params.range.end.line) continue;
+
+                                    const ast_node_idx = file_data.postings.items(.ast_node)[i].unwrap() orelse continue;
+                                    const ap = file_data.ast.getExtra(
+                                        file_data.ast.node(ast_node_idx).posting,
+                                        Ast.Node.Posting,
+                                    );
+
+                                    // Amount hints (skip the lone inferred amount that the
+                                    // user can trivially mirror from a single plain posting).
+                                    const skip_this_amount = skip_lone_inferred and switch (file_data.ast.node(ap.amount)) {
+                                        .amount => |a| a.number.unwrap() == null and file_data.postings.items(.amount)[i].number != null,
+                                        else => false,
+                                    };
+                                    if (!skip_this_amount) try emitAmountHint(
+                                        alloc,
+                                        &hints,
+                                        &file_data.ast,
+                                        file_data.ast.node(ap.amount),
+                                        file_data.postings.items(.amount)[i],
+                                        account.start_line,
+                                        account.end_col,
+                                        .{
+                                            .target_col = amount_dot_col orelse account.end_col + 2,
+                                            .frac_width = frac_width,
+                                        },
+                                    );
+
+                                    // Price annotation hints
+                                    if (ap.price.unwrap()) |price_node_idx| {
+                                        const price = file_data.postings.items(.price)[i] orelse continue;
+                                        const pa = file_data.ast.node(price_node_idx).price_annotation;
+                                        const at_token = file_data.ast.tokens.items[@intFromEnum(pa.total)];
+                                        try emitAmountHint(
+                                            alloc,
+                                            &hints,
+                                            &file_data.ast,
+                                            file_data.ast.node(pa.amount),
+                                            price.amount,
+                                            at_token.end_line,
+                                            at_token.end_col,
+                                            null,
+                                        );
+                                    }
+                                }
+                            },
+                            else => continue,
+                        }
+                    }
+
+                    try transport.writeResponse(alloc, request.id, []const lsp.types.InlayHint, hints.items, .{
+                        .emit_null_optional_fields = false,
+                    });
+                },
                 .other => try transport.writeResponse(alloc, request.id, void, {}, .{}),
             },
             .notification => |notification| switch (notification.params) {
@@ -700,6 +829,7 @@ const RequestMethods = union(enum) {
     @"textDocument/prepareRename": lsp.types.PrepareRenameParams,
     @"textDocument/rename": lsp.types.RenameParams,
     @"textDocument/semanticTokens/full": lsp.types.SemanticTokensParams,
+    @"textDocument/inlayHint": lsp.types.InlayHintParams,
     other: lsp.MethodWithParams,
 };
 
@@ -718,4 +848,102 @@ fn tokenRange(token: Token) lsp.types.Range {
         .start = .{ .line = token.start_line, .character = token.start_col },
         .end = .{ .line = token.end_line, .character = token.end_col },
     };
+}
+
+const Alignment = struct {
+    target_col: u32,
+    frac_width: usize,
+};
+
+/// Emit an inlay hint for an inferred amount (number and/or currency).
+/// With alignment, positions the hint for column-aligned posting amounts.
+/// Without alignment, positions after the last existing token (for price annotations).
+fn emitAmountHint(
+    alloc: Allocator,
+    hints: *std.ArrayList(lsp.types.InlayHint),
+    ast: *Ast,
+    ast_node: Ast.Node,
+    resolved: Data.Amount,
+    after_line: u32,
+    after_col: u32,
+    alignment: ?Alignment,
+) !void {
+    const ast_amount = switch (ast_node) {
+        .amount => |a| a,
+        else => return,
+    };
+
+    const num_inferred = ast_amount.number.unwrap() == null and resolved.number != null;
+    const cur_inferred = ast_amount.currency.unwrap() == null and resolved.currency != null;
+    if (!num_inferred and !cur_inferred) return;
+
+    if (num_inferred) {
+        const num = resolved.number.?;
+        var num_buf: [64]u8 = undefined;
+        const formatted = try std.fmt.bufPrint(&num_buf, "{f}", .{num});
+
+        var label_buf = std.io.Writer.Allocating.init(alloc);
+        defer label_buf.deinit();
+        const w = &label_buf.writer;
+
+        if (cur_inferred) {
+            // Both number and currency inferred
+            if (alignment) |a| {
+                const nw = Renderer.sliceNumberWidths(formatted);
+                if (a.target_col > after_col + nw.int) {
+                    try writeSpaces(w, a.target_col - after_col - nw.int);
+                } else {
+                    try writeSpaces(w, 2);
+                }
+                try w.writeAll(formatted);
+                if (a.frac_width > nw.frac) try writeSpaces(w, a.frac_width - nw.frac);
+            } else {
+                try w.writeAll(formatted);
+            }
+            try w.writeByte(' ');
+            try w.writeAll(resolved.currency orelse "");
+
+            try hints.append(alloc, .{
+                .position = .{ .line = after_line, .character = after_col },
+                .label = .{ .string = try label_buf.toOwnedSlice() },
+                .paddingLeft = alignment == null,
+            });
+        } else if (alignment != null) {
+            // Number inferred, currency in source (aligned): place before currency
+            const cur_tok_idx = ast_amount.currency.unwrap() orelse return;
+            const cur_tok = ast.tokens.items[@intFromEnum(cur_tok_idx)];
+            try w.writeAll(formatted);
+            try hints.append(alloc, .{
+                .position = .{ .line = cur_tok.start_line, .character = cur_tok.start_col },
+                .label = .{ .string = try label_buf.toOwnedSlice() },
+                .paddingRight = true,
+            });
+        } else {
+            // Number inferred (unaligned, e.g. price annotation): place at fallback
+            try w.writeAll(formatted);
+            try hints.append(alloc, .{
+                .position = .{ .line = after_line, .character = after_col },
+                .label = .{ .string = try label_buf.toOwnedSlice() },
+                .paddingLeft = true,
+            });
+        }
+    } else {
+        // Only currency inferred: position after number token or at fallback
+        var pos_line = after_line;
+        var pos_col = after_col;
+        if (ast_amount.number.unwrap()) |n| {
+            const tok = ast.tokens.items[@intFromEnum(n)];
+            pos_line = tok.end_line;
+            pos_col = tok.end_col;
+        }
+        try hints.append(alloc, .{
+            .position = .{ .line = pos_line, .character = pos_col },
+            .label = .{ .string = try alloc.dupe(u8, resolved.currency.?) },
+            .paddingLeft = true,
+        });
+    }
+}
+
+fn writeSpaces(w: *std.Io.Writer, n: usize) !void {
+    for (0..n) |_| try w.writeByte(' ');
 }

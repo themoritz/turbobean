@@ -1,9 +1,7 @@
 include "open.bean" ; this is a comment
 
 2020-01-01 pad Expenses:Food Equity:Ope𝄞ning-Balances
-                             -------------------------
 2026-01-01 note Equity:Ope𝄞ning-Balances ""
-                -------------------------
 
 2025-01-01 balance Expenses:Food 100.1 USD
 
@@ -31,12 +29,10 @@ include "open.bean" ; this is a comment
 
 2020-01-01 open Assets:Foo
 2020-01-01 pad Assets:Foo Equity:Ope𝄞ning-Balances
-                          -------------------------
 
 2020-01-02 balance Assets:Foo 1 EUR
 
 2020-01-02 pad Assets:Foo Equity:Ope𝄞ning-Balances
-                          -------------------------
 
 2020-01-03 balance Assets:Foo 4 EUR
 
@@ -48,25 +44,31 @@ include "open.bean" ; this is a comment
 2029-01-01 * "Amount fully inferred"
   Assets:Checking                    50.00 USD
   Assets:Checking                    10.00 USD
-  Expenses:Food
+  Expenses:Food                     -60    USD
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 2029-01-02 * "Currency inferred"
   Assets:Checking                       25 USD
-  Expenses:Food                        -25
+  Expenses:Food                        -25 USD
+                                          ^^^^
 
 2029-01-03 * "Number inferred with currency"
   Assets:Checking                    10.00 USD
   Assets:Checking                     1.00 USD
-  Expenses:Food                            USD
+  Expenses:Food                            -11 USD
+                                           ^^^^
 
 2029-01-04 * "Price inferred"
-  Assets:Stocks                       5    AAPL {10.00 USD} @
+  Assets:Stocks                       5    AAPL {10.00 USD} @ 10 USD
+                                                             ^^^^^^^
   Assets:Checking                   -50.00 USD
 
 2029-01-04 * "Price number inferred"
-  Assets:Stocks                       5    AAPL @ USD
+  Assets:Stocks                       5    AAPL @ 10 USD
+                                                 ^^^
   Assets:Checking                   -50.00 USD
 
 2029-01-04 * "Price currency inferred"
-  Assets:Stocks                       5    AAPL @ 10
+  Assets:Stocks                       5    AAPL @ 10 USD
+                                                    ^^^^
   Assets:Checking                   -50.00 USD

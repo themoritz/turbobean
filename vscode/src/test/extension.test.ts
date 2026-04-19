@@ -121,6 +121,27 @@ suite('LSP', () => {
         assert.deepStrictEqual(actual, expected);
     });
 
+    test('Inlay hints', async function() {
+        this.timeout(5000);
+        let hints: vscode.InlayHint[] = [];
+        // Retry a few times to allow the LSP to finish processing
+        for (let attempt = 0; attempt < 10; attempt++) {
+            const range = new vscode.Range(
+                new Position(0, 0),
+                new Position(doc.lineCount, 0)
+            );
+            hints = await vscode.commands.executeCommand<vscode.InlayHint[]>(
+                'vscode.executeInlayHintProvider',
+                doc.uri,
+                range
+            ) ?? [];
+            if (hints.length > 0) { break; }
+            await sleep(200);
+        }
+        assert.ok(hints.length > 0, `Expected at least one inlay hint, got ${hints.length}`);
+        await assertGolden('inlay-hints', formatInlayHints(doc, hints));
+    });
+
     test('Autocomplete accounts', async function() {
         const result = await vscode.commands.executeCommand<vscode.CompletionList>(
             'vscode.executeCompletionItemProvider',
@@ -133,6 +154,7 @@ suite('LSP', () => {
         const expected = [
             'Assets:Checking',
             'Assets:Foo',
+            'Assets:Stocks',
             'Equity:Ope𝄞ning-Balances',
             'Expenses:Food'
         ];
@@ -291,6 +313,74 @@ async function formatJumpToDefinition(location: vscode.Location): Promise<string
         const lineText = targetDoc.lineAt(i).text;
         const prefix = i === targetLine ? '>' : ' ';
         result.push(`${prefix} ${lineText}`);
+    }
+
+    return result.join('\n');
+}
+
+function formatInlayHints(doc: TextDocument, hints: vscode.InlayHint[]): string {
+    // Group hints by line
+    const lineMap = new Map<number, vscode.InlayHint[]>();
+    for (const h of hints) {
+        const line = h.position.line;
+        if (!lineMap.has(line)) {
+            lineMap.set(line, []);
+        }
+        lineMap.get(line)!.push(h);
+    }
+
+    const result: string[] = [];
+
+    for (let lineNum = 0; lineNum < doc.lineCount; lineNum++) {
+        const lineText = doc.lineAt(lineNum).text;
+        const lineHints = lineMap.get(lineNum);
+
+        if (!lineHints) {
+            result.push(lineText);
+            continue;
+        }
+
+        // Sort hints by position
+        lineHints.sort((a, b) => a.position.character - b.position.character);
+
+        // Build the line with hints inserted, then add underline markers
+        let output = '';
+        let lastCol = 0;
+        const underline = new Array(lineText.length).fill(' ');
+        let outputOffset = 0; // tracks how output length diverges from source columns
+
+        for (const hint of lineHints) {
+            const col = hint.position.character;
+            const before = lineText.substring(lastCol, col);
+            output += before;
+            outputOffset += before.length - (col - lastCol); // should be 0 for ASCII
+
+            const label = typeof hint.label === 'string' ? hint.label : hint.label.map(p => p.value).join('');
+            let hintText = '';
+            if (hint.paddingLeft) { hintText += ' '; }
+            hintText += label;
+            if (hint.paddingRight) { hintText += ' '; }
+
+            const hintStart = output.length;
+            output += hintText;
+            // Extend underline array to fit
+            while (underline.length < output.length + (lineText.length - col)) {
+                underline.push(' ');
+            }
+            for (let j = hintStart; j < hintStart + hintText.length; j++) {
+                underline[j] = '^';
+            }
+            outputOffset += hintText.length;
+            lastCol = col;
+        }
+        const rest = lineText.substring(lastCol);
+        output += rest;
+        // Shift underline markers for text after last hint
+        result.push(output);
+        const underlineStr = underline.join('').trimEnd();
+        if (underlineStr.length > 0) {
+            result.push(underlineStr);
+        }
     }
 
     return result.join('\n');

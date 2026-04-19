@@ -3,45 +3,80 @@ include "open.bean" ; this is a comment
 2020-01-01 pad Expenses:Food Equity:Ope𝄞ning-Balances
 2026-01-01 note Equity:Ope𝄞ning-Balances ""
 
-2025-01-01 balance Expenses:Food    100.1 USD
+2025-01-01 balance Expenses:Food 100.1 USD
 
-2025-01-01 note Assets:Checking    "Hello"
+2025-01-01 note Assets:Checking "Hello"
                 ---------------
 
 2025-04-22 ! "Buy coffee" ^mylink #tag
-    Assets:Checking    100.10 USD
-    ---------------
-    Expenses:Food
+  Assets:Checking                   100.10 USD
+  ---------------
+  Expenses:Food
 
 2025-04-22 txn "Buy coffee" ^link2 #tag
-    Assets:Checking    100.10 USD
-    ---------------
-    Expenses:Food
+  Assets:Checking                   100.10 USD
+  ---------------
+  Expenses:Food
 
 2028-01-01 txn "Open" ^link1 #tag2
-    Assets:Checking    100.1 USD
-    ---------------
-    Expenses:Food
+  Assets:Checking                    100.1 USD
+  ---------------
+  Expenses:Food
 
 2025-01-22 * "Buy coffee" ^link
-    Assets:Checking    100.10 USD
-    ---------------
-    Expenses:Food
+  Assets:Checking                   100.10 USD
+  ---------------
+  Expenses:Food
 
 2026-01-01 * "Bytd"
-    Assets:Checking    100.10 USD
-    ---------------
-    Expenses:Food
+  Assets:Checking                   100.10 USD
+  ---------------
+  Expenses:Food
 
 2020-01-01 open Assets:Foo
 2020-01-01 pad Assets:Foo Equity:Ope𝄞ning-Balances
 
-2020-01-02 balance Assets:Foo    1 EUR
+2020-01-02 balance Assets:Foo 1 EUR
 
 2020-01-02 pad Assets:Foo Equity:Ope𝄞ning-Balances
 
-2020-01-03 balance Assets:Foo    4 EUR
+2020-01-03 balance Assets:Foo 4 EUR
 
 2020-01-03 txn ""
-    Assets:Foo    1 EUR
-    Expenses:Food
+  Assets:Foo                             1 EUR
+  Expenses:Food
+
+; Inlay hint test cases
+2029-01-01 * "Amount fully inferred"
+  Assets:Checking                    50.00 USD
+  ---------------
+  Assets:Checking                    10.00 USD
+  ---------------
+  Expenses:Food
+
+2029-01-02 * "Currency inferred"
+  Assets:Checking                       25 USD
+  ---------------
+  Expenses:Food                        -25
+
+2029-01-03 * "Number inferred with currency"
+  Assets:Checking                    10.00 USD
+  ---------------
+  Assets:Checking                     1.00 USD
+  ---------------
+  Expenses:Food                            USD
+
+2029-01-04 * "Price inferred"
+  Assets:Stocks                       5    AAPL {10.00 USD} @
+  Assets:Checking                   -50.00 USD
+  ---------------
+
+2029-01-04 * "Price number inferred"
+  Assets:Stocks                       5    AAPL @ USD
+  Assets:Checking                   -50.00 USD
+  ---------------
+
+2029-01-04 * "Price currency inferred"
+  Assets:Stocks                       5    AAPL @ 10
+  Assets:Checking                   -50.00 USD
+  ---------------

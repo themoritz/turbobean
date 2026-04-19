@@ -1,6 +1,7 @@
 open.bean:1:0
 
 > 2000-01-01 open Assets:Checking
+  2000-01-01 open Assets:Stocks AAPL "FIFO"
   2000-01-01 open Equity:Ope𝄞ning-Balances
   2000-01-01 open Expenses:Food
   
