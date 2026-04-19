@@ -37,8 +37,8 @@ The philosopy is:
   - [x] Highlight tags + links
   - [x] Syntax highlighting via semantic tokens
   - [x] Rename account
-  - [ ] Rename tags and links
-  - [ ] Display interpolated values inline
+  - [x] Rename tags and links
+  - [x] Display interpolated values inline
 - [x] Web UI (similar to [fava](https://github.com/beancount/fava))
   - [x] File Watcher (instant reloads)
     - [x] MacOS
@@ -50,7 +50,7 @@ The philosopy is:
   - [ ] Filter language
   - [ ] Display errors
 - [ ] Lua Plugins
-- [ ] Pretty formatter
+- [x] Pretty formatter
 - [ ] Protobuf Output
 
 #### Not Planned (for now, might change my mind)
