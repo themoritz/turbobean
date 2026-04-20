@@ -1,15 +1,30 @@
-//! Data for one file.
+//! Semantic data derived from a parsed file.
+//!
+//! Layout
+//! ======
+//! * `entries`  — MultiArrayList SoA. Tagged union payload is sized by the
+//!   largest variant (Transaction, ~24 bytes). Rarely-needed numeric data for
+//!   Balance/PriceDecl lives in `extra`.
+//! * `postings` — MultiArrayList SoA. Hot fields inline; rare `price` and
+//!   `lot_spec` live in `extra` via `OptionalExtraIndex`.
+//! * `accounts`, `currencies` — separate StringPools, typed indices.
+//! * `token_interned[i]` is the interned id for `ast.tokens[i]`, interpreted
+//!   by `ast.tokens[i].tag`:
+//!     - `.account`  → `AccountIndex`
+//!     - `.currency` → `CurrencyIndex`
+//!     - others      → `maxInt(u32)` (unused)
+//! * `extra` — flat `u32` pool, Ast-style, decoded via `getExtra`/`addExtra`.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Date = @import("date.zig").Date;
 const Ast = @import("Ast.zig");
-const Sema = @import("Sema.zig");
 const Number = @import("number.zig").Number;
-const Lexer = @import("lexer.zig").Lexer;
-const Solver = @import("solver.zig").Solver;
 const Inventory = @import("inventory.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
 const Uri = @import("Uri.zig");
+const Lexer = @import("lexer.zig").Lexer;
+const StringPool = @import("StringPool.zig");
 
 const Self = @This();
 
@@ -17,72 +32,168 @@ alloc: Allocator,
 source: [:0]const u8,
 uri: Uri,
 ast: Ast,
+
+accounts: StringPool,
+currencies: StringPool,
+/// Parallel to `ast.tokens`; interpretation depends on the token's tag.
+token_interned: std.ArrayList(u32),
+
 entries: Entries,
-config: Config,
 postings: Postings,
+extra: std.ArrayList(u32),
+
 tagslinks: TagsLinks,
 meta: Meta,
-currencies: Currencies,
 
+config: Config,
 errors: std.ArrayList(ErrorDetails),
 
-pub const Entries = std.ArrayList(Entry);
+pub const Entries = std.MultiArrayList(Entry);
 pub const Postings = std.MultiArrayList(Posting);
 pub const TagsLinks = std.MultiArrayList(TagLink);
 pub const Meta = std.MultiArrayList(KeyValue);
-pub const Currencies = std.ArrayList([]const u8);
+
 pub const Import = struct {
     path: []const u8,
-    token: Lexer.Token,
+    token: Ast.TokenIndex,
 };
 pub const Imports = []Import;
 
-pub const Tokens = std.ArrayList(Lexer.Token);
+// --- typed indices ----------------------------------------------------------
 
-pub const Posting = struct {
-    flag: ?Lexer.Token,
-    account: Lexer.Token,
-    amount: Amount,
-    lot_spec: ?LotSpec,
-    price: ?Price,
-    meta: ?Range,
-    /// The AST posting node, used to link back to the AST for measurement.
-    /// Synthetic postings (pad, pnl) have no AST node.
-    ast_node: Ast.Node.OptionalIndex = .none,
-};
+pub const AccountIndex = enum(u32) {
+    _,
 
-pub const Amount = struct {
-    number: ?Number,
-    currency: ?[]const u8,
-
-    pub fn exists(amount: *const Amount) bool {
-        return amount.number != null or amount.currency != null;
-    }
-
-    pub fn isComplete(a: *const Amount) bool {
-        return a.number != null and a.currency != null;
+    pub fn toOptional(i: AccountIndex) OptionalAccountIndex {
+        const r: OptionalAccountIndex = @enumFromInt(@intFromEnum(i));
+        std.debug.assert(r != .none);
+        return r;
     }
 };
 
-pub const LotSpec = struct {
-    price: ?Amount,
-    date: ?Date,
-    label: ?[]const u8,
+pub const OptionalAccountIndex = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+
+    pub fn unwrap(oi: OptionalAccountIndex) ?AccountIndex {
+        return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+    }
+
+    pub fn fromOptional(oi: ?AccountIndex) OptionalAccountIndex {
+        return if (oi) |i| i.toOptional() else .none;
+    }
 };
 
-pub const Price = struct {
-    amount: Amount,
-    total: bool,
+pub const CurrencyIndex = enum(u32) {
+    _,
+
+    pub fn toOptional(i: CurrencyIndex) OptionalCurrencyIndex {
+        const r: OptionalCurrencyIndex = @enumFromInt(@intFromEnum(i));
+        std.debug.assert(r != .none);
+        return r;
+    }
 };
+
+pub const OptionalCurrencyIndex = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+
+    pub fn unwrap(oi: OptionalCurrencyIndex) ?CurrencyIndex {
+        return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+    }
+
+    pub fn fromOptional(oi: ?CurrencyIndex) OptionalCurrencyIndex {
+        return if (oi) |i| i.toOptional() else .none;
+    }
+};
+
+pub const ExtraIndex = enum(u32) {
+    _,
+
+    pub fn toOptional(i: ExtraIndex) OptionalExtraIndex {
+        const r: OptionalExtraIndex = @enumFromInt(@intFromEnum(i));
+        std.debug.assert(r != .none);
+        return r;
+    }
+};
+
+pub const OptionalExtraIndex = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+
+    pub fn unwrap(oi: OptionalExtraIndex) ?ExtraIndex {
+        return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+    }
+
+    pub fn fromOptional(oi: ?ExtraIndex) OptionalExtraIndex {
+        return if (oi) |i| i.toOptional() else .none;
+    }
+};
+
+pub const PostingIndex = enum(u32) {
+    _,
+
+    pub fn toOptional(i: PostingIndex) OptionalPostingIndex {
+        const r: OptionalPostingIndex = @enumFromInt(@intFromEnum(i));
+        std.debug.assert(r != .none);
+        return r;
+    }
+};
+
+pub const OptionalPostingIndex = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+
+    pub fn unwrap(oi: OptionalPostingIndex) ?PostingIndex {
+        return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+    }
+};
+
+/// Half-open range into a sibling array. `start == end` means empty.
+pub const Range = struct {
+    start: u32,
+    end: u32,
+
+    pub const empty: Range = .{ .start = 0, .end = 0 };
+
+    pub fn from(start: usize, end: usize) Range {
+        return .{ .start = @intCast(start), .end = @intCast(end) };
+    }
+
+    pub fn len(r: Range) u32 {
+        return r.end - r.start;
+    }
+
+    pub fn isEmpty(r: Range) bool {
+        return r.start == r.end;
+    }
+};
+
+// --- Entry ------------------------------------------------------------------
 
 pub const Entry = struct {
     date: Date,
-    main_token: Lexer.Token,
-    tagslinks: ?Range,
-    meta: ?Range,
+    main_token: Ast.TokenIndex,
+    tagslinks: Range,
+    meta: Range,
     payload: Payload,
 
-    pub const Payload = union(enum) {
+    pub const Tag = enum(u8) {
+        transaction,
+        open,
+        close,
+        commodity,
+        pad,
+        pnl,
+        balance,
+        price,
+        event,
+        query,
+        note,
+        document,
+    };
+
+    pub const Payload = union(Tag) {
         transaction: Transaction,
         open: Open,
         close: Close,
@@ -97,45 +208,222 @@ pub const Entry = struct {
         document: Document,
     };
 
-    // Sort entries by date. When dates are equal, sort by entry type "time of day":
-    // commodity/price/open < balance < tx < close
+    /// Sort entries by date, then by "time of day": commodity/price/open/pnl < balance < tx < close.
     pub fn compare(ctx: void, self: Entry, other: Entry) bool {
         _ = ctx;
-        switch (self.date.compare(other.date)) {
-            .after => return true,
-            .before => return false,
-            .equal => {
-                const time_self = getTimeOfDay(self);
-                const time_other = getTimeOfDay(other);
-                return time_self < time_other;
-            },
-        }
-    }
-
-    fn getTimeOfDay(entry: Entry) u8 {
-        return switch (entry.payload) {
-            .commodity, .price, .open, .pnl => 0,
-            .balance => 1,
-            .close => 3,
-            else => 2, // Transactions in particular
+        return switch (self.date.compare(other.date)) {
+            .after => true,
+            .before => false,
+            .equal => timeOfDay(self.payload) < timeOfDay(other.payload),
         };
     }
 
-    pub fn hash(self: Entry) u64 {
-        var wy = std.hash.Wyhash.init(0);
-        wy.update(std.mem.asBytes(&self.date));
-        switch (self.payload) {
-            .transaction => |tx| {
-                if (tx.payee) |payee| wy.update(payee);
-                if (tx.narration) |narration| wy.update(narration);
-            },
-            .open => |open| {
-                wy.update(open.account.slice);
-            },
-            else => {},
-        }
-        return wy.final();
+    fn timeOfDay(p: Payload) u8 {
+        return switch (p) {
+            .commodity, .price, .open, .pnl => 0,
+            .balance => 1,
+            .close => 3,
+            else => 2,
+        };
     }
+};
+
+pub const Transaction = struct {
+    flag: Ast.TokenIndex,
+    payee: Ast.OptionalTokenIndex,
+    narration: Ast.OptionalTokenIndex,
+    /// Posting indices covered by this transaction, in `Data.postings`.
+    postings: Range,
+    /// Set by the balancer when the transaction cannot be solved.
+    dirty: bool = false,
+};
+
+pub const Open = struct {
+    account: AccountIndex,
+    booking_method: BookingMethod = .unspecified,
+    /// Currency indices range in `extra` (u32s, each an interned `CurrencyIndex`).
+    currencies: Range,
+
+    pub const BookingMethod = enum(u8) {
+        unspecified,
+        fifo,
+        lifo,
+        strict,
+
+        pub fn fromInventory(m: ?Inventory.BookingMethod) BookingMethod {
+            return if (m) |mm| switch (mm) {
+                .fifo => .fifo,
+                .lifo => .lifo,
+                .strict => .strict,
+            } else .unspecified;
+        }
+
+        pub fn toInventory(b: BookingMethod) ?Inventory.BookingMethod {
+            return switch (b) {
+                .unspecified => null,
+                .fifo => .fifo,
+                .lifo => .lifo,
+                .strict => .strict,
+            };
+        }
+    };
+};
+
+pub const Close = struct {
+    account: AccountIndex,
+};
+
+pub const Commodity = struct {
+    currency: CurrencyIndex,
+};
+
+pub const Pad = struct {
+    account: AccountIndex,
+    pad_to: AccountIndex,
+    /// Synthetic posting indices created by the balancer.
+    pad_posting: OptionalPostingIndex = .none,
+    pad_to_posting: OptionalPostingIndex = .none,
+};
+
+pub const Pnl = struct {
+    account: AccountIndex,
+    income_account: AccountIndex,
+};
+
+pub const Balance = struct {
+    account: AccountIndex,
+    amount_currency: OptionalCurrencyIndex,
+    /// Points at a `BalanceExtra` (two successive `PackedNumber`s — 6 u32s).
+    extras: ExtraIndex,
+};
+
+pub const PriceDecl = struct {
+    currency: CurrencyIndex,
+    amount_currency: OptionalCurrencyIndex,
+    /// Points at a `PackedNumber` (3 u32s) in `extra`.
+    amount_number: ExtraIndex,
+};
+
+pub const Event = struct {
+    variable: Ast.TokenIndex,
+    value: Ast.TokenIndex,
+};
+
+pub const Query = struct {
+    name: Ast.TokenIndex,
+    sql: Ast.TokenIndex,
+};
+
+pub const Note = struct {
+    account: AccountIndex,
+    note: Ast.TokenIndex,
+};
+
+pub const Document = struct {
+    account: AccountIndex,
+    filename: Ast.TokenIndex,
+};
+
+// --- Posting ----------------------------------------------------------------
+
+pub const Posting = struct {
+    account: AccountIndex,
+    flag: Ast.OptionalTokenIndex,
+    amount_number: ?Number,
+    amount_currency: OptionalCurrencyIndex,
+    /// Optional `PriceExtra` (5 u32s) in `extra`. `.none` for most postings.
+    price: OptionalExtraIndex,
+    /// Optional `LotSpecExtra` (6 u32s) in `extra`. `.none` for most postings.
+    lot_spec: OptionalExtraIndex,
+    /// Meta KV range in `Data.meta`. `isEmpty()` means no metadata.
+    meta: Range,
+    /// AST posting node for source recovery. `.none` for synthetic postings (pad, pnl).
+    ast_node: Ast.Node.OptionalIndex = .none,
+};
+
+// --- Extras encoded in `extra` ---------------------------------------------
+
+pub const BalanceExtra = struct {
+    amount: PackedNumber,
+    tolerance: PackedNumber,
+};
+
+pub const PriceExtra = struct {
+    amount: PackedNumber,
+    amount_currency: OptionalCurrencyIndex,
+    flags: u32, // bit 0 = total (@@)
+};
+
+pub const LotSpecExtra = struct {
+    price: PackedNumber,
+    price_currency: OptionalCurrencyIndex,
+    date: PackedDate,
+    label: Ast.OptionalTokenIndex,
+};
+
+/// 3-u32 packing of `?Number`. `precision == maxInt(u32)` encodes `null`.
+pub const PackedNumber = struct {
+    lo: u32,
+    hi: u32,
+    precision: u32,
+
+    pub const none: PackedNumber = .{ .lo = 0, .hi = 0, .precision = std.math.maxInt(u32) };
+
+    pub fn pack(n: ?Number) PackedNumber {
+        const num = n orelse return .none;
+        const bits: u64 = @bitCast(num.value);
+        return .{
+            .lo = @truncate(bits),
+            .hi = @truncate(bits >> 32),
+            .precision = num.precision,
+        };
+    }
+
+    pub fn unpack(p: PackedNumber) ?Number {
+        if (p.precision == std.math.maxInt(u32)) return null;
+        const bits: u64 = (@as(u64, p.hi) << 32) | @as(u64, p.lo);
+        return .{ .value = @bitCast(bits), .precision = p.precision };
+    }
+};
+
+/// 1-u32 packing of `?Date`. `maxInt(u32)` encodes `null`. Layout: YYYYYYYY YYYYYYYY YYYYMMMM DDDDDDDD... (year << 9 | month << 5 | day).
+pub const PackedDate = struct {
+    raw: u32,
+
+    pub const none: PackedDate = .{ .raw = std.math.maxInt(u32) };
+
+    pub fn pack(d: ?Date) PackedDate {
+        const dd = d orelse return .none;
+        const year: u32 = dd.year;
+        const month: u32 = dd.month;
+        const day: u32 = dd.day;
+        return .{ .raw = (year << 9) | (month << 5) | day };
+    }
+
+    pub fn unpack(p: PackedDate) ?Date {
+        if (p.raw == std.math.maxInt(u32)) return null;
+        return .{
+            .year = p.raw >> 9,
+            .month = @intCast((p.raw >> 5) & 0xF),
+            .day = @intCast(p.raw & 0x1F),
+        };
+    }
+};
+
+// --- Auxiliary --------------------------------------------------------------
+
+pub const TagLink = struct {
+    kind: Kind,
+    token: Ast.TokenIndex,
+    /// True if written in source; false if added via `pushtag`.
+    explicit: bool,
+
+    pub const Kind = enum { tag, link };
+};
+
+pub const KeyValue = struct {
+    key: Ast.TokenIndex,
+    value: Ast.TokenIndex,
 };
 
 pub const Config = struct {
@@ -162,16 +450,15 @@ pub const Config = struct {
     }
 
     pub fn addOption(self: *Config, key: []const u8, value: []const u8) !void {
-        try self.options.append(self.alloc, OptionPair{ .key = key, .value = value });
+        try self.options.append(self.alloc, .{ .key = key, .value = value });
     }
 
     pub fn addPlugin(self: *Config, plugin: []const u8) !void {
         try self.plugins.append(self.alloc, plugin);
     }
 
-    /// Caller owns returned slice, but not the entries.
     pub fn getOperatingCurrencies(self: *const Config, alloc: Allocator) ![][]const u8 {
-        var result = std.ArrayList([]const u8){};
+        var result: std.ArrayList([]const u8) = .{};
         defer result.deinit(alloc);
         for (self.options.items) |option| {
             const stripped_key = std.mem.trim(u8, option.key, "\"");
@@ -184,240 +471,174 @@ pub const Config = struct {
     }
 };
 
-pub const Open = struct {
-    account: Lexer.Token,
-    currencies: ?Range,
-    booking_method: ?Inventory.BookingMethod,
-};
+// --- extra encoding helpers -------------------------------------------------
 
-pub const Close = struct {
-    account: Lexer.Token,
-};
-
-pub const Commodity = struct {
-    currency: []const u8,
-};
-
-pub const Pad = struct {
-    account: Lexer.Token,
-    pad_to: Lexer.Token,
-    pad_posting: ?Posting = null,
-    pad_to_posting: ?Posting = null,
-};
-
-pub const Pnl = struct {
-    account: Lexer.Token,
-    income_account: Lexer.Token,
-};
-
-pub const Balance = struct {
-    account: Lexer.Token,
-    amount: Amount,
-    tolerance: ?Number,
-};
-
-pub const PriceDecl = struct {
-    currency: []const u8,
-    amount: Amount,
-};
-
-pub const Event = struct {
-    variable: []const u8,
-    value: []const u8,
-};
-
-pub const Query = struct {
-    name: []const u8,
-    sql: []const u8,
-};
-
-pub const Note = struct {
-    account: Lexer.Token,
-    note: []const u8,
-};
-
-pub const Document = struct {
-    account: Lexer.Token,
-    filename: []const u8,
-};
-
-pub const Transaction = struct {
-    flag: Lexer.Token,
-    payee: ?[]const u8,
-    narration: ?[]const u8,
-    postings: ?Range,
-    /// Set to true in `balance_transactions` in case the transaction can't be balanced.
-    dirty: bool = false,
-};
-
-pub const Range = struct {
-    start: usize,
-    end: usize, // exclusive
-
-    pub fn create(start: usize, end: usize) ?Range {
-        if (start == end) return null;
-        return .{
-            .start = start,
-            .end = end,
-        };
-    }
-
-    pub fn len(self: Range) usize {
-        return self.end - self.start;
-    }
-};
-
-pub const TagLink = struct {
-    kind: Kind,
-    token: Lexer.Token,
-    /// True if this tag/link was explicitly written in the source, false if it came from pushtag
-    explicit: bool,
-
-    pub const Kind = enum {
-        tag,
-        link,
-    };
-};
-
-pub const KeyValue = struct {
-    key: Lexer.Token,
-    value: Lexer.Token,
-};
-
-pub fn parse(alloc: Allocator, source: [:0]const u8) !Self {
-    const owned_source = try alloc.dupeZ(u8, source);
-    var uri = try Uri.from_relative_to_cwd(alloc, "dummy.bean");
-    defer uri.deinit(alloc);
-    const self, const imports = try loadSource(alloc, uri, owned_source, true);
-    defer self.alloc.free(imports);
-    return self;
+/// Append a struct value as its u32 fields to `extra` and return the start offset.
+/// Accepts fields of type `u32`, `enum(u32)`, or nested structs whose fields are themselves supported.
+pub fn addExtra(self: *Self, value: anytype) !ExtraIndex {
+    const start: u32 = @intCast(self.extra.items.len);
+    try appendExtraFields(self, value);
+    return @enumFromInt(start);
 }
 
-/// Takes ownership of source.
-pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: bool) !struct { Self, Imports } {
-    var ast = try Ast.parse(alloc, uri, source);
-    errdefer ast.deinit();
-
-    var data = try init(alloc, ast, uri);
-    errdefer data.deinit();
-
-    var sem = Sema.init(alloc, &data, is_root);
-    defer sem.deinit();
-
-    const imports = try sem.run();
-    return .{ data, imports };
-}
-
-pub fn balanceTransactions(self: *Self) !void {
-    var one: ?Number = Number.fromFloat(1);
-    var solver = Solver.init(self.alloc);
-    defer solver.deinit();
-    var diagnostics: Solver.CurrencyImbalance = undefined;
-
-    entries: for (self.entries.items) |*entry| {
-        switch (entry.payload) {
-            .transaction => |*tx| {
-                if (tx.postings) |postings| {
-                    for (postings.start..postings.end) |i| {
-                        const number: *?Number = &self.postings.items(.amount)[i].number;
-                        var price: *?Number = undefined;
-                        var currency: *?[]const u8 = undefined;
-
-                        var rounding_currency: ?[]const u8 = null;
-                        if (self.postings.items(.price)[i]) |_| {
-                            if (self.postings.items(.amount)[i].currency == null) {
-                                try self.addError(self.postings.items(.account)[i], self.uri, .cannot_infer_amount_currency_when_price_set);
-                                tx.dirty = true;
-                                continue :entries;
-                            }
-                            currency = &self.postings.items(.price)[i].?.amount.currency;
-                            price = &self.postings.items(.price)[i].?.amount.number;
-                            if (number.* == null) {
-                                // Number interpolated: round to amount currency tolerance
-                                rounding_currency = self.postings.items(.amount)[i].currency;
-                            } else if (price.* == null) {
-                                // Price interpolated: round to price currency tolerance
-                                rounding_currency = self.postings.items(.price)[i].?.amount.currency;
-                            }
-                        } else {
-                            currency = &self.postings.items(.amount)[i].currency;
-                            price = &one;
-                        }
-
-                        try solver.addTriple(price, number, currency, rounding_currency);
-
-                        if (self.postings.items(.amount)[i].number) |n| {
-                            if (self.postings.items(.amount)[i].currency) |c| {
-                                try solver.addToleranceInput(n, c);
-                            }
-                        }
-                    }
-                    _ = solver.solve(&diagnostics) catch |err| {
-                        const tag: ErrorDetails.Tag = switch (err) {
-                            error.NoCurrency => .tx_balance_no_currency,
-                            error.DoesNotBalance => .{ .tx_does_not_balance = diagnostics },
-                            error.NoSolution => .tx_no_solution,
-                            error.TooManyVariables => .tx_too_many_variables,
-                            error.DivisionByZero => .tx_division_by_zero,
-                            error.MultipleSolutions => .tx_multiple_solutions,
-                            else => return err,
-                        };
-                        tx.dirty = true;
-                        try self.addError(entry.main_token, self.uri, tag);
-                    };
-                }
-            },
-            else => continue,
-        }
+fn appendExtraFields(self: *Self, value: anytype) !void {
+    const T = @TypeOf(value);
+    const info = @typeInfo(T);
+    switch (info) {
+        .@"struct" => |s| {
+            inline for (s.fields) |f| try appendExtraFields(self, @field(value, f.name));
+        },
+        .@"enum" => try self.extra.append(self.alloc, @intFromEnum(value)),
+        .int => try self.extra.append(self.alloc, @as(u32, value)),
+        else => @compileError("unsupported extra field type: " ++ @typeName(T)),
     }
 }
 
-fn addError(self: *Self, token: Lexer.Token, uri: Uri, tag: ErrorDetails.Tag) !void {
-    try self.errors.append(self.alloc, ErrorDetails{
-        .tag = tag,
-        .token = token,
-        .uri = uri,
-        .source = self.source,
-    });
+/// Decode a struct starting at `index` in `extra`.
+pub fn getExtra(self: *const Self, index: ExtraIndex, comptime T: type) T {
+    var cursor: u32 = @intFromEnum(index);
+    return readExtra(self, &cursor, T);
 }
 
-fn addWarning(self: *Self, token: Lexer.Token, uri: Uri, tag: ErrorDetails.Tag) !void {
-    try self.errors.append(self.alloc, ErrorDetails{
-        .tag = tag,
-        .severity = .warn,
-        .token = token,
-        .uri = uri,
-        .source = self.source,
-    });
+fn readExtra(self: *const Self, cursor: *u32, comptime T: type) T {
+    const info = @typeInfo(T);
+    switch (info) {
+        .@"struct" => |s| {
+            var result: T = undefined;
+            inline for (s.fields) |f| {
+                @field(result, f.name) = readExtra(self, cursor, f.type);
+            }
+            return result;
+        },
+        .@"enum" => {
+            const raw = self.extra.items[cursor.*];
+            cursor.* += 1;
+            return @enumFromInt(raw);
+        },
+        .int => {
+            const raw = self.extra.items[cursor.*];
+            cursor.* += 1;
+            return @as(T, @intCast(raw));
+        },
+        else => @compileError("unsupported extra field type: " ++ @typeName(T)),
+    }
 }
 
-// Takes ownership of ast.
+// --- init / deinit ----------------------------------------------------------
+
+/// Takes ownership of `ast`.
 pub fn init(alloc: Allocator, ast: Ast, uri: Uri) !Self {
+    var accounts = try StringPool.init(alloc);
+    errdefer accounts.deinit(alloc);
+
+    var currencies = try StringPool.init(alloc);
+    errdefer currencies.deinit(alloc);
+
+    var token_interned: std.ArrayList(u32) = .{};
+    errdefer token_interned.deinit(alloc);
+    try token_interned.appendNTimes(alloc, std.math.maxInt(u32), ast.tokens.items.len);
+
+    const errors = try ast.errors.clone(alloc);
+
     return .{
         .alloc = alloc,
-        .postings = .{},
-        .tagslinks = .{},
-        .meta = .{},
-        .currencies = .{},
-        .ast = ast,
-        .entries = .{},
         .source = ast.source,
         .uri = uri,
+        .ast = ast,
+        .accounts = accounts,
+        .currencies = currencies,
+        .token_interned = token_interned,
+        .entries = .{},
+        .postings = .{},
+        .extra = .{},
+        .tagslinks = .{},
+        .meta = .{},
         .config = Config.init(alloc),
-        .errors = try ast.errors.clone(alloc),
+        .errors = errors,
     };
 }
 
 pub fn deinit(self: *Self) void {
     self.alloc.free(self.source);
-
     self.ast.deinit();
-    self.entries.deinit(self.alloc);
+    self.accounts.deinit(self.alloc);
     self.currencies.deinit(self.alloc);
+    self.token_interned.deinit(self.alloc);
+    self.entries.deinit(self.alloc);
     self.postings.deinit(self.alloc);
+    self.extra.deinit(self.alloc);
     self.tagslinks.deinit(self.alloc);
     self.meta.deinit(self.alloc);
     self.config.deinit();
-
     self.errors.deinit(self.alloc);
 }
+
+pub fn token(self: *const Self, index: Ast.TokenIndex) Lexer.Token {
+    return self.ast.tokens.items[@intFromEnum(index)];
+}
+
+pub fn tokenSlice(self: *const Self, index: Ast.TokenIndex) []const u8 {
+    return self.token(index).slice;
+}
+
+pub fn addError(self: *Self, tok: Ast.TokenIndex, uri: Uri, tag: ErrorDetails.Tag) !void {
+    try self.errors.append(self.alloc, .{
+        .tag = tag,
+        .token = self.token(tok),
+        .uri = uri,
+        .source = self.source,
+    });
+}
+
+pub fn addWarning(self: *Self, tok: Ast.TokenIndex, uri: Uri, tag: ErrorDetails.Tag) !void {
+    try self.errors.append(self.alloc, .{
+        .tag = tag,
+        .severity = .warn,
+        .token = self.token(tok),
+        .uri = uri,
+        .source = self.source,
+    });
+}
+
+// --- size guards ------------------------------------------------------------
+
+comptime {
+    // Document and guard current sizes. Bump these intentionally if the
+    // layout changes; accidental growth should fail here.
+    std.debug.assert(@sizeOf(Entry) == 56);
+    std.debug.assert(@sizeOf(Entry.Payload) == 28);
+    std.debug.assert(@sizeOf(Posting) == 56);
+    std.debug.assert(@sizeOf(TagLink) == 8);
+    std.debug.assert(@sizeOf(KeyValue) == 8);
+}
+
+// --- round-trip tests for packing -------------------------------------------
+
+test "PackedNumber round-trips" {
+    const cases = [_]?Number{
+        null,
+        .{ .value = 0, .precision = 0 },
+        .{ .value = 12345, .precision = 2 },
+        .{ .value = -99999999999, .precision = 4 },
+        .{ .value = std.math.maxInt(i64), .precision = 9 },
+        .{ .value = std.math.minInt(i64), .precision = 0 },
+    };
+    for (cases) |c| {
+        try std.testing.expectEqual(c, PackedNumber.pack(c).unpack());
+    }
+}
+
+test "PackedDate round-trips" {
+    const cases = [_]?Date{
+        null,
+        .{ .year = 1970, .month = 1, .day = 1 },
+        .{ .year = 2026, .month = 4, .day = 20 },
+        .{ .year = 9999, .month = 12, .day = 31 },
+    };
+    for (cases) |c| {
+        const packed_d = PackedDate.pack(c);
+        const unpacked = packed_d.unpack();
+        try std.testing.expectEqual(c, unpacked);
+    }
+}
+
