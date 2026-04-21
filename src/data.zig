@@ -1,20 +1,3 @@
-//! Semantic data derived from a parsed file.
-//!
-//! Layout
-//! ======
-//! * `entries`  — MultiArrayList SoA. Tagged union payload is sized by the
-//!   largest variant (Transaction, ~24 bytes). Rarely-needed numeric data for
-//!   Balance/PriceDecl lives in `extra`.
-//! * `postings` — MultiArrayList SoA. Hot fields inline; rare `price` and
-//!   `lot_spec` live in `extra` via `OptionalExtraIndex`.
-//! * `accounts`, `currencies` — separate StringPools, typed indices.
-//! * `token_interned[i]` is the interned id for `ast.tokens[i]`, interpreted
-//!   by `ast.tokens[i].tag`:
-//!     - `.account`  → `AccountIndex`
-//!     - `.currency` → `CurrencyIndex`
-//!     - others      → `maxInt(u32)` (unused)
-//! * `extra` — flat `u32` pool, Ast-style, decoded via `getExtra`/`addExtra`.
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Date = @import("date.zig").Date;
@@ -40,7 +23,13 @@ token_interned: std.ArrayList(u32),
 
 entries: Entries,
 postings: Postings,
-extra: std.ArrayList(u32),
+
+/// Stored price annotations, referenced from `Posting.price`.
+prices: std.ArrayList(Price),
+/// Stored lot specs, referenced from `Posting.lot_spec`.
+lot_specs: std.ArrayList(LotSpec),
+/// Flat list of currencies for open directives. `Open.currencies` is a `Range` into this.
+open_currencies: std.ArrayList(CurrencyIndex),
 
 tagslinks: TagsLinks,
 meta: Meta,
@@ -107,25 +96,48 @@ pub const OptionalCurrencyIndex = enum(u32) {
     }
 };
 
-pub const ExtraIndex = enum(u32) {
+pub const PriceIndex = enum(u32) {
     _,
 
-    pub fn toOptional(i: ExtraIndex) OptionalExtraIndex {
-        const r: OptionalExtraIndex = @enumFromInt(@intFromEnum(i));
+    pub fn toOptional(i: PriceIndex) OptionalPriceIndex {
+        const r: OptionalPriceIndex = @enumFromInt(@intFromEnum(i));
         std.debug.assert(r != .none);
         return r;
     }
 };
 
-pub const OptionalExtraIndex = enum(u32) {
+pub const OptionalPriceIndex = enum(u32) {
     none = std.math.maxInt(u32),
     _,
 
-    pub fn unwrap(oi: OptionalExtraIndex) ?ExtraIndex {
+    pub fn unwrap(oi: OptionalPriceIndex) ?PriceIndex {
         return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
     }
 
-    pub fn fromOptional(oi: ?ExtraIndex) OptionalExtraIndex {
+    pub fn fromOptional(oi: ?PriceIndex) OptionalPriceIndex {
+        return if (oi) |i| i.toOptional() else .none;
+    }
+};
+
+pub const LotSpecIndex = enum(u32) {
+    _,
+
+    pub fn toOptional(i: LotSpecIndex) OptionalLotSpecIndex {
+        const r: OptionalLotSpecIndex = @enumFromInt(@intFromEnum(i));
+        std.debug.assert(r != .none);
+        return r;
+    }
+};
+
+pub const OptionalLotSpecIndex = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+
+    pub fn unwrap(oi: OptionalLotSpecIndex) ?LotSpecIndex {
+        return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+    }
+
+    pub fn fromOptional(oi: ?LotSpecIndex) OptionalLotSpecIndex {
         return if (oi) |i| i.toOptional() else .none;
     }
 };
@@ -239,38 +251,14 @@ pub const Transaction = struct {
 };
 
 pub const Open = struct {
-    account: AccountIndex,
-    booking_method: BookingMethod = .unspecified,
-    /// Currency indices range in `extra` (u32s, each an interned `CurrencyIndex`).
+    account: Ast.TokenIndex,
+    booking_method: ?Inventory.BookingMethod = null,
+    /// Range into `Data.open_currencies`.
     currencies: Range,
-
-    pub const BookingMethod = enum(u8) {
-        unspecified,
-        fifo,
-        lifo,
-        strict,
-
-        pub fn fromInventory(m: ?Inventory.BookingMethod) BookingMethod {
-            return if (m) |mm| switch (mm) {
-                .fifo => .fifo,
-                .lifo => .lifo,
-                .strict => .strict,
-            } else .unspecified;
-        }
-
-        pub fn toInventory(b: BookingMethod) ?Inventory.BookingMethod {
-            return switch (b) {
-                .unspecified => null,
-                .fifo => .fifo,
-                .lifo => .lifo,
-                .strict => .strict,
-            };
-        }
-    };
 };
 
 pub const Close = struct {
-    account: AccountIndex,
+    account: Ast.TokenIndex,
 };
 
 pub const Commodity = struct {
@@ -278,30 +266,29 @@ pub const Commodity = struct {
 };
 
 pub const Pad = struct {
-    account: AccountIndex,
-    pad_to: AccountIndex,
+    account: Ast.TokenIndex,
+    pad_to: Ast.TokenIndex,
     /// Synthetic posting indices created by the balancer.
     pad_posting: OptionalPostingIndex = .none,
     pad_to_posting: OptionalPostingIndex = .none,
 };
 
 pub const Pnl = struct {
-    account: AccountIndex,
-    income_account: AccountIndex,
+    account: Ast.TokenIndex,
+    income_account: Ast.TokenIndex,
 };
 
 pub const Balance = struct {
-    account: AccountIndex,
-    amount_currency: OptionalCurrencyIndex,
-    /// Points at a `BalanceExtra` (two successive `PackedNumber`s — 6 u32s).
-    extras: ExtraIndex,
+    account: Ast.TokenIndex,
+    amount: PackedNumber,
+    amount_currency: CurrencyIndex,
+    tolerance: PackedNumber,
 };
 
 pub const PriceDecl = struct {
     currency: CurrencyIndex,
-    amount_currency: OptionalCurrencyIndex,
-    /// Points at a `PackedNumber` (3 u32s) in `extra`.
-    amount_number: ExtraIndex,
+    amount_currency: CurrencyIndex,
+    amount_number: PackedNumber,
 };
 
 pub const Event = struct {
@@ -315,99 +302,43 @@ pub const Query = struct {
 };
 
 pub const Note = struct {
-    account: AccountIndex,
+    account: Ast.TokenIndex,
     note: Ast.TokenIndex,
 };
 
 pub const Document = struct {
-    account: AccountIndex,
+    account: Ast.TokenIndex,
     filename: Ast.TokenIndex,
 };
 
 // --- Posting ----------------------------------------------------------------
 
 pub const Posting = struct {
-    account: AccountIndex,
+    account: Ast.TokenIndex,
     flag: Ast.OptionalTokenIndex,
-    amount_number: ?Number,
+    amount_number: PackedNumber,
     amount_currency: OptionalCurrencyIndex,
-    /// Optional `PriceExtra` (5 u32s) in `extra`. `.none` for most postings.
-    price: OptionalExtraIndex,
-    /// Optional `LotSpecExtra` (6 u32s) in `extra`. `.none` for most postings.
-    lot_spec: OptionalExtraIndex,
+    /// Index into `Data.prices`. `.none` for most postings.
+    price: OptionalPriceIndex,
+    /// Index into `Data.lot_specs`. `.none` for most postings.
+    lot_spec: OptionalLotSpecIndex,
     /// Meta KV range in `Data.meta`. `isEmpty()` means no metadata.
     meta: Range,
     /// AST posting node for source recovery. `.none` for synthetic postings (pad, pnl).
     ast_node: Ast.Node.OptionalIndex = .none,
 };
 
-// --- Extras encoded in `extra` ---------------------------------------------
-
-pub const BalanceExtra = struct {
-    amount: PackedNumber,
-    tolerance: PackedNumber,
+pub const Price = struct {
+    amount: Number,
+    amount_currency: CurrencyIndex,
+    total: bool, // true for @@ (total price), false for @ (per-unit)
 };
 
-pub const PriceExtra = struct {
-    amount: PackedNumber,
-    amount_currency: OptionalCurrencyIndex,
-    flags: u32, // bit 0 = total (@@)
-};
-
-pub const LotSpecExtra = struct {
-    price: PackedNumber,
+pub const LotSpec = struct {
+    price: ?Number,
     price_currency: OptionalCurrencyIndex,
-    date: PackedDate,
+    date: ?Date,
     label: Ast.OptionalTokenIndex,
-};
-
-/// 3-u32 packing of `?Number`. `precision == maxInt(u32)` encodes `null`.
-pub const PackedNumber = struct {
-    lo: u32,
-    hi: u32,
-    precision: u32,
-
-    pub const none: PackedNumber = .{ .lo = 0, .hi = 0, .precision = std.math.maxInt(u32) };
-
-    pub fn pack(n: ?Number) PackedNumber {
-        const num = n orelse return .none;
-        const bits: u64 = @bitCast(num.value);
-        return .{
-            .lo = @truncate(bits),
-            .hi = @truncate(bits >> 32),
-            .precision = num.precision,
-        };
-    }
-
-    pub fn unpack(p: PackedNumber) ?Number {
-        if (p.precision == std.math.maxInt(u32)) return null;
-        const bits: u64 = (@as(u64, p.hi) << 32) | @as(u64, p.lo);
-        return .{ .value = @bitCast(bits), .precision = p.precision };
-    }
-};
-
-/// 1-u32 packing of `?Date`. `maxInt(u32)` encodes `null`. Layout: YYYYYYYY YYYYYYYY YYYYMMMM DDDDDDDD... (year << 9 | month << 5 | day).
-pub const PackedDate = struct {
-    raw: u32,
-
-    pub const none: PackedDate = .{ .raw = std.math.maxInt(u32) };
-
-    pub fn pack(d: ?Date) PackedDate {
-        const dd = d orelse return .none;
-        const year: u32 = dd.year;
-        const month: u32 = dd.month;
-        const day: u32 = dd.day;
-        return .{ .raw = (year << 9) | (month << 5) | day };
-    }
-
-    pub fn unpack(p: PackedDate) ?Date {
-        if (p.raw == std.math.maxInt(u32)) return null;
-        return .{
-            .year = p.raw >> 9,
-            .month = @intCast((p.raw >> 5) & 0xF),
-            .day = @intCast(p.raw & 0x1F),
-        };
-    }
 };
 
 // --- Auxiliary --------------------------------------------------------------
@@ -471,59 +402,6 @@ pub const Config = struct {
     }
 };
 
-// --- extra encoding helpers -------------------------------------------------
-
-/// Append a struct value as its u32 fields to `extra` and return the start offset.
-/// Accepts fields of type `u32`, `enum(u32)`, or nested structs whose fields are themselves supported.
-pub fn addExtra(self: *Self, value: anytype) !ExtraIndex {
-    const start: u32 = @intCast(self.extra.items.len);
-    try appendExtraFields(self, value);
-    return @enumFromInt(start);
-}
-
-fn appendExtraFields(self: *Self, value: anytype) !void {
-    const T = @TypeOf(value);
-    const info = @typeInfo(T);
-    switch (info) {
-        .@"struct" => |s| {
-            inline for (s.fields) |f| try appendExtraFields(self, @field(value, f.name));
-        },
-        .@"enum" => try self.extra.append(self.alloc, @intFromEnum(value)),
-        .int => try self.extra.append(self.alloc, @as(u32, value)),
-        else => @compileError("unsupported extra field type: " ++ @typeName(T)),
-    }
-}
-
-/// Decode a struct starting at `index` in `extra`.
-pub fn getExtra(self: *const Self, index: ExtraIndex, comptime T: type) T {
-    var cursor: u32 = @intFromEnum(index);
-    return readExtra(self, &cursor, T);
-}
-
-fn readExtra(self: *const Self, cursor: *u32, comptime T: type) T {
-    const info = @typeInfo(T);
-    switch (info) {
-        .@"struct" => |s| {
-            var result: T = undefined;
-            inline for (s.fields) |f| {
-                @field(result, f.name) = readExtra(self, cursor, f.type);
-            }
-            return result;
-        },
-        .@"enum" => {
-            const raw = self.extra.items[cursor.*];
-            cursor.* += 1;
-            return @enumFromInt(raw);
-        },
-        .int => {
-            const raw = self.extra.items[cursor.*];
-            cursor.* += 1;
-            return @as(T, @intCast(raw));
-        },
-        else => @compileError("unsupported extra field type: " ++ @typeName(T)),
-    }
-}
-
 // --- init / deinit ----------------------------------------------------------
 
 /// Takes ownership of `ast`.
@@ -550,7 +428,9 @@ pub fn init(alloc: Allocator, ast: Ast, uri: Uri) !Self {
         .token_interned = token_interned,
         .entries = .{},
         .postings = .{},
-        .extra = .{},
+        .prices = .{},
+        .lot_specs = .{},
+        .open_currencies = .{},
         .tagslinks = .{},
         .meta = .{},
         .config = Config.init(alloc),
@@ -566,7 +446,9 @@ pub fn deinit(self: *Self) void {
     self.token_interned.deinit(self.alloc);
     self.entries.deinit(self.alloc);
     self.postings.deinit(self.alloc);
-    self.extra.deinit(self.alloc);
+    self.prices.deinit(self.alloc);
+    self.lot_specs.deinit(self.alloc);
+    self.open_currencies.deinit(self.alloc);
     self.tagslinks.deinit(self.alloc);
     self.meta.deinit(self.alloc);
     self.config.deinit();
@@ -579,6 +461,34 @@ pub fn token(self: *const Self, index: Ast.TokenIndex) Lexer.Token {
 
 pub fn tokenSlice(self: *const Self, index: Ast.TokenIndex) []const u8 {
     return self.token(index).slice;
+}
+
+pub fn accountText(self: *const Self, i: AccountIndex) []const u8 {
+    return self.accounts.get(i);
+}
+
+pub fn currencyText(self: *const Self, i: CurrencyIndex) []const u8 {
+    return self.currencies.get(i);
+}
+
+pub fn accountTextOpt(self: *const Self, oi: OptionalAccountIndex) ?[]const u8 {
+    const i = oi.unwrap() orelse return null;
+    return self.accounts.get(i);
+}
+
+pub fn currencyTextOpt(self: *const Self, oi: OptionalCurrencyIndex) ?[]const u8 {
+    const i = oi.unwrap() orelse return null;
+    return self.currencies.get(i);
+}
+
+/// Resolve an account token to its interned `AccountIndex` via the side-table.
+pub fn accountOf(self: *const Self, tok: Ast.TokenIndex) AccountIndex {
+    return @enumFromInt(self.token_interned.items[@intFromEnum(tok)]);
+}
+
+/// Resolve a currency token to its interned `CurrencyIndex` via the side-table.
+pub fn currencyOf(self: *const Self, tok: Ast.TokenIndex) CurrencyIndex {
+    return @enumFromInt(self.token_interned.items[@intFromEnum(tok)]);
 }
 
 pub fn addError(self: *Self, tok: Ast.TokenIndex, uri: Uri, tag: ErrorDetails.Tag) !void {
@@ -600,19 +510,369 @@ pub fn addWarning(self: *Self, tok: Ast.TokenIndex, uri: Uri, tag: ErrorDetails.
     });
 }
 
-// --- size guards ------------------------------------------------------------
+// --- views and iterators ----------------------------------------------------
+
+pub const EntryView = struct {
+    data: *const Self,
+    idx: u32,
+
+    pub fn date(v: EntryView) Date {
+        return v.data.entries.items(.date)[v.idx];
+    }
+
+    pub fn mainToken(v: EntryView) Ast.TokenIndex {
+        return v.data.entries.items(.main_token)[v.idx];
+    }
+
+    pub fn tag(v: EntryView) Entry.Tag {
+        return std.meta.activeTag(v.data.entries.items(.payload)[v.idx]);
+    }
+
+    pub fn payload(v: EntryView) PayloadView {
+        return switch (v.data.entries.items(.payload)[v.idx]) {
+            .transaction => |tx| .{ .transaction = .{ .data = v.data, .tx = tx } },
+            .open => |o| .{ .open = .{ .data = v.data, .open = o } },
+            .close => |c| .{ .close = c },
+            .commodity => |c| .{ .commodity = c },
+            .pad => |p2| .{ .pad = p2 },
+            .pnl => |p2| .{ .pnl = p2 },
+            .balance => |b| .{ .balance = .{
+                .account = v.data.accountOf(b.account),
+                .account_token = b.account,
+                .amount = b.amount.unpack() orelse unreachable,
+                .amount_currency = b.amount_currency,
+                .tolerance = b.tolerance.unpack(),
+            } },
+            .price => |pd| .{ .price = .{
+                .currency = pd.currency,
+                .amount = pd.amount_number.unpack() orelse unreachable,
+                .amount_currency = pd.amount_currency,
+            } },
+            .event => |e| .{ .event = e },
+            .query => |q| .{ .query = q },
+            .note => |n| .{ .note = n },
+            .document => |d| .{ .document = d },
+        };
+    }
+
+    pub fn tagslinks(v: EntryView) TagLinkIterator {
+        const r = v.data.entries.items(.tagslinks)[v.idx];
+        return .{ .data = v.data, .i = r.start, .end = r.end };
+    }
+
+    pub fn metaKVs(v: EntryView) MetaIterator {
+        const r = v.data.entries.items(.meta)[v.idx];
+        return .{ .data = v.data, .i = r.start, .end = r.end };
+    }
+
+    /// Posting iterator. Empty unless the entry is a transaction.
+    pub fn postings(v: EntryView) PostingIterator {
+        const p = v.data.entries.items(.payload)[v.idx];
+        return switch (p) {
+            .transaction => |tx| .{ .data = v.data, .i = tx.postings.start, .end = tx.postings.end },
+            else => .{ .data = v.data, .i = 0, .end = 0 },
+        };
+    }
+};
+
+/// Decoded payload — same discriminant as `Entry.Tag`. Transaction/Open
+/// carry iterators over their children; Balance/PriceDecl have their numeric
+/// extras already unpacked.
+pub const PayloadView = union(Entry.Tag) {
+    transaction: TransactionView,
+    open: OpenView,
+    close: Close,
+    commodity: Commodity,
+    pad: Pad,
+    pnl: Pnl,
+    balance: BalanceView,
+    price: PriceDeclView,
+    event: Event,
+    query: Query,
+    note: Note,
+    document: Document,
+};
+
+pub const TransactionView = struct {
+    data: *const Self,
+    tx: Transaction,
+
+    pub fn postings(v: TransactionView) PostingIterator {
+        return .{ .data = v.data, .i = v.tx.postings.start, .end = v.tx.postings.end };
+    }
+
+    pub fn payeeText(v: TransactionView) ?[]const u8 {
+        const i = v.tx.payee.unwrap() orelse return null;
+        return v.data.tokenSlice(i);
+    }
+
+    pub fn narrationText(v: TransactionView) ?[]const u8 {
+        const i = v.tx.narration.unwrap() orelse return null;
+        return v.data.tokenSlice(i);
+    }
+};
+
+pub const OpenView = struct {
+    data: *const Self,
+    open: Open,
+
+    pub fn currencies(v: OpenView) CurrencySliceIterator {
+        return .{ .data = v.data, .i = v.open.currencies.start, .end = v.open.currencies.end };
+    }
+
+    pub fn account(v: OpenView) AccountIndex {
+        return v.data.accountOf(v.open.account);
+    }
+
+    pub fn accountText(v: OpenView) []const u8 {
+        return v.data.tokenSlice(v.open.account);
+    }
+};
+
+pub const BalanceView = struct {
+    account: AccountIndex,
+    /// Source token for the account (for error reporting).
+    account_token: Ast.TokenIndex,
+    amount: Number,
+    amount_currency: CurrencyIndex,
+    tolerance: ?Number,
+};
+
+pub const PriceDeclView = struct {
+    currency: CurrencyIndex,
+    amount: Number,
+    amount_currency: CurrencyIndex,
+};
+
+/// Lightweight handle for a posting. Hot fields resolved on demand;
+/// `price` and `lot_spec` lazily decoded from `extra`.
+pub const PostingView = struct {
+    data: *const Self,
+    idx: u32,
+
+    pub fn accountToken(v: PostingView) Ast.TokenIndex {
+        return v.data.postings.items(.account)[v.idx];
+    }
+
+    pub fn account(v: PostingView) AccountIndex {
+        return v.data.accountOf(v.accountToken());
+    }
+
+    pub fn accountText(v: PostingView) []const u8 {
+        return v.data.tokenSlice(v.accountToken());
+    }
+
+    pub fn flag(v: PostingView) Ast.OptionalTokenIndex {
+        return v.data.postings.items(.flag)[v.idx];
+    }
+
+    pub fn amountNumber(v: PostingView) ?Number {
+        return v.data.postings.items(.amount_number)[v.idx].unpack();
+    }
+
+    pub fn amountCurrency(v: PostingView) OptionalCurrencyIndex {
+        return v.data.postings.items(.amount_currency)[v.idx];
+    }
+
+    pub fn amountCurrencyText(v: PostingView) ?[]const u8 {
+        const c = v.amountCurrency().unwrap() orelse return null;
+        return v.data.currencies.get(c);
+    }
+
+    pub fn astNode(v: PostingView) Ast.Node.OptionalIndex {
+        return v.data.postings.items(.ast_node)[v.idx];
+    }
+
+    pub fn price(v: PostingView) ?Price {
+        const opt = v.data.postings.items(.price)[v.idx];
+        const idx = opt.unwrap() orelse return null;
+        return v.data.prices.items[@intFromEnum(idx)];
+    }
+
+    pub fn lotSpec(v: PostingView) ?LotSpec {
+        const opt = v.data.postings.items(.lot_spec)[v.idx];
+        const idx = opt.unwrap() orelse return null;
+        return v.data.lot_specs.items[@intFromEnum(idx)];
+    }
+
+    pub fn metaKVs(v: PostingView) MetaIterator {
+        const r = v.data.postings.items(.meta)[v.idx];
+        return .{ .data = v.data, .i = r.start, .end = r.end };
+    }
+};
+
+pub const TagLinkView = struct {
+    kind: TagLink.Kind,
+    token: Ast.TokenIndex,
+    explicit: bool,
+};
+
+pub const KeyValueView = struct {
+    key: Ast.TokenIndex,
+    value: Ast.TokenIndex,
+};
+
+// --- iterators --------------------------------------------------------------
+
+pub const EntryIterator = struct {
+    data: *const Self,
+    i: u32,
+    end: u32,
+
+    pub fn next(it: *EntryIterator) ?EntryView {
+        if (it.i >= it.end) return null;
+        const v = EntryView{ .data = it.data, .idx = it.i };
+        it.i += 1;
+        return v;
+    }
+};
+
+pub fn EntriesOfKindIterator(comptime kind: Entry.Tag) type {
+    return struct {
+        data: *const Self,
+        i: u32,
+        end: u32,
+
+        pub fn next(it: *@This()) ?EntryView {
+            const payloads = it.data.entries.items(.payload);
+            while (it.i < it.end) {
+                if (std.meta.activeTag(payloads[it.i]) == kind) {
+                    const v = EntryView{ .data = it.data, .idx = it.i };
+                    it.i += 1;
+                    return v;
+                }
+                it.i += 1;
+            }
+            return null;
+        }
+    };
+}
+
+pub const PostingIterator = struct {
+    data: *const Self,
+    i: u32,
+    end: u32,
+
+    pub fn next(it: *PostingIterator) ?PostingView {
+        if (it.i >= it.end) return null;
+        const v = PostingView{ .data = it.data, .idx = it.i };
+        it.i += 1;
+        return v;
+    }
+};
+
+pub const TagLinkIterator = struct {
+    data: *const Self,
+    i: u32,
+    end: u32,
+
+    pub fn next(it: *TagLinkIterator) ?TagLinkView {
+        if (it.i >= it.end) return null;
+        const v = TagLinkView{
+            .kind = it.data.tagslinks.items(.kind)[it.i],
+            .token = it.data.tagslinks.items(.token)[it.i],
+            .explicit = it.data.tagslinks.items(.explicit)[it.i],
+        };
+        it.i += 1;
+        return v;
+    }
+};
+
+pub const MetaIterator = struct {
+    data: *const Self,
+    i: u32,
+    end: u32,
+
+    pub fn next(it: *MetaIterator) ?KeyValueView {
+        if (it.i >= it.end) return null;
+        const v = KeyValueView{
+            .key = it.data.meta.items(.key)[it.i],
+            .value = it.data.meta.items(.value)[it.i],
+        };
+        it.i += 1;
+        return v;
+    }
+};
+
+/// Iterates a `Range` into `Data.open_currencies`.
+pub const CurrencySliceIterator = struct {
+    data: *const Self,
+    i: u32,
+    end: u32,
+
+    pub fn next(it: *CurrencySliceIterator) ?CurrencyIndex {
+        if (it.i >= it.end) return null;
+        const v = it.data.open_currencies.items[it.i];
+        it.i += 1;
+        return v;
+    }
+};
+
+pub fn iterEntries(self: *const Self) EntryIterator {
+    return .{ .data = self, .i = 0, .end = @intCast(self.entries.len) };
+}
+
+pub fn iterEntriesOfKind(self: *const Self, comptime kind: Entry.Tag) EntriesOfKindIterator(kind) {
+    return .{ .data = self, .i = 0, .end = @intCast(self.entries.len) };
+}
+
+pub fn entryAt(self: *const Self, idx: u32) EntryView {
+    return .{ .data = self, .idx = idx };
+}
+
+pub fn postingAt(self: *const Self, idx: u32) PostingView {
+    return .{ .data = self, .idx = idx };
+}
+
+// --- mutators ---------------------------------------------------------------
+//
+// Views are read-only by convention. The few places that need to mutate
+// entry-level state go through these named helpers so the mutation is obvious
+// in a reader's grep.
+
+/// Mark a transaction as unbalanced. Asserts the entry is a transaction.
+pub fn markDirty(self: *Self, entry_idx: u32) void {
+    const payloads = self.entries.items(.payload);
+    std.debug.assert(std.meta.activeTag(payloads[entry_idx]) == .transaction);
+    payloads[entry_idx].transaction.dirty = true;
+}
 
 comptime {
     // Document and guard current sizes. Bump these intentionally if the
     // layout changes; accidental growth should fail here.
-    std.debug.assert(@sizeOf(Entry) == 56);
-    std.debug.assert(@sizeOf(Entry.Payload) == 28);
-    std.debug.assert(@sizeOf(Posting) == 56);
+    std.debug.assert(@sizeOf(Entry) == 64);
+    std.debug.assert(@sizeOf(Entry.Payload) == 36); // sized by Balance (32) + tag byte
+    std.debug.assert(@sizeOf(Posting) == 44);
+    std.debug.assert(@sizeOf(Price) == 24);
+    std.debug.assert(@sizeOf(LotSpec) == 48);
     std.debug.assert(@sizeOf(TagLink) == 8);
     std.debug.assert(@sizeOf(KeyValue) == 8);
 }
 
-// --- round-trip tests for packing -------------------------------------------
+/// 3-u32 packing of `?Number`. `precision == maxInt(u32)` encodes `null`.
+pub const PackedNumber = struct {
+    lo: u32,
+    hi: u32,
+    precision: u32,
+
+    pub const none: PackedNumber = .{ .lo = 0, .hi = 0, .precision = std.math.maxInt(u32) };
+
+    pub fn pack(n: ?Number) PackedNumber {
+        const num = n orelse return .none;
+        const bits: u64 = @bitCast(num.value);
+        return .{
+            .lo = @truncate(bits),
+            .hi = @truncate(bits >> 32),
+            .precision = num.precision,
+        };
+    }
+
+    pub fn unpack(p: PackedNumber) ?Number {
+        if (p.precision == std.math.maxInt(u32)) return null;
+        const bits: u64 = (@as(u64, p.hi) << 32) | @as(u64, p.lo);
+        return .{ .value = @bitCast(bits), .precision = p.precision };
+    }
+};
 
 test "PackedNumber round-trips" {
     const cases = [_]?Number{
@@ -627,18 +887,3 @@ test "PackedNumber round-trips" {
         try std.testing.expectEqual(c, PackedNumber.pack(c).unpack());
     }
 }
-
-test "PackedDate round-trips" {
-    const cases = [_]?Date{
-        null,
-        .{ .year = 1970, .month = 1, .day = 1 },
-        .{ .year = 2026, .month = 4, .day = 20 },
-        .{ .year = 9999, .month = 12, .day = 31 },
-    };
-    for (cases) |c| {
-        const packed_d = PackedDate.pack(c);
-        const unpacked = packed_d.unpack();
-        try std.testing.expectEqual(c, unpacked);
-    }
-}
-
