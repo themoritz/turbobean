@@ -77,7 +77,10 @@ pub const PlotData = struct {
 const DataTracker = struct {
     alloc: std.mem.Allocator,
     prices: *Prices,
-    operating_currencies: []const []const u8,
+    project: *const Project,
+    /// Resolved operating-currency targets. `null` if the URL param didn't
+    /// match any known currency.
+    conversion_target: ?Data.CurrencyIndex,
     display: DisplaySettings,
     inv: Inventories,
     string_store: *StringStore,
@@ -86,7 +89,8 @@ const DataTracker = struct {
     pub fn init(
         alloc: std.mem.Allocator,
         prices: *Prices,
-        operating_currencies: []const []const u8,
+        project: *const Project,
+        conversion_target: ?Data.CurrencyIndex,
         display: DisplaySettings,
         string_store: *StringStore,
         plot_data: *PlotData,
@@ -94,7 +98,8 @@ const DataTracker = struct {
         return .{
             .alloc = alloc,
             .prices = prices,
-            .operating_currencies = operating_currencies,
+            .project = project,
+            .conversion_target = conversion_target,
             .display = display,
             .inv = Inventories.init(alloc),
             .string_store = string_store,
@@ -107,15 +112,15 @@ const DataTracker = struct {
     }
 
     pub fn flush(self: *DataTracker, date: Date) !void {
-        try self.inv.convert(self.display.conversion, self.prices);
+        try self.inv.convert(self.conversion_target, self.prices);
 
         var iter = self.inv.map.iterator();
         while (iter.next()) |kv| {
             const pair = kv.key_ptr.*;
             const balance = kv.value_ptr.*;
             try self.plot_data.addDataPoint(.{
-                .currency = pair.currency,
-                .account = pair.account,
+                .currency = self.project.currencies.get(@enumFromInt(@intFromEnum(pair.currency))),
+                .account = self.project.accounts.get(@enumFromInt(@intFromEnum(pair.account))),
                 .balance = balance.toFloat(),
                 .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
             });
@@ -147,7 +152,7 @@ fn render(
     ctx: void,
 ) !PlotData {
     _ = ctx;
-    var tree = try Tree.init(alloc);
+    var tree = try Tree.init(alloc, project.accounts, project.currencies);
     defer tree.deinit();
 
     const operating_currencies = try project.getConfig().getOperatingCurrencies(alloc);
@@ -159,10 +164,16 @@ fn render(
     var plot_data = PlotData{ .alloc = alloc };
     errdefer plot_data.deinit();
 
+    const conversion_target: ?Data.CurrencyIndex = switch (display.conversion) {
+        .units => null,
+        .currency => |text| project.findCurrency(text),
+    };
+
     var data_tracker = DataTracker.init(
         alloc,
         &prices,
-        operating_currencies,
+        project,
+        conversion_target,
         display,
         string_store,
         &plot_data,
@@ -181,7 +192,7 @@ fn render(
 
             switch (entry.payload()) {
                 .open => |open| {
-                    _ = try tree.open(open.accountText(), null, open.open.booking_method);
+                    _ = try tree.open(open.account(), null, open.open.booking_method);
                 },
                 .transaction => |tx| {
                     if (tx.tx.dirty) continue;
@@ -210,7 +221,7 @@ fn render(
                     }
                 },
                 .price => |price| {
-                    try prices.setPrice(price);
+                    try prices.setPriceFromDecl(price);
                 },
                 else => {},
             }
@@ -219,13 +230,13 @@ fn render(
 
     try common.renderPlotArea(operating_currencies, out);
 
-    // Render Tree
     const treeRenderer = common.TreeRenderer{
         .alloc = alloc,
         .out = out,
         .tree = &tree,
+        .project = project,
         .operating_currencies = operating_currencies,
-        .conversion = display.conversion,
+        .conversion_target = conversion_target,
         .prices = &prices,
     };
 
@@ -239,34 +250,15 @@ fn render(
 }
 
 const Inventories = struct {
-    map: Map,
-
-    // TODO: Share with Prices.zig
-    const Map = std.HashMap(Pair, Number, Context, std.hash_map.default_max_load_percentage);
+    map: std.AutoHashMap(Pair, Number),
 
     const Pair = struct {
-        account: []const u8,
-        currency: []const u8,
-    };
-
-    const Context = struct {
-        pub fn hash(_: Context, key: Pair) u64 {
-            var hasher = std.hash.Wyhash.init(0);
-            hasher.update(key.account);
-            hasher.update(key.currency);
-            return hasher.final();
-        }
-
-        pub fn eql(_: Context, a: Pair, b: Pair) bool {
-            return std.mem.eql(u8, a.account, b.account) and
-                std.mem.eql(u8, a.currency, b.currency);
-        }
+        account: Data.AccountIndex,
+        currency: Data.CurrencyIndex,
     };
 
     pub fn init(alloc: std.mem.Allocator) Inventories {
-        return .{
-            .map = Map.init(alloc),
-        };
+        return .{ .map = std.AutoHashMap(Pair, Number).init(alloc) };
     }
 
     pub fn deinit(self: *Inventories) void {
@@ -277,45 +269,31 @@ const Inventories = struct {
         self.map.clearRetainingCapacity();
     }
 
-    pub fn add(self: *Inventories, account: []const u8, currency: []const u8, amount: Number) !void {
-        const pair = Pair{
-            .account = account,
-            .currency = currency,
-        };
+    pub fn add(self: *Inventories, account: Data.AccountIndex, currency: Data.CurrencyIndex, amount: Number) !void {
+        const pair = Pair{ .account = account, .currency = currency };
         const old = self.balance(pair.account, pair.currency);
         try self.map.put(pair, old.add(amount));
     }
 
     pub fn postInventory(self: *Inventories, posting: Data.PostingView) !void {
-        try self.add(posting.accountText(), posting.amountCurrencyText().?, posting.amountNumber().?);
+        try self.add(posting.account(), posting.amountCurrency().unwrap().?, posting.amountNumber().?);
     }
 
-    pub fn balance(self: *const Inventories, account: []const u8, currency: []const u8) Number {
-        const pair = Pair{
-            .account = account,
-            .currency = currency,
-        };
+    pub fn balance(self: *const Inventories, account: Data.AccountIndex, currency: Data.CurrencyIndex) Number {
+        const pair = Pair{ .account = account, .currency = currency };
         return self.map.get(pair) orelse Number.zero();
     }
 
-    pub fn convert(
-        self: *Inventories,
-        conversion: DisplaySettings.Conversion,
-        prices: *const Prices,
-    ) !void {
-        switch (conversion) {
-            .units => {},
-            .currency => |to| {
-                var iter = self.map.iterator();
-                while (iter.next()) |kv| {
-                    const from = kv.key_ptr.*;
-                    if (std.mem.eql(u8, from.currency, to)) continue;
-                    if (prices.convert(kv.value_ptr.*, from.currency, to)) |converted| {
-                        _ = self.map.remove(from);
-                        try self.add(from.account, to, converted);
-                    }
-                }
-            },
+    pub fn convert(self: *Inventories, to_opt: ?Data.CurrencyIndex, prices: *const Prices) !void {
+        const to = to_opt orelse return;
+        var iter = self.map.iterator();
+        while (iter.next()) |kv| {
+            const from = kv.key_ptr.*;
+            if (from.currency == to) continue;
+            if (prices.convert(kv.value_ptr.*, from.currency, to)) |converted| {
+                _ = self.map.remove(from);
+                try self.add(from.account, to, converted);
+            }
         }
     }
 };
