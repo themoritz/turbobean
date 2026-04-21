@@ -3,7 +3,6 @@ const Allocator = std.mem.Allocator;
 const Tree = @import("../tree.zig");
 const Inventory = @import("../inventory.zig");
 const DisplaySettings = @import("DisplaySettings.zig");
-const Conversion = DisplaySettings.Conversion;
 const Prices = @import("../Prices.zig");
 const Project = @import("../project.zig");
 const StringStore = @import("../StringStore.zig");
@@ -113,8 +112,9 @@ pub const TreeRenderer = struct {
     alloc: std.mem.Allocator,
     out: *std.Io.Writer,
     tree: *const Tree,
+    project: *const Project,
     operating_currencies: []const []const u8,
-    conversion: Conversion,
+    conversion_target: ?@import("../data.zig").CurrencyIndex,
     prices: *const Prices,
 
     const MAX_TREE_DEPTH = 10;
@@ -175,12 +175,12 @@ pub const TreeRenderer = struct {
         var converted_inv = try Inventory.PlainInventory.init(self.alloc, null);
         defer converted_inv.deinit();
 
-        var inv = blk: switch (self.conversion) {
-            .units => break :blk &unconverted_inv,
-            .currency => |cur| {
+        var inv = blk: {
+            if (self.conversion_target) |cur| {
                 try self.prices.convertInventory(&unconverted_inv, cur, &converted_inv);
                 break :blk &converted_inv;
-            },
+            }
+            break :blk &unconverted_inv;
         };
 
         const name_prefix_len = name_prefix.items.len;
@@ -233,12 +233,14 @@ pub const TreeRenderer = struct {
                 .from_line = MAX_TREE_DEPTH + 2 + j,
                 .to_line = MAX_TREE_DEPTH + 2 + j + 1,
             }, self.out);
-            if (inv.by_currency.get(currency)) |balance| {
-                if (!balance.is_zero()) {
-                    try zts.print(t.tree, "balance", .{
-                        .units = balance.withPrecision(2),
-                        .cur = "",
-                    }, self.out);
+            if (self.project.findCurrency(currency)) |cur_idx| {
+                if (inv.by_currency.get(cur_idx)) |balance| {
+                    if (!balance.is_zero()) {
+                        try zts.print(t.tree, "balance", .{
+                            .units = balance.withPrecision(2),
+                            .cur = "",
+                        }, self.out);
+                    }
                 }
             }
             try zts.write(t.tree, "balances_end", self.out);
@@ -250,16 +252,15 @@ pub const TreeRenderer = struct {
         }, self.out);
         var iter = inv.by_currency.iterator();
         currency: while (iter.next()) |kv| {
+            const cur_text = self.project.currencies.get(@enumFromInt(@intFromEnum(kv.key_ptr.*)));
             for (self.operating_currencies) |cur| {
-                if (std.mem.eql(u8, cur, kv.key_ptr.*)) {
-                    continue :currency;
-                }
+                if (std.mem.eql(u8, cur, cur_text)) continue :currency;
             }
             const units = kv.value_ptr.*;
             if (!units.is_zero()) {
                 try zts.print(t.tree, "balance", .{
                     .units = units.withPrecision(2),
-                    .cur = kv.key_ptr.*,
+                    .cur = cur_text,
                 }, self.out);
             }
         }

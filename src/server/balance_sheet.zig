@@ -33,7 +33,8 @@ pub fn handler(
 const NetWorth = struct {
     alloc: std.mem.Allocator,
     prices: *Prices,
-    operating_currencies: []const []const u8,
+    project: *const Project,
+    conversion_target: ?Data.CurrencyIndex,
     display: DisplaySettings,
     inv: PlainInventory,
     converted_inv: PlainInventory,
@@ -43,7 +44,8 @@ const NetWorth = struct {
     pub fn init(
         alloc: std.mem.Allocator,
         prices: *Prices,
-        operating_currencies: []const []const u8,
+        project: *const Project,
+        conversion_target: ?Data.CurrencyIndex,
         display: DisplaySettings,
         string_store: *StringStore,
         plot_data: *common.PlotData,
@@ -51,7 +53,8 @@ const NetWorth = struct {
         return .{
             .alloc = alloc,
             .prices = prices,
-            .operating_currencies = operating_currencies,
+            .project = project,
+            .conversion_target = conversion_target,
             .display = display,
             .inv = try PlainInventory.init(alloc, null),
             .converted_inv = try PlainInventory.init(alloc, null),
@@ -66,12 +69,11 @@ const NetWorth = struct {
     }
 
     pub fn flush(self: *NetWorth, date: Date) !void {
-        switch (self.display.conversion) {
-            .units => try self.emitPlotPoints(&self.inv, date),
-            .currency => |cur| {
-                try self.prices.convertInventory(&self.inv, cur, &self.converted_inv);
-                try self.emitPlotPoints(&self.converted_inv, date);
-            },
+        if (self.conversion_target) |cur| {
+            try self.prices.convertInventory(&self.inv, cur, &self.converted_inv);
+            try self.emitPlotPoints(&self.converted_inv, date);
+        } else {
+            try self.emitPlotPoints(&self.inv, date);
         }
     }
 
@@ -81,7 +83,7 @@ const NetWorth = struct {
             const balance = kv.value_ptr.*;
             try self.plot_data.points.append(self.alloc, .{
                 .date = try self.string_store.print("{f}", .{date}),
-                .currency = kv.key_ptr.*,
+                .currency = self.project.currencies.get(@enumFromInt(@intFromEnum(kv.key_ptr.*))),
                 .balance = balance.toFloat(),
                 .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
             });
@@ -93,7 +95,7 @@ const NetWorth = struct {
         if (std.mem.startsWith(u8, acc, "Assets") or
             std.mem.startsWith(u8, acc, "Liabilities"))
         {
-            const currency = posting.amountCurrencyText().?;
+            const currency = posting.amountCurrency().unwrap().?;
             const amount = posting.amountNumber().?;
             try self.inv.add(currency, amount);
         }
@@ -101,6 +103,11 @@ const NetWorth = struct {
 };
 
 const DateState = enum { before, within };
+
+fn internAccountInPool(alloc: std.mem.Allocator, pool: *@import("../StringPool.zig"), text: []const u8) !Data.AccountIndex {
+    const raw = try pool.intern(alloc, text);
+    return @enumFromInt(@intFromEnum(raw));
+}
 
 fn render(
     alloc: std.mem.Allocator,
@@ -111,7 +118,7 @@ fn render(
     ctx: void,
 ) !common.PlotData {
     _ = ctx;
-    var tree = try Tree.init(alloc);
+    var tree = try Tree.init(alloc, project.accounts, project.currencies);
     defer tree.deinit();
 
     const operating_currencies = try project.getConfig().getOperatingCurrencies(alloc);
@@ -123,10 +130,21 @@ fn render(
     var plot_data = common.PlotData{ .alloc = alloc };
     errdefer plot_data.deinit();
 
+    const conversion_target: ?Data.CurrencyIndex = switch (display.conversion) {
+        .units => null,
+        .currency => |text| project.findCurrency(text),
+    };
+    // `Equity:Earnings:Previous` / `Equity:Earnings:Current` are system
+    // accounts used by the earnings clearing step; intern so we have stable
+    // indices regardless of whether the file declared them.
+    const earnings_prev_idx: Data.AccountIndex = try internAccountInPool(alloc, project.accounts, "Equity:Earnings:Previous");
+    const earnings_curr_idx: Data.AccountIndex = try internAccountInPool(alloc, project.accounts, "Equity:Earnings:Current");
+
     var net_worth = try NetWorth.init(
         alloc,
         &prices,
-        operating_currencies,
+        project,
+        conversion_target,
         display,
         string_store,
         &plot_data,
@@ -148,7 +166,7 @@ fn render(
                 .before => {
                     if (display.hasStartDate()) {
                         if (display.isAfterStart(entry.date())) {
-                            try tree.clearEarnings("Equity:Earnings:Previous");
+                            try tree.clearEarnings(earnings_prev_idx);
                             continue :state .within;
                         }
                     } else {
@@ -165,7 +183,7 @@ fn render(
 
             switch (entry.payload()) {
                 .open => |open| {
-                    _ = try tree.open(open.accountText(), null, open.open.booking_method);
+                    _ = try tree.open(open.account(), null, open.open.booking_method);
                 },
                 .transaction => |tx| {
                     if (tx.tx.dirty) continue;
@@ -190,14 +208,14 @@ fn render(
                     }
                 },
                 .price => |price| {
-                    try prices.setPrice(price);
+                    try prices.setPriceFromDecl(price);
                 },
                 else => {},
             }
         },
     };
 
-    try tree.clearEarnings("Equity:Earnings:Current");
+    try tree.clearEarnings(earnings_curr_idx);
 
     try common.renderPlotArea(operating_currencies, out);
 
@@ -206,8 +224,9 @@ fn render(
         .alloc = alloc,
         .out = out,
         .tree = &tree,
+        .project = project,
         .operating_currencies = operating_currencies,
-        .conversion = display.conversion,
+        .conversion_target = conversion_target,
         .prices = &prices,
     };
 

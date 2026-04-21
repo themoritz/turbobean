@@ -10,11 +10,23 @@ const Inventory = @import("inventory.zig").Inventory;
 const InvSummary = @import("inventory.zig").Summary;
 const Date = @import("date.zig").Date;
 const Number = @import("number.zig").Number;
+const StringPool = @import("StringPool.zig");
+const AccountIndex = Data.AccountIndex;
+const CurrencyIndex = Data.CurrencyIndex;
 const ztracy = @import("ztracy");
 
 const Self = @This();
 
 alloc: Allocator,
+/// Project-wide intern pools, shared by every `Data` and by `Tree`.
+/// Interned account/currency indices are therefore comparable across files.
+///
+/// Heap-allocated so their addresses stay stable — `Data` caches pool
+/// pointers at construction time, and `Project` itself gets moved (returned
+/// by value from `load`, appended into `ArrayList(Project)` in the LSP) in
+/// ways that would invalidate pointers to inline fields.
+accounts: *StringPool,
+currencies: *StringPool,
 files: std.ArrayList(Data),
 uris: std.ArrayList(Uri),
 /// Keys are URI values, values are index into files and uris.
@@ -23,8 +35,10 @@ sorted_entries: std.ArrayList(SortedEntry),
 
 errors: std.ArrayList(ErrorDetails),
 
-// LSP specific caches
-accounts: std.StringHashMap(FileLine),
+/// Dense lookup `AccountIndex → FileLine` for opened accounts. Null for
+/// indices that were interned (e.g., via posting text) but not explicitly
+/// opened.
+account_open_pos: std.ArrayList(?FileLine),
 tags: std.StringHashMap(void),
 links: std.StringHashMap(void),
 
@@ -46,8 +60,20 @@ pub fn load(alloc: Allocator, uri: Uri, source: ?[:0]const u8) !Self {
     const tracy_zone = ztracy.ZoneNC(@src(), "Load project", 0x00_00_ff_00);
     defer tracy_zone.End();
 
+    const accounts = try alloc.create(StringPool);
+    errdefer alloc.destroy(accounts);
+    accounts.* = try StringPool.init(alloc);
+    errdefer accounts.deinit(alloc);
+
+    const currencies = try alloc.create(StringPool);
+    errdefer alloc.destroy(currencies);
+    currencies.* = try StringPool.init(alloc);
+    errdefer currencies.deinit(alloc);
+
     var self = Self{
         .alloc = alloc,
+        .accounts = accounts,
+        .currencies = currencies,
         .files = .{},
         .uris = .{},
         .files_by_uri = std.StringHashMap(usize).init(alloc),
@@ -55,7 +81,7 @@ pub fn load(alloc: Allocator, uri: Uri, source: ?[:0]const u8) !Self {
 
         .errors = .{},
 
-        .accounts = std.StringHashMap(FileLine).init(alloc),
+        .account_open_pos = .{},
         .tags = std.StringHashMap(void).init(alloc),
         .links = std.StringHashMap(void).init(alloc),
     };
@@ -79,9 +105,22 @@ pub fn deinit(self: *Self) void {
 
     self.errors.deinit(self.alloc);
 
-    self.accounts.deinit();
+    self.account_open_pos.deinit(self.alloc);
     self.tags.deinit();
     self.links.deinit();
+
+    self.accounts.deinit(self.alloc);
+    self.currencies.deinit(self.alloc);
+    self.alloc.destroy(self.accounts);
+    self.alloc.destroy(self.currencies);
+}
+
+fn ensureAccountSlot(self: *Self, idx: AccountIndex) !*?FileLine {
+    const i = @intFromEnum(idx);
+    while (self.account_open_pos.items.len <= i) {
+        try self.account_open_pos.append(self.alloc, null);
+    }
+    return &self.account_open_pos.items[i];
 }
 
 /// Is the provided file_uri included in this project?
@@ -101,7 +140,6 @@ fn loadFileRec(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !voi
     for (imports) |import| {
         var import_uri = try uri.move_relative(self.alloc, import.path);
         defer import_uri.deinit(self.alloc);
-        // Check if the file exists before recursing
         std.fs.accessAbsolute(import_uri.absolute(), .{}) catch {
             const data = &self.files.items[file_id];
             try data.errors.append(self.alloc, .{
@@ -123,7 +161,14 @@ fn loadSingleFile(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !
 
     const null_terminated = source orelse try uri_owned.load_nullterminated(self.alloc);
 
-    var data, const imports = try Data.loadSource(self.alloc, uri_owned, null_terminated, is_root);
+    var data, const imports = try Data.loadSource(
+        self.alloc,
+        self.accounts,
+        self.currencies,
+        uri_owned,
+        null_terminated,
+        is_root,
+    );
     errdefer data.deinit();
     errdefer self.alloc.free(imports);
 
@@ -139,6 +184,24 @@ fn loadSingleFile(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !
 
 pub fn getConfig(self: *const Self) *Data.Config {
     return &self.files.items[0].config;
+}
+
+/// Look up a currency text in the shared pool without adding it. Handy for
+/// translating URL params and other user-supplied strings.
+pub fn findCurrency(self: *const Self, text: []const u8) ?CurrencyIndex {
+    const raw = self.currencies.find(text) orelse return null;
+    return @enumFromInt(@intFromEnum(raw));
+}
+
+pub fn findAccount(self: *const Self, text: []const u8) ?AccountIndex {
+    const raw = self.accounts.find(text) orelse return null;
+    return @enumFromInt(@intFromEnum(raw));
+}
+
+/// Intern `text` into the project's account pool, adding it if needed.
+pub fn internAccount(self: *Self, text: []const u8) !AccountIndex {
+    const raw = try self.accounts.intern(self.alloc, text);
+    return @enumFromInt(@intFromEnum(raw));
 }
 
 pub fn hasErrors(self: *Self) bool {
@@ -272,19 +335,17 @@ pub fn check(self: *Self) !void {
         file: u8,
     };
 
-    // Padded account -> LastPad
-    var lastPads: std.StringHashMap(LastPad) = std.StringHashMap(LastPad).init(self.alloc);
+    var lastPads: std.AutoHashMap(AccountIndex, LastPad) = .init(self.alloc);
     defer lastPads.deinit();
 
-    // Lot-based account text -> income_account Ast.TokenIndex (in its file).
     const PnlEntry = struct {
         income_token: Ast.TokenIndex,
         file: u8,
     };
-    var pnlAccounts: std.StringHashMap(PnlEntry) = std.StringHashMap(PnlEntry).init(self.alloc);
+    var pnlAccounts: std.AutoHashMap(AccountIndex, PnlEntry) = .init(self.alloc);
     defer pnlAccounts.deinit();
 
-    var tree = try Tree.init(self.alloc);
+    var tree = try Tree.init(self.alloc, self.accounts, self.currencies);
     defer tree.deinit();
 
     for (self.sorted_entries.items) |sorted| {
@@ -292,50 +353,48 @@ pub fn check(self: *Self) !void {
         const entry = data.entryAt(sorted.entry);
         switch (entry.payload()) {
             .open => |open| {
-                const acc = open.accountText();
-                // Collect currencies via iterator.
-                var cur_list = std.ArrayList([]const u8){};
+                const acc_idx = data.accountOf(open.open.account);
+                var cur_list = std.ArrayList(CurrencyIndex){};
                 defer cur_list.deinit(self.alloc);
                 var cit = open.currencies();
-                while (cit.next()) |c| try cur_list.append(self.alloc, data.currencyText(c));
-                const cur_slice: ?[]const []const u8 = if (cur_list.items.len == 0) null else cur_list.items;
-                if (try tree.open(acc, cur_slice, open.open.booking_method) == null) {
+                while (cit.next()) |c| try cur_list.append(self.alloc, c);
+                const cur_slice: ?[]const CurrencyIndex = if (cur_list.items.len == 0) null else cur_list.items;
+                if (try tree.open(acc_idx, cur_slice, open.open.booking_method) == null) {
                     try self.addError(open.open.account, sorted.file, ErrorDetails.Tag.account_already_open);
                 }
             },
             .close => |close| {
-                const acc = data.tokenSlice(close.account);
-                tree.close(acc) catch |err| switch (err) {
+                const acc_idx = data.accountOf(close.account);
+                tree.close(acc_idx) catch |err| switch (err) {
                     error.AccountNotOpen => try self.addError(close.account, sorted.file, ErrorDetails.Tag.account_not_open),
                     else => return err,
                 };
             },
             .pad => |pad| {
-                const acc_text = data.tokenSlice(pad.account);
-                const pad_to_text = data.tokenSlice(pad.pad_to);
-                if (!tree.accountOpen(acc_text)) {
+                const acc_idx = data.accountOf(pad.account);
+                const pad_to_idx = data.accountOf(pad.pad_to);
+                if (!tree.accountOpen(acc_idx)) {
                     try self.addError(pad.account, sorted.file, ErrorDetails.Tag.account_not_open);
                     continue;
                 }
-                if (!tree.accountOpen(pad_to_text)) {
+                if (!tree.accountOpen(pad_to_idx)) {
                     try self.addError(pad.pad_to, sorted.file, ErrorDetails.Tag.account_not_open);
                     continue;
                 }
-                if (!(tree.isPlainAccount(pad_to_text) catch unreachable)) {
+                if (!(tree.isPlainAccount(pad_to_idx) catch unreachable)) {
                     try self.addError(pad.pad_to, sorted.file, ErrorDetails.Tag.pad_accounts_must_be_plain);
                     continue;
                 }
-                if (!(tree.isPlainAccount(acc_text) catch unreachable)) {
+                if (!(tree.isPlainAccount(acc_idx) catch unreachable)) {
                     try self.addError(pad.account, sorted.file, ErrorDetails.Tag.pad_accounts_must_be_plain);
                     continue;
                 }
 
-                if (lastPads.get(acc_text)) |_| {
+                if (lastPads.get(acc_idx)) |_| {
                     try self.addError(entry.mainToken(), sorted.file, .multiple_pads);
                 } else {
-                    // Grab a stable pointer to the payload's Pad to mutate later.
                     const pad_ptr: *Data.Pad = &data.entries.items(.payload)[sorted.entry].pad;
-                    try lastPads.put(acc_text, .{
+                    try lastPads.put(acc_idx, .{
                         .date = entry.date(),
                         .pad_account_token = pad.account,
                         .pad_to_token = pad.pad_to,
@@ -345,12 +404,12 @@ pub fn check(self: *Self) !void {
                 }
             },
             .balance => |balance| {
-                const acc_text = balance.accountText();
-                const cur_text = balance.amountCurrencyText() orelse {
+                const acc_idx = balance.account;
+                const cur_idx = balance.amount_currency.unwrap() orelse {
                     try self.addError(balance.account_token, sorted.file, ErrorDetails.Tag.account_does_not_hold_currency);
                     continue;
                 };
-                const accumulated = tree.balanceAggregatedByAccount(acc_text, cur_text) catch |err| switch (err) {
+                const accumulated = tree.balanceAggregatedByAccount(acc_idx, cur_idx) catch |err| switch (err) {
                     error.AccountNotOpen => {
                         try self.addError(balance.account_token, sorted.file, ErrorDetails.Tag.account_not_open);
                         continue;
@@ -363,48 +422,41 @@ pub fn check(self: *Self) !void {
                 };
 
                 const expected = balance.amount;
-                if (lastPads.get(acc_text)) |last_pad| {
+                if (lastPads.get(acc_idx)) |last_pad| {
                     const missing = expected.add(accumulated.negate());
-
-                    // Intern currency in both files (source file of the balance
-                    // and source file of the pad). For the first synthetic
-                    // posting, account is from the balance's file.
-                    const cur_idx_balance = try data.internCurrencyOpt(cur_text);
 
                     const pad_posting = Data.Posting{
                         .account = balance.account_token,
                         .flag = .none,
                         .amount_number = Data.PackedNumber.pack(missing),
-                        .amount_currency = cur_idx_balance,
+                        .amount_currency = cur_idx.toOptional(),
                         .price = .none,
                         .lot_spec = .none,
                         .meta = Data.Range.empty,
                         .ast_node = .none,
                     };
                     const pad_idx = try data.appendPosting(pad_posting);
-                    try tree.addPosition(acc_text, cur_text, missing);
+                    try tree.addPosition(acc_idx, cur_idx, missing);
                     last_pad.pad_ptr.pad_posting = pad_idx.toOptional();
 
-                    // The pad_to posting lives in the pad's source file.
                     const pad_file_data = &self.files.items[last_pad.file];
-                    const pad_to_text = pad_file_data.tokenSlice(last_pad.pad_to_token);
-                    const cur_idx_pad = try pad_file_data.internCurrencyOpt(cur_text);
+                    const pad_to_acc_idx = pad_file_data.accountOf(last_pad.pad_to_token);
 
                     const pad_to_posting = Data.Posting{
                         .account = last_pad.pad_to_token,
                         .flag = .none,
                         .amount_number = Data.PackedNumber.pack(missing.negate()),
-                        .amount_currency = cur_idx_pad,
+                        .amount_currency = cur_idx.toOptional(),
                         .price = .none,
                         .lot_spec = .none,
                         .meta = Data.Range.empty,
                         .ast_node = .none,
                     };
                     const pad_to_idx = try pad_file_data.appendPosting(pad_to_posting);
-                    try tree.addPosition(pad_to_text, cur_text, missing.negate());
+                    try tree.addPosition(pad_to_acc_idx, cur_idx, missing.negate());
                     last_pad.pad_ptr.pad_to_posting = pad_to_idx.toOptional();
 
-                    _ = lastPads.remove(acc_text);
+                    _ = lastPads.remove(acc_idx);
                 } else {
                     const tolerance = if (balance.tolerance) |t| t else expected.getTolerance();
                     if (!expected.is_within_tolerance(accumulated, tolerance)) {
@@ -416,21 +468,21 @@ pub fn check(self: *Self) !void {
                 }
             },
             .pnl => |pnl| {
-                const acc_text = data.tokenSlice(pnl.account);
-                const inc_text = data.tokenSlice(pnl.income_account);
-                if (!tree.accountOpen(acc_text)) {
+                const acc_idx = data.accountOf(pnl.account);
+                const inc_idx = data.accountOf(pnl.income_account);
+                if (!tree.accountOpen(acc_idx)) {
                     try self.addError(pnl.account, sorted.file, .account_not_open);
                     continue;
                 }
-                if (!tree.accountOpen(inc_text)) {
+                if (!tree.accountOpen(inc_idx)) {
                     try self.addError(pnl.income_account, sorted.file, .account_not_open);
                     continue;
                 }
-                if (tree.isPlainAccount(acc_text) catch unreachable) {
+                if (tree.isPlainAccount(acc_idx) catch unreachable) {
                     try self.addError(pnl.account, sorted.file, .pnl_account_must_be_lots);
                     continue;
                 }
-                try pnlAccounts.put(acc_text, .{ .income_token = pnl.income_account, .file = sorted.file });
+                try pnlAccounts.put(acc_idx, .{ .income_token = pnl.income_account, .file = sorted.file });
             },
             .transaction => |_| {
                 const tx_ptr: *Data.Transaction = &data.entries.items(.payload)[sorted.entry].transaction;
@@ -452,7 +504,7 @@ pub fn check(self: *Self) !void {
                         tx_ptr,
                     );
                     if (post_result) |pr| {
-                        if (pnlAccounts.get(posting.accountText())) |pnl_entry| {
+                        if (pnlAccounts.get(posting.account())) |pnl_entry| {
                             if (posting.price()) |price| {
                                 const amount_num = posting.amountNumber().?;
                                 const sale_weight = if (price.total)
@@ -463,27 +515,25 @@ pub fn check(self: *Self) !void {
                                 if (!pnl_amount.is_zero()) {
                                     if (!has_pnl) {
                                         pnl_start = @intCast(data.postings.len);
-                                        // Copy originals so the pnl-suffixed range remains contiguous.
                                         for (postings.start..postings.end) |j| {
                                             const orig = data.postings.get(j);
                                             _ = try data.appendPosting(orig);
                                         }
                                         has_pnl = true;
                                     }
-                                    const cur_idx = try data.internCurrencyOpt(pr.cost_currency);
                                     const pnl_posting = Data.Posting{
                                         .account = pnl_entry.income_token,
                                         .flag = .none,
                                         .amount_number = Data.PackedNumber.pack(pnl_amount),
-                                        .amount_currency = cur_idx,
+                                        .amount_currency = pr.cost_currency.toOptional(),
                                         .price = .none,
                                         .lot_spec = .none,
                                         .meta = Data.Range.empty,
                                         .ast_node = .none,
                                     };
                                     _ = try data.appendPosting(pnl_posting);
-                                    const inc_text = data.tokenSlice(pnl_entry.income_token);
-                                    try tree.addPosition(inc_text, pr.cost_currency, pnl_amount);
+                                    const inc_acc_idx = data.accountOf(pnl_entry.income_token);
+                                    try tree.addPosition(inc_acc_idx, pr.cost_currency, pnl_amount);
                                 }
                             }
                         }
@@ -494,14 +544,14 @@ pub fn check(self: *Self) !void {
                 }
             },
             .note => |note| {
-                const acc_text = data.tokenSlice(note.account);
-                if (!tree.accountOpen(acc_text)) {
+                const acc_idx = data.accountOf(note.account);
+                if (!tree.accountOpen(acc_idx)) {
                     try self.addError(note.account, sorted.file, .account_not_open);
                 }
             },
             .document => |document| {
-                const acc_text = data.tokenSlice(document.account);
-                if (!tree.accountOpen(acc_text)) {
+                const acc_idx = data.accountOf(document.account);
+                if (!tree.accountOpen(acc_idx)) {
                     try self.addError(document.account, sorted.file, .account_not_open);
                 }
             },
@@ -577,7 +627,6 @@ pub const AccountIterator = struct {
         while (it.file < it.file_max) {
             const data = &self.files.items[it.file];
 
-            // Entries
             while (it.entry < data.entries.len) {
                 const payload = data.entries.items(.payload)[it.entry];
                 switch (payload) {
@@ -627,14 +676,10 @@ pub const AccountIterator = struct {
                 }
             }
 
-            // Postings
             while (it.posting < data.postings.len) {
                 const acc_tok = data.postings.items(.account)[it.posting];
                 const ast_node = data.postings.items(.ast_node)[it.posting];
                 it.posting += 1;
-                // Synthetic postings (from pad, pnl synthesis) have no AST
-                // node and reuse a directive's token; skip to avoid reporting
-                // the same source position twice.
                 if (ast_node == .none) continue;
                 return .{ .file = it.file, .token = data.token(acc_tok), .kind = .posting };
             }
@@ -700,12 +745,13 @@ pub fn tagLinkIterator(self: *const Self, uri: ?[]const u8) TagLinkIterator {
 }
 
 fn refreshLspCache(self: *Self) !void {
-    self.accounts.clearRetainingCapacity();
+    // Re-size dense account table and clear all entries.
+    try self.account_open_pos.resize(self.alloc, self.accounts.count());
+    @memset(self.account_open_pos.items, null);
     self.tags.clearRetainingCapacity();
     self.links.clearRetainingCapacity();
 
     for (self.files.items, 0..) |*data, f| {
-        // Tags/links across all entries
         const tokens = data.tagslinks.items(.token);
         const kinds = data.tagslinks.items(.kind);
         for (tokens, kinds) |tok, kind| {
@@ -722,11 +768,12 @@ fn refreshLspCache(self: *Self) !void {
                 .open => |o| o,
                 else => unreachable,
             };
-            const acc = open.accountText();
-            try self.accounts.put(acc, .{
+            const acc_idx = open.account();
+            const slot = try self.ensureAccountSlot(acc_idx);
+            slot.* = .{
                 .file = @intCast(f),
                 .line = data.token(entry.mainToken()).start_line,
-            });
+            };
         }
     }
 }
@@ -739,8 +786,10 @@ pub fn accountInventoryUntilLine(
     line: u32,
 ) !?struct { before: InvSummary, after: InvSummary } {
     const file = self.files_by_uri.get(uri) orelse return null;
+    const raw_idx = self.accounts.find(account) orelse return null;
+    const account_idx: AccountIndex = @enumFromInt(@intFromEnum(raw_idx));
 
-    var tree = try Tree.init(self.alloc);
+    var tree = try Tree.init(self.alloc, self.accounts, self.currencies);
     defer tree.deinit();
 
     for (self.sorted_entries.items) |sorted_entry| {
@@ -748,13 +797,13 @@ pub fn accountInventoryUntilLine(
         const entry = data.entryAt(sorted_entry.entry);
         switch (entry.payload()) {
             .open => |open| {
-                if (std.mem.eql(u8, open.accountText(), account)) {
-                    var cur_list = std.ArrayList([]const u8){};
+                if (open.account() == account_idx) {
+                    var cur_list = std.ArrayList(CurrencyIndex){};
                     defer cur_list.deinit(self.alloc);
                     var cit = open.currencies();
-                    while (cit.next()) |c| try cur_list.append(self.alloc, data.currencyText(c));
-                    const cur_slice: ?[]const []const u8 = if (cur_list.items.len == 0) null else cur_list.items;
-                    _ = try tree.open(open.accountText(), cur_slice, open.open.booking_method);
+                    while (cit.next()) |c| try cur_list.append(self.alloc, c);
+                    const cur_slice: ?[]const CurrencyIndex = if (cur_list.items.len == 0) null else cur_list.items;
+                    _ = try tree.open(account_idx, cur_slice, open.open.booking_method);
                 }
             },
             .transaction => |tx| {
@@ -762,13 +811,13 @@ pub fn accountInventoryUntilLine(
                 const postings = tx.tx.postings;
                 for (postings.start..postings.end) |i| {
                     const posting = data.postingAt(@intCast(i));
-                    if (!std.mem.eql(u8, posting.accountText(), account)) continue;
+                    if (posting.account() != account_idx) continue;
                     const acc_line = data.token(posting.accountToken()).start_line;
                     if (acc_line == line and sorted_entry.file == file) {
-                        var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                        var before = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
                         errdefer before.deinit();
                         _ = try tree.postInventory(entry.date(), posting);
-                        var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                        var after = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
                         errdefer after.deinit();
                         return .{ .before = before, .after = after };
                     } else {
@@ -779,13 +828,13 @@ pub fn accountInventoryUntilLine(
             .pad => |pad| {
                 if (pad.pad_posting.unwrap()) |pidx| {
                     const posting = data.postingAt(@intFromEnum(pidx));
-                    if (std.mem.eql(u8, posting.accountText(), account)) {
+                    if (posting.account() == account_idx) {
                         const acc_line = data.token(posting.accountToken()).start_line;
                         if (acc_line == line and sorted_entry.file == file) {
-                            var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                            var before = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
                             errdefer before.deinit();
                             _ = try tree.postInventory(entry.date(), posting);
-                            var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                            var after = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
                             errdefer after.deinit();
                             return .{ .before = before, .after = after };
                         } else {
@@ -794,15 +843,14 @@ pub fn accountInventoryUntilLine(
                     }
                 }
                 if (pad.pad_to_posting.unwrap()) |pidx| {
-                    // pad_to posting lives in the pad's source file (same `data`).
                     const posting = data.postingAt(@intFromEnum(pidx));
-                    if (std.mem.eql(u8, posting.accountText(), account)) {
+                    if (posting.account() == account_idx) {
                         const acc_line = data.token(posting.accountToken()).start_line;
                         if (acc_line == line and sorted_entry.file == file) {
-                            var before = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                            var before = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
                             errdefer before.deinit();
                             _ = try tree.postInventory(entry.date(), posting);
-                            var after = try tree.inventoryAggregatedByAccount(self.alloc, account);
+                            var after = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
                             errdefer after.deinit();
                             return .{ .before = before, .after = after };
                         } else {
@@ -818,9 +866,35 @@ pub fn accountInventoryUntilLine(
 }
 
 pub fn get_account_open_pos(self: *const Self, account: []const u8) ?struct { Uri, u32 } {
-    const entry = self.accounts.get(account) orelse return null;
-    return .{ self.uris.items[entry.file], entry.line };
+    const raw = self.accounts.find(account) orelse return null;
+    const idx: AccountIndex = @enumFromInt(@intFromEnum(raw));
+    const i = @intFromEnum(idx);
+    if (i >= self.account_open_pos.items.len) return null;
+    const pos = self.account_open_pos.items[i] orelse return null;
+    return .{ self.uris.items[pos.file], pos.line };
 }
+
+/// LSP completion: iterate over all known account texts.
+pub fn accountsIterator(self: *const Self) AccountsTextIterator {
+    return .{ .project = self, .i = 0 };
+}
+
+pub const AccountsTextIterator = struct {
+    project: *const Self,
+    i: u32,
+
+    pub fn next(it: *AccountsTextIterator) ?[]const u8 {
+        while (it.i < it.project.account_open_pos.items.len) {
+            const slot = it.project.account_open_pos.items[it.i];
+            const idx = it.i;
+            it.i += 1;
+            if (slot != null) {
+                return it.project.accounts.get(@enumFromInt(idx));
+            }
+        }
+        return null;
+    }
+};
 
 /// Takes ownership of source.
 pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !void {
@@ -830,7 +904,14 @@ pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !vo
     const is_root = index == 0;
 
     const uri = self.uris.items[index];
-    var new_data, const imports = try Data.loadSource(self.alloc, uri, source, is_root);
+    var new_data, const imports = try Data.loadSource(
+        self.alloc,
+        self.accounts,
+        self.currencies,
+        uri,
+        source,
+        is_root,
+    );
     defer self.alloc.free(imports);
     try new_data.balanceTransactions();
 
@@ -841,7 +922,7 @@ pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !vo
 }
 
 pub fn printTree(self: *Self) !void {
-    var tree = try Tree.init(self.alloc);
+    var tree = try Tree.init(self.alloc, self.accounts, self.currencies);
     defer tree.deinit();
 
     for (self.sorted_entries.items) |sorted_entry| {
@@ -849,12 +930,12 @@ pub fn printTree(self: *Self) !void {
         const entry = data.entryAt(sorted_entry.entry);
         switch (entry.payload()) {
             .open => |open| {
-                var cur_list = std.ArrayList([]const u8){};
+                var cur_list = std.ArrayList(CurrencyIndex){};
                 defer cur_list.deinit(self.alloc);
                 var cit = open.currencies();
-                while (cit.next()) |c| try cur_list.append(self.alloc, data.currencyText(c));
-                const cur_slice: ?[]const []const u8 = if (cur_list.items.len == 0) null else cur_list.items;
-                _ = try tree.open(open.accountText(), cur_slice, open.open.booking_method);
+                while (cit.next()) |c| try cur_list.append(self.alloc, c);
+                const cur_slice: ?[]const CurrencyIndex = if (cur_list.items.len == 0) null else cur_list.items;
+                _ = try tree.open(open.account(), cur_slice, open.open.booking_method);
             },
             .transaction => |tx| {
                 if (tx.tx.dirty) continue;

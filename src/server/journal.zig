@@ -12,6 +12,7 @@ const common = @import("common.zig");
 const Prices = @import("../Prices.zig");
 const StringStore = @import("../StringStore.zig");
 const Inventory = @import("../inventory.zig");
+const Data = @import("../data.zig");
 
 pub fn handler(
     alloc: std.mem.Allocator,
@@ -37,17 +38,23 @@ fn render(
     string_store: *StringStore,
     account: []const u8,
 ) !common.PlotData {
-    var tree = try Tree.init(alloc);
+    var tree = try Tree.init(alloc, project.accounts, project.currencies);
     defer tree.deinit();
+
+    var plot_data = common.PlotData{ .alloc = alloc };
+    errdefer plot_data.deinit();
+
+    const account_idx = project.findAccount(account) orelse return plot_data;
+    const conversion_target: ?Data.CurrencyIndex = switch (display.conversion) {
+        .units => null,
+        .currency => |text| project.findCurrency(text),
+    };
 
     const operating_currencies = try project.getConfig().getOperatingCurrencies(alloc);
     defer alloc.free(operating_currencies);
 
     var prices = Prices.init(alloc);
     defer prices.deinit();
-
-    var plot_data = common.PlotData{ .alloc = alloc };
-    errdefer plot_data.deinit();
 
     try common.renderPlotArea(operating_currencies, out);
     try zts.write(tpl, "table", out);
@@ -63,14 +70,10 @@ fn render(
         const entry = data.entryAt(sorted_entry.entry);
         switch (entry.payload()) {
             .open => |open| {
-                const acc = open.accountText();
-                if (std.mem.eql(u8, acc, account)) {
-                    // We have to open the account even if it's outside the date filter.
-                    _ = try tree.open(acc, null, open.open.booking_method);
+                if (open.account() == account_idx) {
+                    _ = try tree.open(account_idx, null, open.open.booking_method);
                     if (display.isWithinDateRange(entry.date())) {
-                        try zts.print(tpl, "open", .{
-                            .date = entry.date(),
-                        }, out);
+                        try zts.print(tpl, "open", .{ .date = entry.date() }, out);
                     }
                 }
             },
@@ -80,7 +83,7 @@ fn render(
                 const postings = tx.tx.postings;
                 for (postings.start..postings.end) |i| {
                     const p = data.postingAt(@intCast(i));
-                    if (!std.mem.eql(u8, p.accountText(), account)) continue;
+                    if (p.account() != account_idx) continue;
 
                     const hash = entry.hash() + i;
                     const flag_slice = data.tokenSlice(tx.tx.flag);
@@ -104,35 +107,34 @@ fn render(
                         .narration = n[1 .. n.len - 1],
                     }, out);
 
-                    try zts.print(tpl, "transaction_legs", .{
-                        .hash = hash,
-                    }, out);
+                    try zts.print(tpl, "transaction_legs", .{ .hash = hash }, out);
 
                     for (postings.start..postings.end) |_| {
                         try zts.write(tpl, "transaction_leg", out);
                     }
 
-                    const conv_units, const conv_cur = tryConvert(
+                    const p_cur = p.amountCurrency().unwrap().?;
+                    const conv_units, const conv_cur_idx = tryConvert(
                         &prices,
-                        display.conversion,
+                        conversion_target,
                         p.amountNumber().?,
-                        p.amountCurrencyText().?,
+                        p_cur,
                     );
                     try zts.print(tpl, "transaction_legs_end", .{
                         .change_units = conv_units.withPrecision(2),
-                        .change_cur = conv_cur,
+                        .change_cur = project.currencies.get(@enumFromInt(@intFromEnum(conv_cur_idx))),
                     }, out);
 
-                    if (try tree.isDescendant(account, p.accountText())) {
-                        try plain_inv.add(p.amountCurrencyText().?, p.amountNumber().?);
+                    if (try tree.isDescendant(account_idx, p.account())) {
+                        try plain_inv.add(p_cur, p.amountNumber().?);
                     }
 
-                    var conv_inv = blk: switch (display.conversion) {
-                        .units => break :blk &plain_inv,
-                        .currency => |to| {
+                    var conv_inv = blk: {
+                        if (conversion_target) |to| {
                             try prices.convertInventory(&plain_inv, to, &converted_inv);
                             break :blk &converted_inv;
-                        },
+                        }
+                        break :blk &plain_inv;
                     };
 
                     var inv_iter = conv_inv.by_currency.iterator();
@@ -141,14 +143,12 @@ fn render(
                         if (!units.is_zero()) {
                             try zts.print(tpl, "transaction_balance_cur", .{
                                 .units = units.withPrecision(2),
-                                .cur = kv.key_ptr.*,
+                                .cur = project.currencies.get(@enumFromInt(@intFromEnum(kv.key_ptr.*))),
                             }, out);
                         }
                     }
 
-                    try zts.print(tpl, "transaction_balance_end", .{
-                        .hash = hash,
-                    }, out);
+                    try zts.print(tpl, "transaction_balance_end", .{ .hash = hash }, out);
 
                     for (postings.start..postings.end) |j| {
                         const p2 = data.postingAt(@intCast(j));
@@ -163,33 +163,34 @@ fn render(
                         try zts.write(t.tree, "icon_leaf", out);
 
                         {
-                            const units, const cur = tryConvert(
+                            const p2_cur = p2.amountCurrency().unwrap().?;
+                            const units, const cur_idx = tryConvert(
                                 &prices,
-                                display.conversion,
+                                conversion_target,
                                 p2.amountNumber().?,
-                                p2.amountCurrencyText().?,
+                                p2_cur,
                             );
                             try zts.print(tpl, "tree_end", .{
                                 .account = p2.accountText(),
                                 .change_units = units.withPrecision(2),
-                                .change_cur = cur,
+                                .change_cur = project.currencies.get(@enumFromInt(@intFromEnum(cur_idx))),
                             }, out);
                         }
                     }
 
                     try zts.write(tpl, "transaction_end", out);
 
-                    const balance = conv_inv.by_currency.get(conv_cur).?;
+                    const balance = conv_inv.by_currency.get(conv_cur_idx).?;
                     try plot_data.points.append(alloc, .{
                         .date = try string_store.print("{f}", .{entry.date()}),
-                        .currency = conv_cur,
+                        .currency = project.currencies.get(@enumFromInt(@intFromEnum(conv_cur_idx))),
                         .balance = balance.toFloat(),
                         .balance_rendered = try string_store.print("{f}", .{balance.withPrecision(2)}),
                     });
                 }
             },
             .price => |price| {
-                try prices.setPrice(price);
+                try prices.setPriceFromDecl(price);
             },
             else => {},
         }
@@ -202,15 +203,11 @@ fn render(
 
 fn tryConvert(
     prices: *const Prices,
-    conversion: DisplaySettings.Conversion,
+    to_opt: ?Data.CurrencyIndex,
     amount: Number,
-    from: []const u8,
-) struct { Number, []const u8 } {
-    return switch (conversion) {
-        .units => .{ amount, from },
-        .currency => |to| if (prices.convert(amount, from, to)) |result|
-            .{ result, to }
-        else
-            .{ amount, from },
-    };
+    from: Data.CurrencyIndex,
+) struct { Number, Data.CurrencyIndex } {
+    const to = to_opt orelse return .{ amount, from };
+    if (prices.convert(amount, from, to)) |result| return .{ result, to };
+    return .{ amount, from };
 }

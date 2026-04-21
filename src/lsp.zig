@@ -342,11 +342,11 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         const writer = &value.writer;
                         {
                             try writer.writeAll("Before:\n");
-                            try inv.before.hoverDisplay(writer);
+                            try inv.before.hoverDisplay(project.currencies, writer);
                         }
                         {
                             try writer.writeAll("\nAfter:\n");
-                            try inv.after.hoverDisplay(writer);
+                            try inv.after.hoverDisplay(project.currencies, writer);
                         }
 
                         const result = lsp.types.Hover{
@@ -434,8 +434,8 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                 completion.countOccurrences(before, "\"") -
                                 completion.countOccurrences(before, "\\\"");
                             if (numQuotes % 2 == 0) {
-                                var iter = project.accounts.keyIterator();
-                                while (iter.next()) |k| try completions.append(arena_alloc, .{ k.*, .EnumMember });
+                                var iter = project.accountsIterator();
+                                while (iter.next()) |k| try completions.append(arena_alloc, .{ k, .EnumMember });
                                 const word_start, const word_end = completion.getWordAround(line, params.position.character) orelse break :blk;
                                 start = word_start;
                                 end = word_end;
@@ -754,7 +754,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                     &hints,
                                     &file_data.ast,
                                     file_data.ast.node(pa.amount),
-                                    .{ .number = price.amount, .currency = price.amount_currency },
+                                    .{ .number = price.amount, .currency = price.amountCurrencyText() },
                                     at_token.end_line,
                                     at_token.end_col,
                                     null,

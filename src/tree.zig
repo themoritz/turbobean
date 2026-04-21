@@ -7,11 +7,20 @@ const Summary = @import("inventory.zig").Summary;
 const Number = @import("number.zig").Number;
 const Data = @import("data.zig");
 const Date = @import("date.zig").Date;
+const StringPool = @import("StringPool.zig");
+const AccountIndex = Data.AccountIndex;
+const CurrencyIndex = Data.CurrencyIndex;
 const Self = @This();
 const Stack = @import("StackStack.zig").Stack(usize, 64);
 
 alloc: Allocator,
-node_by_name: std.StringHashMap(u32),
+/// Borrowed project intern pools — used for account/currency lookups and
+/// when rendering text.
+accounts_pool: *StringPool,
+currencies_pool: *StringPool,
+/// Dense lookup: `AccountIndex` → node index. Entries are `null` when the
+/// account hasn't been opened in this tree (or isn't a leaf directly).
+node_by_account: std.ArrayList(?u32),
 nodes: std.ArrayList(Node),
 
 pub const Node = struct {
@@ -35,7 +44,7 @@ pub const Node = struct {
     }
 };
 
-pub fn init(alloc: Allocator) !Self {
+pub fn init(alloc: Allocator, accounts_pool: *StringPool, currencies_pool: *StringPool) !Self {
     var nodes = std.ArrayList(Node){};
     try nodes.append(alloc, Node.init(
         "",
@@ -44,32 +53,46 @@ pub fn init(alloc: Allocator) !Self {
     ));
     return Self{
         .alloc = alloc,
-        .node_by_name = std.StringHashMap(u32).init(alloc),
+        .accounts_pool = accounts_pool,
+        .currencies_pool = currencies_pool,
+        .node_by_account = .{},
         .nodes = nodes,
     };
 }
 
 pub fn deinit(self: *Self) void {
-    self.node_by_name.deinit();
+    self.node_by_account.deinit(self.alloc);
     for (self.nodes.items) |*node| {
         node.deinit(self.alloc);
     }
     self.nodes.deinit(self.alloc);
 }
 
+fn ensureAccountSlot(self: *Self, idx: AccountIndex) !*?u32 {
+    const i = @intFromEnum(idx);
+    while (self.node_by_account.items.len <= i) {
+        try self.node_by_account.append(self.alloc, null);
+    }
+    return &self.node_by_account.items[i];
+}
+
+fn accountText(self: *const Self, idx: AccountIndex) []const u8 {
+    return self.accounts_pool.get(@enumFromInt(@intFromEnum(idx)));
+}
+
 /// Returns null if the account is already open.
 pub fn open(
     self: *Self,
-    name: []const u8,
-    currencies: ?[]const []const u8,
+    account: AccountIndex,
+    currencies: ?[]const CurrencyIndex,
     booking_method: ?BookingMethod,
 ) !?u32 {
-    if (self.node_by_name.contains(name)) {
-        return null;
-    }
+    const slot = try self.ensureAccountSlot(account);
+    if (slot.* != null) return null;
+
+    const name = self.accountText(account);
 
     var current_index: u32 = 0; // Start from root
-
     var iter = std.mem.splitScalar(u8, name, ':');
     parts: while (iter.next()) |part| {
         for (self.nodes.items[current_index].children.items) |child| {
@@ -90,31 +113,41 @@ pub fn open(
         current_index = new_index;
     }
 
-    try self.node_by_name.put(name, current_index);
-
+    slot.* = current_index;
     return current_index;
 }
 
-pub fn close(self: *Self, name: []const u8) !void {
-    const removed = self.node_by_name.remove(name);
-    if (!removed) return error.AccountNotOpen;
+pub fn close(self: *Self, account: AccountIndex) !void {
+    const i = @intFromEnum(account);
+    if (i >= self.node_by_account.items.len or self.node_by_account.items[i] == null) {
+        return error.AccountNotOpen;
+    }
+    self.node_by_account.items[i] = null;
 }
 
-pub fn accountOpen(self: *Self, name: []const u8) bool {
-    return self.node_by_name.contains(name);
+pub fn accountOpen(self: *const Self, account: AccountIndex) bool {
+    const i = @intFromEnum(account);
+    if (i >= self.node_by_account.items.len) return false;
+    return self.node_by_account.items[i] != null;
 }
 
-pub fn isPlainAccount(self: *Self, account: []const u8) !bool {
-    const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
-    return switch (self.nodes.items[index].inventory) {
+pub fn nodeOf(self: *const Self, account: AccountIndex) ?u32 {
+    const i = @intFromEnum(account);
+    if (i >= self.node_by_account.items.len) return null;
+    return self.node_by_account.items[i];
+}
+
+pub fn isPlainAccount(self: *const Self, account: AccountIndex) !bool {
+    const node = self.nodeOf(account) orelse return error.AccountNotOpen;
+    return switch (self.nodes.items[node].inventory) {
         .lots => false,
         .plain => true,
     };
 }
 
-pub fn isDescendant(self: *const Self, parent: []const u8, child: []const u8) !bool {
-    const parent_index = self.node_by_name.get(parent) orelse return error.AccountNotOpen;
-    const child_index = self.node_by_name.get(child) orelse return error.AccountNotOpen;
+pub fn isDescendant(self: *const Self, parent: AccountIndex, child: AccountIndex) !bool {
+    const parent_index = self.nodeOf(parent) orelse return error.AccountNotOpen;
+    const child_index = self.nodeOf(child) orelse return error.AccountNotOpen;
 
     if (parent_index == child_index) return true;
 
@@ -127,42 +160,42 @@ pub fn isDescendant(self: *const Self, parent: []const u8, child: []const u8) !b
     return false;
 }
 
-pub fn addPosition(self: *Self, account: []const u8, currency: []const u8, number: Number) !void {
-    const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
-    try self.nodes.items[index].inventory.add(currency, number);
+pub fn addPosition(self: *Self, account: AccountIndex, currency: CurrencyIndex, number: Number) !void {
+    const node = self.nodeOf(account) orelse return error.AccountNotOpen;
+    try self.nodes.items[node].inventory.add(currency, number);
 }
 
 pub fn bookPosition(
     self: *Self,
-    account: []const u8,
-    currency: []const u8,
+    account: AccountIndex,
+    currency: CurrencyIndex,
     lot: Lot,
     lot_spec: ?Data.LotSpecView,
 ) !?Number {
-    const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
-    return try self.nodes.items[index].inventory.book(currency, lot, lot_spec);
+    const node = self.nodeOf(account) orelse return error.AccountNotOpen;
+    return try self.nodes.items[node].inventory.book(currency, lot, lot_spec);
 }
 
 pub const PostResult = struct {
     cost_weight: Number,
-    cost_currency: []const u8,
+    cost_currency: CurrencyIndex,
 };
 
 pub fn postInventory(self: *Self, date: Date, posting: Data.PostingView) !?PostResult {
-    const account_text = posting.accountText();
+    const account_idx = posting.account();
+    const amount_currency_idx = posting.amountCurrency().unwrap().?;
     const amount_number = posting.amountNumber().?;
-    const amount_currency = posting.amountCurrencyText().?;
 
     if (posting.price()) |price| {
-        const cost_currency = price.amount_currency.?;
+        const cost_currency_idx = price.amount_currency.unwrap().?;
         const cost_weight = try self.bookPosition(
-            account_text,
-            amount_currency,
+            account_idx,
+            amount_currency_idx,
             .{
                 .units = amount_number,
                 .cost = .{
                     .price = price.amount.?,
-                    .currency = cost_currency,
+                    .currency = cost_currency_idx,
                     .date = date,
                     .label = null,
                 },
@@ -171,21 +204,28 @@ pub fn postInventory(self: *Self, date: Date, posting: Data.PostingView) !?PostR
         ) orelse return null;
         return PostResult{
             .cost_weight = cost_weight,
-            .cost_currency = cost_currency,
+            .cost_currency = cost_currency_idx,
         };
     } else {
-        try self.addPosition(account_text, amount_currency, amount_number);
+        try self.addPosition(account_idx, amount_currency_idx, amount_number);
         return null;
     }
 }
 
-pub fn clearEarnings(self: *Self, to_account: []const u8) !void {
-    const to_index = self.node_by_name.get(to_account) orelse (try self.open(to_account, null, null)).?;
+pub fn clearEarnings(self: *Self, to_account: AccountIndex) !void {
+    const to_index = self.nodeOf(to_account) orelse (try self.open(to_account, null, null)).?;
 
-    var iter = self.node_by_name.iterator();
-    while (iter.next()) |kv| {
-        const from_index = kv.value_ptr.*;
-        const relevant = std.mem.startsWith(u8, kv.key_ptr.*, "Income") or std.mem.startsWith(u8, kv.key_ptr.*, "Expenses");
+    for (self.node_by_account.items) |maybe| {
+        const from_index = maybe orelse continue;
+        const relevant = blk: {
+            var cur = from_index;
+            while (self.nodes.items[cur].parent) |p| {
+                if (p == 0) break;
+                cur = p;
+            }
+            const root_name = self.nodes.items[cur].name;
+            break :blk std.mem.eql(u8, root_name, "Income") or std.mem.eql(u8, root_name, "Expenses");
+        };
 
         if (from_index != to_index and relevant) {
             const from_inv = &self.nodes.items[from_index].inventory;
@@ -205,32 +245,29 @@ pub fn clearEarnings(self: *Self, to_account: []const u8) !void {
 }
 
 /// Caller doesn't own returned inventory.
-pub fn inventory(self: *Self, account: []const u8) !*Inventory {
-    const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
-    return &self.nodes.items[index].inventory;
+pub fn inventory(self: *Self, account: AccountIndex) !*Inventory {
+    const node = self.nodeOf(account) orelse return error.AccountNotOpen;
+    return &self.nodes.items[node].inventory;
 }
 
-pub fn findNode(self: *const Self, account: []const u8) ?u32 {
-    var result: ?u32 = null;
+/// Find a node by *exact* display name. Linear scan, for render paths only.
+pub fn findNodeByName(self: *const Self, name: []const u8) ?u32 {
     for (self.nodes.items, 0..) |node, index| {
-        if (std.mem.eql(u8, node.name, account)) {
-            result = @intCast(index);
-            break;
-        }
+        if (std.mem.eql(u8, node.name, name)) return @intCast(index);
     }
-    return result;
+    return null;
 }
 
 pub fn balanceAggregatedByAccount(
     self: *const Self,
-    account: []const u8,
-    currency: []const u8,
+    account: AccountIndex,
+    currency: CurrencyIndex,
 ) !Number {
-    const node = self.node_by_name.get(account) orelse return error.AccountNotOpen;
+    const node = self.nodeOf(account) orelse return error.AccountNotOpen;
     return self.balanceAggregatedByNode(node, currency);
 }
 
-pub fn balanceAggregatedByNode(self: *const Self, node: u32, currency: []const u8) !Number {
+pub fn balanceAggregatedByNode(self: *const Self, node: u32, currency: CurrencyIndex) !Number {
     var result = Number.zero();
     var stack: Stack = .{};
     var catch_error = false;
@@ -253,16 +290,14 @@ pub fn balanceAggregatedByNode(self: *const Self, node: u32, currency: []const u
             try stack.push(child);
         }
 
-        // For descendants we catch the DoesNotHoldCurrency error because they
-        // are not the account being queried.
         catch_error = true;
     }
     return result;
 }
 
 /// Caller owns returned inventory.
-pub fn inventoryAggregatedByAccount(self: *const Self, alloc: Allocator, account: []const u8) !Summary {
-    const node = self.node_by_name.get(account) orelse self.findNode(account) orelse return error.AccountDoesNotExist;
+pub fn inventoryAggregatedByAccount(self: *const Self, alloc: Allocator, account: AccountIndex) !Summary {
+    const node = self.nodeOf(account) orelse return error.AccountNotOpen;
     return self.inventoryAggregatedByNode(alloc, node);
 }
 
@@ -322,7 +357,6 @@ fn renderRec(
 ) !void {
     const node = self.nodes.items[node_index];
 
-    // Draw the prefix (tree structure) based on ancestors
     var prefix_width: u32 = 0;
     for (prefix.items) |last| {
         if (last) {
@@ -333,7 +367,6 @@ fn renderRec(
         prefix_width += 2;
     }
 
-    // Draw the branch connector for current node (if not at root level)
     if (depth > 0) {
         if (is_last) {
             try buf.appendSlice("└ ");
@@ -354,13 +387,11 @@ fn renderRec(
         } else {
             try buf.append(' ');
         }
-        try summary.treeDisplay(max_width + 3, buf.writer().any());
+        try summary.treeDisplay(self.currencies_pool, max_width + 3, buf.writer().any());
     }
     try buf.append('\n');
 
-    // Render children with updated prefix
     if (node.children.items.len > 0) {
-        // Add current node's continuation state to prefix for children (if not root level)
         if (depth > 0) {
             try prefix.append(is_last);
         }
@@ -370,7 +401,6 @@ fn renderRec(
             try self.renderRec(buf, child, max_width, depth + 1, prefix, child_is_last);
         }
 
-        // Remove the continuation state we added
         if (depth > 0) {
             _ = prefix.pop();
         }
@@ -383,7 +413,6 @@ fn maxWidth(self: *Self) !u32 {
 
 fn maxWidthRec(self: *Self, node_index: u32, depth: u32) !u32 {
     const name_width: u32 = try unicodeLen(self.nodes.items[node_index].name);
-    // Each level adds 2 characters for tree drawing
     var width: u32 = depth * 2 + name_width;
     for (self.nodes.items[node_index].children.items) |child| {
         width = @max(width, try self.maxWidthRec(child, depth + 1));
@@ -395,16 +424,59 @@ fn unicodeLen(name: []const u8) !u32 {
     return @intCast(try std.unicode.utf8CountCodepoints(name));
 }
 
-test "tree" {
-    var tree = try Self.init(std.testing.allocator);
-    defer tree.deinit();
-    _ = try tree.open("Assets:Currency:Chase", null, null);
-    _ = try tree.open("Assets:Currency:BoA", null, null);
-    _ = try tree.open("Income:Dividends", null, null);
-    _ = try tree.open("Assets:Stocks", null, null);
+// --- tests ------------------------------------------------------------------
 
-    const rendered = try tree.render();
-    defer std.testing.allocator.free(rendered);
+const TestFixture = struct {
+    accounts: StringPool,
+    currencies: StringPool,
+    tree: Self,
+
+    fn init(alloc: Allocator) !TestFixture {
+        var accounts = try StringPool.init(alloc);
+        errdefer accounts.deinit(alloc);
+        var currencies = try StringPool.init(alloc);
+        errdefer currencies.deinit(alloc);
+        return .{
+            .accounts = accounts,
+            .currencies = currencies,
+            .tree = undefined,
+        };
+    }
+
+    fn setupTree(self: *TestFixture, alloc: Allocator) !void {
+        self.tree = try Self.init(alloc, &self.accounts, &self.currencies);
+    }
+
+    fn deinit(self: *TestFixture, alloc: Allocator) void {
+        self.tree.deinit();
+        self.accounts.deinit(alloc);
+        self.currencies.deinit(alloc);
+    }
+
+    fn account(self: *TestFixture, alloc: Allocator, name: []const u8) !AccountIndex {
+        const raw = try self.accounts.intern(alloc, name);
+        return @enumFromInt(@intFromEnum(raw));
+    }
+
+    fn currency(self: *TestFixture, alloc: Allocator, name: []const u8) !CurrencyIndex {
+        const raw = try self.currencies.intern(alloc, name);
+        return @enumFromInt(@intFromEnum(raw));
+    }
+};
+
+test "tree" {
+    const alloc = std.testing.allocator;
+    var fx = try TestFixture.init(alloc);
+    defer fx.deinit(alloc);
+    try fx.setupTree(alloc);
+
+    _ = try fx.tree.open(try fx.account(alloc, "Assets:Currency:Chase"), null, null);
+    _ = try fx.tree.open(try fx.account(alloc, "Assets:Currency:BoA"), null, null);
+    _ = try fx.tree.open(try fx.account(alloc, "Income:Dividends"), null, null);
+    _ = try fx.tree.open(try fx.account(alloc, "Assets:Stocks"), null, null);
+
+    const rendered = try fx.tree.render();
+    defer alloc.free(rendered);
 
     const expected =
         \\Assets
@@ -421,32 +493,41 @@ test "tree" {
 }
 
 test "render empty tree" {
-    var tree = try Self.init(std.testing.allocator);
-    defer tree.deinit();
+    const alloc = std.testing.allocator;
+    var fx = try TestFixture.init(alloc);
+    defer fx.deinit(alloc);
+    try fx.setupTree(alloc);
 
-    const rendered = try tree.render();
-    defer std.testing.allocator.free(rendered);
+    const rendered = try fx.tree.render();
+    defer alloc.free(rendered);
 
-    const expected = "";
-
-    try std.testing.expectEqualStrings(expected, rendered);
+    try std.testing.expectEqualStrings("", rendered);
 }
 
 test "aggregated" {
-    var tree = try Self.init(std.testing.allocator);
-    defer tree.deinit();
+    const alloc = std.testing.allocator;
+    var fx = try TestFixture.init(alloc);
+    defer fx.deinit(alloc);
+    try fx.setupTree(alloc);
 
-    _ = try tree.open("Assets:Currency:Chas𝄞", null, null);
-    _ = try tree.open("Assets:Currency:BoA", null, null);
-    _ = try tree.open("Income:Dividends", null, null);
+    const acc_chas = try fx.account(alloc, "Assets:Currency:Chas𝄞");
+    const acc_boa = try fx.account(alloc, "Assets:Currency:BoA");
+    const acc_div = try fx.account(alloc, "Income:Dividends");
 
-    try tree.addPosition("Assets:Currency:Chas𝄞", "USD", Number.fromInt(1));
-    try tree.addPosition("Assets:Currency:BoA", "EUR", Number.fromInt(1));
-    try tree.addPosition("Assets:Currency:BoA", "USD", Number.fromInt(1));
-    try tree.addPosition("Income:Dividends", "USD", Number.fromInt(1));
+    _ = try fx.tree.open(acc_chas, null, null);
+    _ = try fx.tree.open(acc_boa, null, null);
+    _ = try fx.tree.open(acc_div, null, null);
 
-    const rendered = try tree.render();
-    defer std.testing.allocator.free(rendered);
+    const usd = try fx.currency(alloc, "USD");
+    const eur = try fx.currency(alloc, "EUR");
+
+    try fx.tree.addPosition(acc_chas, usd, Number.fromInt(1));
+    try fx.tree.addPosition(acc_boa, eur, Number.fromInt(1));
+    try fx.tree.addPosition(acc_boa, usd, Number.fromInt(1));
+    try fx.tree.addPosition(acc_div, usd, Number.fromInt(1));
+
+    const rendered = try fx.tree.render();
+    defer alloc.free(rendered);
 
     const expected =
         \\Assets        1 EUR
@@ -465,40 +546,58 @@ test "aggregated" {
 }
 
 test "isDescendant" {
-    var tree = try Self.init(std.testing.allocator);
-    defer tree.deinit();
+    const alloc = std.testing.allocator;
+    var fx = try TestFixture.init(alloc);
+    defer fx.deinit(alloc);
+    try fx.setupTree(alloc);
 
-    _ = try tree.open("Assets", null, null);
-    _ = try tree.open("Assets:Currency:Chase", null, null);
-    _ = try tree.open("Assets:Currency:BoA", null, null);
-    _ = try tree.open("Income:Dividends", null, null);
-    _ = try tree.open("Assets:Stocks", null, null);
+    const a = try fx.account(alloc, "Assets");
+    const chase = try fx.account(alloc, "Assets:Currency:Chase");
+    const boa = try fx.account(alloc, "Assets:Currency:BoA");
+    const div = try fx.account(alloc, "Income:Dividends");
+    const stocks = try fx.account(alloc, "Assets:Stocks");
 
-    try std.testing.expect(try tree.isDescendant("Assets:Currency:Chase", "Assets:Currency:Chase"));
-    try std.testing.expect(try tree.isDescendant("Assets", "Assets:Currency:Chase"));
-    try std.testing.expect(!try tree.isDescendant("Income:Dividends", "Assets:Currency:Chase"));
+    _ = try fx.tree.open(a, null, null);
+    _ = try fx.tree.open(chase, null, null);
+    _ = try fx.tree.open(boa, null, null);
+    _ = try fx.tree.open(div, null, null);
+    _ = try fx.tree.open(stocks, null, null);
+
+    try std.testing.expect(try fx.tree.isDescendant(chase, chase));
+    try std.testing.expect(try fx.tree.isDescendant(a, chase));
+    try std.testing.expect(!try fx.tree.isDescendant(div, chase));
 }
 
 test "balanceAggregatedByAccount" {
-    var tree = try Self.init(std.testing.allocator);
-    defer tree.deinit();
+    const alloc = std.testing.allocator;
+    var fx = try TestFixture.init(alloc);
+    defer fx.deinit(alloc);
+    try fx.setupTree(alloc);
 
-    _ = try tree.open("Assets:Foo", &.{"NZD"}, null);
-    _ = try tree.open("Assets:Foo:Bar", &.{"EUR"}, null);
-    _ = try tree.open("Assets:Baz", null, null);
+    const foo = try fx.account(alloc, "Assets:Foo");
+    const foo_bar = try fx.account(alloc, "Assets:Foo:Bar");
+    const baz = try fx.account(alloc, "Assets:Baz");
+    const nzd = try fx.currency(alloc, "NZD");
+    const eur = try fx.currency(alloc, "EUR");
+    const usd = try fx.currency(alloc, "USD");
 
-    try tree.addPosition("Assets:Foo", "NZD", Number.fromInt(1));
-    try tree.addPosition("Assets:Foo:Bar", "EUR", Number.fromInt(2));
-    try tree.addPosition("Assets:Baz", "USD", Number.fromInt(3));
+    _ = try fx.tree.open(foo, &.{nzd}, null);
+    _ = try fx.tree.open(foo_bar, &.{eur}, null);
+    _ = try fx.tree.open(baz, null, null);
 
-    try std.testing.expectEqual(Number.fromFloat(2), try tree.balanceAggregatedByAccount("Assets:Foo:Bar", "EUR"));
-    try std.testing.expectError(error.DoesNotHoldCurrency, tree.balanceAggregatedByAccount("Assets:Foo:Bar", "USD"));
+    try fx.tree.addPosition(foo, nzd, Number.fromInt(1));
+    try fx.tree.addPosition(foo_bar, eur, Number.fromInt(2));
+    try fx.tree.addPosition(baz, usd, Number.fromInt(3));
 
-    try std.testing.expectEqual(Number.fromFloat(1), try tree.balanceAggregatedByAccount("Assets:Foo", "NZD"));
-    try std.testing.expectError(error.DoesNotHoldCurrency, tree.balanceAggregatedByAccount("Assets:Foo", "USD"));
+    try std.testing.expectEqual(Number.fromFloat(2), try fx.tree.balanceAggregatedByAccount(foo_bar, eur));
+    try std.testing.expectError(error.DoesNotHoldCurrency, fx.tree.balanceAggregatedByAccount(foo_bar, usd));
 
-    try std.testing.expectEqual(Number.fromFloat(3), try tree.balanceAggregatedByAccount("Assets:Baz", "USD"));
-    try std.testing.expectEqual(Number.fromFloat(0), try tree.balanceAggregatedByAccount("Assets:Baz", "EUR"));
+    try std.testing.expectEqual(Number.fromFloat(1), try fx.tree.balanceAggregatedByAccount(foo, nzd));
+    try std.testing.expectError(error.DoesNotHoldCurrency, fx.tree.balanceAggregatedByAccount(foo, usd));
 
-    try std.testing.expectError(error.AccountNotOpen, tree.balanceAggregatedByAccount("Assets", "USD"));
+    try std.testing.expectEqual(Number.fromFloat(3), try fx.tree.balanceAggregatedByAccount(baz, usd));
+    try std.testing.expectEqual(Number.fromFloat(0), try fx.tree.balanceAggregatedByAccount(baz, eur));
+
+    const assets = try fx.account(alloc, "Assets");
+    try std.testing.expectError(error.AccountNotOpen, fx.tree.balanceAggregatedByAccount(assets, usd));
 }

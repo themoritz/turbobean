@@ -1,40 +1,27 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Number = @import("number.zig").Number;
-const PriceDeclView = @import("data.zig").PriceDeclView;
+const Data = @import("data.zig");
+const PriceDeclView = Data.PriceDeclView;
+const CurrencyIndex = Data.CurrencyIndex;
 const PlainInventory = @import("inventory.zig").PlainInventory;
 const Summary = @import("inventory.zig").Summary;
+const StringPool = @import("StringPool.zig");
 
 const Self = @This();
 
+/// (from, to) `CurrencyIndex` → rate. Storage is a flat `AutoHashMap` keyed
+/// by a pair of u32 enum values, so there's no string hashing on the hot
+/// conversion path.
 latest_prices: PriceMap,
 allocator: Allocator,
 
-const PriceMap = std.HashMap(
-    CurrencyPair,
-    Number,
-    CurrencyPairContext,
-    std.hash_map.default_max_load_percentage,
-);
-
-const CurrencyPair = struct {
-    from: []const u8,
-    to: []const u8,
+pub const Pair = struct {
+    from: CurrencyIndex,
+    to: CurrencyIndex,
 };
 
-const CurrencyPairContext = struct {
-    pub fn hash(_: CurrencyPairContext, key: CurrencyPair) u64 {
-        var hasher = std.hash.Wyhash.init(0);
-        hasher.update(key.from);
-        hasher.update(key.to);
-        return hasher.final();
-    }
-
-    pub fn eql(_: CurrencyPairContext, a: CurrencyPair, b: CurrencyPair) bool {
-        return std.mem.eql(u8, a.from, b.from) and
-            std.mem.eql(u8, a.to, b.to);
-    }
-};
+const PriceMap = std.AutoHashMap(Pair, Number);
 
 pub fn init(alloc: Allocator) Self {
     return .{
@@ -47,56 +34,37 @@ pub fn deinit(self: *Self) void {
     self.latest_prices.deinit();
 }
 
-/// Set the latest price for a currency pair. Also stores the inverse pair
-/// automatically. `rate` is the number to multiply with when going from `from`
-/// to `to`.
-///
-/// Example: setPrice("USD", "EUR", 1.5) will store:
-///   - USD -> EUR: 1.5
-///   - EUR -> USD: 0.666...
-pub fn setPricePlain(self: *Self, from: []const u8, to: []const u8, rate: Number) !void {
-    const pair = CurrencyPair{ .from = from, .to = to };
-    try self.latest_prices.put(pair, rate);
-
-    // Store the inverse rate
+/// Record `rate` for converting `from → to`. Also stores the inverse rate
+/// (unless `rate` is zero).
+pub fn setPrice(self: *Self, from: CurrencyIndex, to: CurrencyIndex, rate: Number) !void {
+    try self.latest_prices.put(.{ .from = from, .to = to }, rate);
     if (!rate.is_zero()) {
         const inverse_rate = try Number.fromInt(1).div(rate);
-        const inverse_pair = CurrencyPair{ .from = to, .to = from };
-        try self.latest_prices.put(inverse_pair, inverse_rate);
+        try self.latest_prices.put(.{ .from = to, .to = from }, inverse_rate);
     }
 }
 
-/// Assumes a `PriceDeclView` has already been validated and contains a valid amount.
-pub fn setPrice(self: *Self, decl: PriceDeclView) !void {
-    try self.setPricePlain(decl.currencyText(), decl.amountCurrencyText(), decl.amount);
+/// Convenience wrapper for a `PriceDeclView`, which already carries indices.
+pub fn setPriceFromDecl(self: *Self, decl: PriceDeclView) !void {
+    try self.setPrice(decl.currency, decl.amount_currency, decl.amount);
 }
 
-/// Get the conversion rate from one currency to another. Returns `null` if no
-/// price is available.
-pub fn getPrice(self: *const Self, from: []const u8, to: []const u8) ?Number {
-    const pair = CurrencyPair{ .from = from, .to = to };
-    return self.latest_prices.get(pair);
+pub fn getPrice(self: *const Self, from: CurrencyIndex, to: CurrencyIndex) ?Number {
+    return self.latest_prices.get(.{ .from = from, .to = to });
 }
 
-/// Convert an amount from one currency to another. Returns null if no price is
-/// available.
-pub fn convert(self: *const Self, amount: Number, from: []const u8, to: []const u8) ?Number {
-    if (std.mem.eql(u8, from, to)) {
-        return amount;
-    }
-
+pub fn convert(self: *const Self, amount: Number, from: CurrencyIndex, to: CurrencyIndex) ?Number {
+    if (from == to) return amount;
     const rate = self.getPrice(from, to) orelse return null;
     return amount.mul(rate).normalize();
 }
 
-/// Convert everything to the `to` currency if possible according to this price
-/// table.
-///
-/// Caller owns returned inventory.
+/// Convert everything in `inventory` to `to` if possible. Writes into
+/// `result` (cleared first).
 pub fn convertInventory(
     self: *const Self,
     inventory: *const PlainInventory,
-    to: []const u8,
+    to: CurrencyIndex,
     result: *PlainInventory,
 ) !void {
     result.clear();
@@ -112,76 +80,80 @@ pub fn convertInventory(
     }
 }
 
+// --- tests ------------------------------------------------------------------
+
+fn testCurrency(pool: *StringPool, alloc: Allocator, name: []const u8) !CurrencyIndex {
+    const raw = try pool.intern(alloc, name);
+    return @enumFromInt(@intFromEnum(raw));
+}
+
 test "setPrice stores both forward and inverse rates" {
-    var prices = init(std.testing.allocator);
+    const alloc = std.testing.allocator;
+    var pool = try StringPool.init(alloc);
+    defer pool.deinit(alloc);
+
+    const usd = try testCurrency(&pool, alloc, "USD");
+    const eur = try testCurrency(&pool, alloc, "EUR");
+
+    var prices = init(alloc);
     defer prices.deinit();
 
-    try prices.setPricePlain("USD", "EUR", Number.fromFloat(2.0));
-
-    const usd_to_eur = prices.getPrice("USD", "EUR").?;
-    const eur_to_usd = prices.getPrice("EUR", "USD").?;
-
-    try std.testing.expectEqual(Number.fromFloat(2.0), usd_to_eur);
-    try std.testing.expectEqual(Number.fromFloat(0.5), eur_to_usd);
+    try prices.setPrice(usd, eur, Number.fromFloat(2.0));
+    try std.testing.expectEqual(Number.fromFloat(2.0), prices.getPrice(usd, eur).?);
+    try std.testing.expectEqual(Number.fromFloat(0.5), prices.getPrice(eur, usd).?);
 }
 
 test "getPrice returns null for unknown pair" {
-    var prices = init(std.testing.allocator);
+    const alloc = std.testing.allocator;
+    var pool = try StringPool.init(alloc);
+    defer pool.deinit(alloc);
+
+    const usd = try testCurrency(&pool, alloc, "USD");
+    const eur = try testCurrency(&pool, alloc, "EUR");
+
+    var prices = init(alloc);
     defer prices.deinit();
 
-    const result = prices.getPrice("USD", "EUR");
-    try std.testing.expect(result == null);
+    try std.testing.expect(prices.getPrice(usd, eur) == null);
 }
 
-test "setPrice updates existing rates" {
-    var prices = init(std.testing.allocator);
-    defer prices.deinit();
+test "convert same currency" {
+    const alloc = std.testing.allocator;
+    var pool = try StringPool.init(alloc);
+    defer pool.deinit(alloc);
+    const usd = try testCurrency(&pool, alloc, "USD");
 
-    try prices.setPricePlain("USD", "EUR", Number.fromFloat(1.5));
-    try prices.setPricePlain("USD", "EUR", Number.fromFloat(2.0));
-
-    const rate = prices.getPrice("USD", "EUR").?;
-    try std.testing.expectEqual(Number.fromFloat(2.0), rate);
-
-    // Inverse should also be updated
-    const inverse = prices.getPrice("EUR", "USD").?;
-    try std.testing.expectEqual(Number.fromFloat(0.5), inverse);
-}
-
-test "convert amount between currencies" {
-    var prices = init(std.testing.allocator);
-    defer prices.deinit();
-
-    try prices.setPricePlain("USD", "EUR", Number.fromFloat(2.0));
-
-    // Convert 100 USD to EUR
-    const result = prices.convert(Number.fromFloat(100), "USD", "EUR").?;
-    try std.testing.expectEqual(Number.fromFloat(200), result);
-}
-
-test "convert returns null for unknown currency pair" {
-    var prices = init(std.testing.allocator);
-    defer prices.deinit();
-
-    const result = prices.convert(Number.fromFloat(100), "USD", "EUR");
-    try std.testing.expect(result == null);
-}
-
-test "convert returns same amount for same currency" {
-    var prices = init(std.testing.allocator);
+    var prices = init(alloc);
     defer prices.deinit();
 
     const amount = Number.fromFloat(100);
-    const result = prices.convert(amount, "USD", "USD").?;
-    try std.testing.expectEqual(amount, result);
+    try std.testing.expectEqual(amount, prices.convert(amount, usd, usd).?);
+}
+
+test "convert across currencies" {
+    const alloc = std.testing.allocator;
+    var pool = try StringPool.init(alloc);
+    defer pool.deinit(alloc);
+    const usd = try testCurrency(&pool, alloc, "USD");
+    const eur = try testCurrency(&pool, alloc, "EUR");
+
+    var prices = init(alloc);
+    defer prices.deinit();
+
+    try prices.setPrice(usd, eur, Number.fromFloat(2.0));
+    try std.testing.expectEqual(Number.fromFloat(200), prices.convert(Number.fromFloat(100), usd, eur).?);
 }
 
 test "no inverse of zero rate" {
-    var prices = init(std.testing.allocator);
+    const alloc = std.testing.allocator;
+    var pool = try StringPool.init(alloc);
+    defer pool.deinit(alloc);
+    const usd = try testCurrency(&pool, alloc, "USD");
+    const eur = try testCurrency(&pool, alloc, "EUR");
+
+    var prices = init(alloc);
     defer prices.deinit();
 
-    try prices.setPricePlain("USD", "EUR", Number.fromFloat(0));
-
-    const result = prices.convert(Number.fromFloat(100), "EUR", "USD");
-    try std.testing.expect(result == null);
+    try prices.setPrice(usd, eur, Number.fromFloat(0));
+    try std.testing.expect(prices.convert(Number.fromFloat(100), eur, usd) == null);
 }

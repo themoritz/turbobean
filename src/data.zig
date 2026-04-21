@@ -20,8 +20,10 @@ source: [:0]const u8,
 uri: Uri,
 ast: Ast,
 
-accounts: StringPool,
-currencies: StringPool,
+/// Project-wide intern pools, borrowed. The `Project` owns them; `Data` just
+/// reads/writes through the pointer so indices are comparable across files.
+accounts: *StringPool,
+currencies: *StringPool,
 /// Parallel to `ast.tokens`; interpretation depends on the token's tag.
 token_interned: std.ArrayList(u32),
 
@@ -408,14 +410,9 @@ pub const Config = struct {
 
 // --- init / deinit ----------------------------------------------------------
 
-/// Takes ownership of `ast`.
-pub fn init(alloc: Allocator, ast: Ast, uri: Uri) !Self {
-    var accounts = try StringPool.init(alloc);
-    errdefer accounts.deinit(alloc);
-
-    var currencies = try StringPool.init(alloc);
-    errdefer currencies.deinit(alloc);
-
+/// Takes ownership of `ast`. The pools are borrowed — caller (Project) owns
+/// them and must outlive this `Data`.
+pub fn init(alloc: Allocator, ast: Ast, uri: Uri, accounts: *StringPool, currencies: *StringPool) !Self {
     var token_interned: std.ArrayList(u32) = .{};
     errdefer token_interned.deinit(alloc);
     try token_interned.appendNTimes(alloc, std.math.maxInt(u32), ast.tokens.items.len);
@@ -445,8 +442,6 @@ pub fn init(alloc: Allocator, ast: Ast, uri: Uri) !Self {
 pub fn deinit(self: *Self) void {
     self.alloc.free(self.source);
     self.ast.deinit();
-    self.accounts.deinit(self.alloc);
-    self.currencies.deinit(self.alloc);
     self.token_interned.deinit(self.alloc);
     self.entries.deinit(self.alloc);
     self.postings.deinit(self.alloc);
@@ -692,19 +687,34 @@ pub const PriceDeclView = struct {
     }
 };
 
-/// Resolved lot spec (per-file text references).
+/// Resolved lot spec. Carries both the typed index and a `data` pointer so
+/// consumers can get text via `*Text()` helpers without re-interning.
 pub const LotSpecView = struct {
+    data: *const Self,
     price: ?Number,
-    price_currency: ?[]const u8,
+    price_currency: OptionalCurrencyIndex,
     date: ?Date,
-    label: ?[]const u8,
+    label: Ast.OptionalTokenIndex,
+
+    pub fn priceCurrencyText(v: LotSpecView) ?[]const u8 {
+        return v.data.currencyTextOpt(v.price_currency);
+    }
+
+    pub fn labelText(v: LotSpecView) ?[]const u8 {
+        return v.data.optTokenSlice(v.label);
+    }
 };
 
-/// Resolved price annotation (per-file text references).
+/// Resolved price annotation.
 pub const PriceView = struct {
+    data: *const Self,
     amount: ?Number,
-    amount_currency: ?[]const u8,
+    amount_currency: OptionalCurrencyIndex,
     total: bool,
+
+    pub fn amountCurrencyText(v: PriceView) ?[]const u8 {
+        return v.data.currencyTextOpt(v.amount_currency);
+    }
 };
 
 /// Lightweight handle for a posting. Hot fields resolved on demand;
@@ -750,8 +760,9 @@ pub const PostingView = struct {
         const idx = opt.unwrap() orelse return null;
         const p = v.data.prices.items[@intFromEnum(idx)];
         return .{
+            .data = v.data,
             .amount = p.amount,
-            .amount_currency = v.data.currencyTextOpt(p.amount_currency),
+            .amount_currency = p.amount_currency,
             .total = p.total,
         };
     }
@@ -761,10 +772,11 @@ pub const PostingView = struct {
         const idx = opt.unwrap() orelse return null;
         const ls = v.data.lot_specs.items[@intFromEnum(idx)];
         return .{
+            .data = v.data,
             .price = ls.price,
-            .price_currency = v.data.currencyTextOpt(ls.price_currency),
+            .price_currency = ls.price_currency,
             .date = ls.date,
-            .label = if (ls.label.unwrap()) |t| v.data.tokenSlice(t) else null,
+            .label = ls.label,
         };
     }
 
@@ -922,12 +934,21 @@ fn toPoolIndex(i: anytype) StringPool.Index {
 
 // --- construction helpers ---------------------------------------------------
 
-/// Parse + run Sema. Takes ownership of `source` and `uri` (by clone).
-pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: bool) !struct { Self, Imports } {
+/// Parse + run Sema. Takes ownership of `source`. Pools are borrowed from
+/// the caller (Project), so indices produced during Sema are comparable
+/// across files.
+pub fn loadSource(
+    alloc: Allocator,
+    accounts: *StringPool,
+    currencies: *StringPool,
+    uri: Uri,
+    source: [:0]const u8,
+    is_root: bool,
+) !struct { Self, Imports } {
     var ast = try Ast.parse(alloc, uri, source);
     errdefer ast.deinit();
 
-    var data = try init(alloc, ast, uri);
+    var data = try init(alloc, ast, uri, accounts, currencies);
     errdefer data.deinit();
 
     var sem = Sema.init(alloc, &data, is_root);

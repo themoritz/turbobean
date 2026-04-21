@@ -2,7 +2,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Number = @import("number.zig").Number;
 const Date = @import("date.zig").Date;
-const LotSpec = @import("data.zig").LotSpecView;
+const Data = @import("data.zig");
+const LotSpec = Data.LotSpecView;
+const CurrencyIndex = Data.CurrencyIndex;
+const StringPool = @import("StringPool.zig");
 
 pub const BookingMethod = enum {
     fifo,
@@ -17,7 +20,7 @@ pub const Lot = struct {
 
 pub const Cost = struct {
     price: Number,
-    currency: []const u8,
+    currency: CurrencyIndex,
     date: Date,
     label: ?[]const u8,
 
@@ -25,9 +28,9 @@ pub const Cost = struct {
         if (spec) |s| {
             return Cost{
                 .price = s.price orelse self.price,
-                .currency = s.price_currency orelse self.currency,
+                .currency = s.price_currency.unwrap() orelse self.currency,
                 .date = s.date orelse self.date,
-                .label = s.label orelse self.label,
+                .label = s.labelText() orelse self.label,
             };
         } else {
             return self.*;
@@ -73,14 +76,14 @@ pub const Lots = struct {
             for (other.items, 0..) |l, i| {
                 if (spec.price) |price| {
                     if (!l.cost.price.sub(price).is_zero()) continue;
-                    if (spec.price_currency) |pc| {
-                        if (!std.mem.eql(u8, l.cost.currency, pc)) continue;
+                    if (spec.price_currency.unwrap()) |pc| {
+                        if (l.cost.currency != pc) continue;
                     }
                 }
                 if (spec.date) |date| {
                     if (!std.meta.eql(l.cost.date, date)) continue;
                 }
-                if (spec.label) |l1| {
+                if (spec.labelText()) |l1| {
                     if (l.cost.label) |l2| {
                         if (!std.mem.eql(u8, l1, l2)) continue;
                     } else continue;
@@ -95,7 +98,7 @@ pub const Lots = struct {
                 var l = &other.items[i];
                 if (lot.units.abs().sub(l.units.abs()).is_positive())
                     return error.LotSpecMatchTooSmall;
-                if (!std.mem.eql(u8, l.cost.currency, lot.cost.currency))
+                if (l.cost.currency != lot.cost.currency)
                     return error.CostCurrencyMismatch;
                 const cost_weight = lot.units.mul(l.cost.price);
                 l.units = l.units.add(lot.units);
@@ -110,7 +113,7 @@ pub const Lots = struct {
             var sum = Number.zero();
             var cost_weight = Number.zero();
             for (other.items) |l| {
-                if (!std.mem.eql(u8, l.cost.currency, lot.cost.currency))
+                if (l.cost.currency != lot.cost.currency)
                     return error.CostCurrencyMismatch;
                 sum = sum.add(l.units);
                 cost_weight = cost_weight.add(l.units.mul(l.cost.price));
@@ -145,7 +148,7 @@ pub const Lots = struct {
             var l = &other.items[i];
             if (remaining.is_zero()) break;
 
-            if (!std.mem.eql(u8, l.cost.currency, lot.cost.currency))
+            if (l.cost.currency != lot.cost.currency)
                 return error.CostCurrencyMismatch;
 
             const to_book = if (lot.units.is_positive())
@@ -187,35 +190,32 @@ pub const Lots = struct {
     }
 };
 
+/// `AutoHashMap` keyed by the dense `CurrencyIndex` u32. Trivial hash = u64
+/// identity; no string compare on lookup.
+pub const CurrencyMap = std.AutoHashMap;
+
 pub const LotsInventory = struct {
     alloc: Allocator,
     restricted: bool,
     booking_method: BookingMethod,
-    by_currency: std.StringHashMap(Lots),
+    by_currency: CurrencyMap(CurrencyIndex, Lots),
 
     pub fn init(
         alloc: Allocator,
         booking_method: BookingMethod,
-        currencies: ?[]const []const u8,
+        currencies: ?[]const CurrencyIndex,
     ) !LotsInventory {
+        var by_currency = CurrencyMap(CurrencyIndex, Lots).init(alloc);
+        errdefer by_currency.deinit();
         if (currencies) |cs| {
-            var by_currency = std.StringHashMap(Lots).init(alloc);
             for (cs) |c| try by_currency.put(c, Lots.init(booking_method));
-
-            return .{
-                .alloc = alloc,
-                .restricted = true,
-                .booking_method = booking_method,
-                .by_currency = by_currency,
-            };
-        } else {
-            return .{
-                .alloc = alloc,
-                .restricted = false,
-                .booking_method = booking_method,
-                .by_currency = std.StringHashMap(Lots).init(alloc),
-            };
         }
+        return .{
+            .alloc = alloc,
+            .restricted = currencies != null,
+            .booking_method = booking_method,
+            .by_currency = by_currency,
+        };
     }
 
     pub fn deinit(self: *LotsInventory) void {
@@ -226,7 +226,7 @@ pub const LotsInventory = struct {
 
     pub fn book(
         self: *LotsInventory,
-        currency: []const u8,
+        currency: CurrencyIndex,
         lot: Lot,
         lot_spec: ?LotSpec,
     ) !Number {
@@ -253,21 +253,19 @@ pub const LotsInventory = struct {
     }
 
     pub fn summary(self: *const LotsInventory, alloc: Allocator) !Summary {
-        var by_currency = std.StringHashMap(Summary.CurrencySummary).init(alloc);
+        var result = Summary.init(alloc);
+        errdefer result.deinit();
         var iter = self.by_currency.iterator();
         while (iter.next()) |kv| {
             var lots = try kv.value_ptr.longs.clone(alloc);
             errdefer lots.deinit(alloc);
             try lots.appendSlice(alloc, kv.value_ptr.shorts.items);
-            try by_currency.put(kv.key_ptr.*, .{
+            try result.by_currency.put(kv.key_ptr.*, .{
                 .plain = Number.zero(),
                 .lots = lots,
             });
         }
-        return Summary{
-            .by_currency = by_currency,
-            .alloc = alloc,
-        };
+        return result;
     }
 
     pub fn toPlain(self: *const LotsInventory, alloc: Allocator) !PlainInventory {
@@ -282,7 +280,7 @@ pub const LotsInventory = struct {
         return inv;
     }
 
-    pub fn balance(self: *const LotsInventory, currency: []const u8) !Number {
+    pub fn balance(self: *const LotsInventory, currency: CurrencyIndex) !Number {
         if (self.by_currency.get(currency)) |lots| {
             return lots.balance();
         } else {
@@ -295,7 +293,7 @@ pub const LotsInventory = struct {
             .alloc = alloc,
             .restricted = self.restricted,
             .booking_method = self.booking_method,
-            .by_currency = std.StringHashMap(Lots).init(alloc),
+            .by_currency = CurrencyMap(CurrencyIndex, Lots).init(alloc),
         };
         errdefer result.deinit();
         var iter = self.by_currency.iterator();
@@ -318,38 +316,32 @@ pub const LotsInventory = struct {
 pub const PlainInventory = struct {
     alloc: Allocator,
     restricted: bool,
-    by_currency: std.StringHashMap(Number),
+    by_currency: CurrencyMap(CurrencyIndex, Number),
 
-    pub fn init(alloc: Allocator, currencies: ?[]const []const u8) !PlainInventory {
+    pub fn init(alloc: Allocator, currencies: ?[]const CurrencyIndex) !PlainInventory {
+        var by_currency = CurrencyMap(CurrencyIndex, Number).init(alloc);
+        errdefer by_currency.deinit();
         if (currencies) |cs| {
-            var by_currency = std.StringHashMap(Number).init(alloc);
             for (cs) |c| try by_currency.put(c, Number.zero());
-
-            return .{
-                .alloc = alloc,
-                .restricted = true,
-                .by_currency = by_currency,
-            };
-        } else {
-            return .{
-                .alloc = alloc,
-                .restricted = false,
-                .by_currency = std.StringHashMap(Number).init(alloc),
-            };
         }
+        return .{
+            .alloc = alloc,
+            .restricted = currencies != null,
+            .by_currency = by_currency,
+        };
     }
 
     pub fn deinit(self: *PlainInventory) void {
         self.by_currency.deinit();
     }
 
-    pub fn add(self: *PlainInventory, currency: []const u8, number: Number) !void {
+    pub fn add(self: *PlainInventory, currency: CurrencyIndex, number: Number) !void {
         const old = try self.balance(currency);
         const new = old.add(number);
         try self.by_currency.put(currency, new);
     }
 
-    pub fn balance(self: *const PlainInventory, currency: []const u8) !Number {
+    pub fn balance(self: *const PlainInventory, currency: CurrencyIndex) !Number {
         return self.by_currency.get(currency) orelse
             if (self.restricted) error.DoesNotHoldCurrency else Number.zero();
     }
@@ -363,15 +355,16 @@ pub const PlainInventory = struct {
     }
 
     pub fn summary(self: *const PlainInventory, alloc: Allocator) !Summary {
-        var by_currency = std.StringHashMap(Summary.CurrencySummary).init(alloc);
+        var result = Summary.init(alloc);
+        errdefer result.deinit();
         var iter = self.by_currency.iterator();
         while (iter.next()) |kv| {
-            try by_currency.put(kv.key_ptr.*, .{
+            try result.by_currency.put(kv.key_ptr.*, .{
                 .plain = kv.value_ptr.*,
                 .lots = .{},
             });
         }
-        return .{ .by_currency = by_currency, .alloc = alloc };
+        return result;
     }
 
     pub fn clone(self: *const PlainInventory, alloc: Allocator) !PlainInventory {
@@ -391,7 +384,7 @@ pub const Inventory = union(enum) {
     plain: PlainInventory,
     lots: LotsInventory,
 
-    pub fn init(alloc: Allocator, booking_method: ?BookingMethod, currencies: ?[]const []const u8) !Inventory {
+    pub fn init(alloc: Allocator, booking_method: ?BookingMethod, currencies: ?[]const CurrencyIndex) !Inventory {
         if (booking_method) |b| {
             return .{
                 .lots = try LotsInventory.init(alloc, b, currencies),
@@ -410,7 +403,7 @@ pub const Inventory = union(enum) {
         }
     }
 
-    pub fn add(self: *Inventory, currency: []const u8, number: Number) !void {
+    pub fn add(self: *Inventory, currency: CurrencyIndex, number: Number) !void {
         switch (self.*) {
             .plain => |*inv| try inv.add(currency, number),
             .lots => return error.CannotAddToLotsInventory,
@@ -419,7 +412,7 @@ pub const Inventory = union(enum) {
 
     pub fn book(
         self: *Inventory,
-        currency: []const u8,
+        currency: CurrencyIndex,
         lot: Lot,
         lot_spec: ?LotSpec,
     ) !?Number {
@@ -448,14 +441,13 @@ pub const Inventory = union(enum) {
         };
     }
 
-    pub fn balance(self: *const Inventory, currency: []const u8) !Number {
+    pub fn balance(self: *const Inventory, currency: CurrencyIndex) !Number {
         return switch (self.*) {
             .plain => |inv| inv.balance(currency),
             .lots => |inv| inv.balance(currency),
         };
     }
 
-    /// Flatten the inventory to a PlainInventory
     pub fn toPlain(self: *const Inventory, alloc: Allocator) !PlainInventory {
         return switch (self.*) {
             .plain => |inv| inv.clone(alloc),
@@ -479,7 +471,7 @@ pub const Inventory = union(enum) {
 };
 
 pub const Summary = struct {
-    by_currency: std.StringHashMap(CurrencySummary),
+    by_currency: CurrencyMap(CurrencyIndex, CurrencySummary),
     alloc: Allocator,
 
     pub const CurrencySummary = struct {
@@ -495,7 +487,7 @@ pub const Summary = struct {
 
     pub fn init(alloc: Allocator) Summary {
         return .{
-            .by_currency = std.StringHashMap(CurrencySummary).init(alloc),
+            .by_currency = CurrencyMap(CurrencyIndex, CurrencySummary).init(alloc),
             .alloc = alloc,
         };
     }
@@ -529,7 +521,7 @@ pub const Summary = struct {
         }
     }
 
-    pub fn balance(self: *const Summary, currency: []const u8) Number {
+    pub fn balance(self: *const Summary, currency: CurrencyIndex) Number {
         if (self.by_currency.get(currency)) |v| {
             return v.total_units();
         } else {
@@ -537,63 +529,85 @@ pub const Summary = struct {
         }
     }
 
-    pub fn treeDisplay(self: *const Summary, indent: u32, writer: std.io.AnyWriter) !void {
-        var iter = self.by_currency.iterator();
+    /// Resolve currency texts through a `StringPool` borrowed from the caller.
+    /// Output is sorted by currency text for deterministic rendering.
+    pub fn treeDisplay(self: *const Summary, pool: *const StringPool, indent: u32, writer: std.io.AnyWriter) !void {
+        var alloc_buf: [64]CurrencyIndex = undefined;
+        const sorted = try sortedKeys(self, pool, &alloc_buf);
+
         var first = true;
-        while (iter.next()) |kv| {
-            if (!kv.value_ptr.plain.is_zero()) {
+        for (sorted) |cur_idx| {
+            const v = self.by_currency.get(cur_idx).?;
+            const cur_text = pool.get(@enumFromInt(@intFromEnum(cur_idx)));
+            if (!v.plain.is_zero()) {
                 if (!first) {
                     try writer.writeByte('\n');
                     try writer.writeByteNTimes(' ', indent);
                 }
-                try writer.print("{f} {s}", .{ kv.value_ptr.plain, kv.key_ptr.* });
+                try writer.print("{f} {s}", .{ v.plain, cur_text });
                 first = false;
             }
-            if (kv.value_ptr.lots.items.len > 0) {
-                for (kv.value_ptr.lots.items) |lot| {
-                    if (!first) {
-                        try writer.writeByte('\n');
-                        try writer.writeByteNTimes(' ', indent);
-                    }
-                    try writer.print("{f} {s} @ {f} {s} {{{f}", .{
-                        lot.units,
-                        kv.key_ptr.*,
-                        lot.cost.price,
-                        lot.cost.currency,
-                        lot.cost.date,
-                    });
-                    if (lot.cost.label) |label| {
-                        try writer.print(", {s}", .{label});
-                    }
-                    try writer.print("}}", .{});
-                    first = false;
+            for (v.lots.items) |lot| {
+                if (!first) {
+                    try writer.writeByte('\n');
+                    try writer.writeByteNTimes(' ', indent);
                 }
+                const cost_cur = pool.get(@enumFromInt(@intFromEnum(lot.cost.currency)));
+                try writer.print("{f} {s} @ {f} {s} {{{f}", .{
+                    lot.units, cur_text, lot.cost.price, cost_cur, lot.cost.date,
+                });
+                if (lot.cost.label) |label| try writer.print(", {s}", .{label});
+                try writer.print("}}", .{});
+                first = false;
             }
         }
     }
 
-    pub fn hoverDisplay(self: *const Summary, writer: *std.Io.Writer) !void {
-        var iter = self.by_currency.iterator();
-        while (iter.next()) |kv| {
-            if (!kv.value_ptr.plain.is_zero()) {
-                try writer.print("• {f} {s}\n", .{ kv.value_ptr.plain, kv.key_ptr.* });
+    pub fn hoverDisplay(self: *const Summary, pool: *const StringPool, writer: *std.Io.Writer) !void {
+        var alloc_buf: [64]CurrencyIndex = undefined;
+        const sorted = try sortedKeys(self, pool, &alloc_buf);
+
+        for (sorted) |cur_idx| {
+            const v = self.by_currency.get(cur_idx).?;
+            const cur_text = pool.get(@enumFromInt(@intFromEnum(cur_idx)));
+            if (!v.plain.is_zero()) {
+                try writer.print("• {f} {s}\n", .{ v.plain, cur_text });
             }
-            if (kv.value_ptr.lots.items.len > 0) {
-                for (kv.value_ptr.lots.items) |lot| {
-                    try writer.print("• {f} {s} @ {f} {s} {{{f}", .{
-                        lot.units,
-                        kv.key_ptr.*,
-                        lot.cost.price,
-                        lot.cost.currency,
-                        lot.cost.date,
-                    });
-                    if (lot.cost.label) |label| {
-                        try writer.print(", {s}", .{label});
-                    }
-                    try writer.print("}}\n", .{});
-                }
+            for (v.lots.items) |lot| {
+                const cost_cur = pool.get(@enumFromInt(@intFromEnum(lot.cost.currency)));
+                try writer.print("• {f} {s} @ {f} {s} {{{f}", .{
+                    lot.units, cur_text, lot.cost.price, cost_cur, lot.cost.date,
+                });
+                if (lot.cost.label) |label| try writer.print(", {s}", .{label});
+                try writer.print("}}\n", .{});
             }
         }
+    }
+
+    /// Fill `buf` with the summary's currencies, sorted by their text. Returns
+    /// the populated slice (caller's stack buffer is large enough in practice
+    /// — inventories rarely span more than a handful of currencies).
+    fn sortedKeys(
+        self: *const Summary,
+        pool: *const StringPool,
+        buf: *[64]CurrencyIndex,
+    ) ![]CurrencyIndex {
+        const n = self.by_currency.count();
+        std.debug.assert(n <= buf.len);
+        var i: usize = 0;
+        var it = self.by_currency.keyIterator();
+        while (it.next()) |k| : (i += 1) buf[i] = k.*;
+        const slice = buf[0..n];
+        const SortCtx = struct {
+            pool: *const StringPool,
+            pub fn lessThan(ctx: @This(), a: CurrencyIndex, b: CurrencyIndex) bool {
+                const a_text = ctx.pool.get(@enumFromInt(@intFromEnum(a)));
+                const b_text = ctx.pool.get(@enumFromInt(@intFromEnum(b)));
+                return std.mem.order(u8, a_text, b_text) == .lt;
+            }
+        };
+        std.sort.block(CurrencyIndex, slice, SortCtx{ .pool = pool }, SortCtx.lessThan);
+        return slice;
     }
 
     pub fn toPlain(self: *const Summary, alloc: Allocator) !PlainInventory {
@@ -609,8 +623,18 @@ pub const Summary = struct {
     }
 };
 
+// --- tests ------------------------------------------------------------------
+
+fn testCurrency(pool: *StringPool, alloc: Allocator, name: []const u8) !CurrencyIndex {
+    const raw = try pool.intern(alloc, name);
+    return @enumFromInt(@intFromEnum(raw));
+}
+
 test "cost weight" {
     const alloc = std.testing.allocator;
+    var pool = try StringPool.init(alloc);
+    defer pool.deinit(alloc);
+    const usd = try testCurrency(&pool, alloc, "USD");
 
     var inv = Lots.init(.fifo);
     defer inv.deinit(alloc);
@@ -619,7 +643,7 @@ test "cost weight" {
         .units = Number.fromInt(10),
         .cost = Cost{
             .price = Number.fromInt(10),
-            .currency = "USD",
+            .currency = usd,
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
@@ -628,7 +652,7 @@ test "cost weight" {
         .units = Number.fromInt(10),
         .cost = Cost{
             .price = Number.fromInt(15),
-            .currency = "USD",
+            .currency = usd,
             .date = try Date.fromSlice("2025-01-02"),
             .label = null,
         },
@@ -637,7 +661,7 @@ test "cost weight" {
         .units = Number.fromInt(-15),
         .cost = Cost{
             .price = Number.fromInt(30),
-            .currency = "USD",
+            .currency = usd,
             .date = try Date.fromSlice("2025-01-03"),
             .label = null,
         },
@@ -651,6 +675,9 @@ test "cost weight" {
 
 test "cross line" {
     const alloc = std.testing.allocator;
+    var pool = try StringPool.init(alloc);
+    defer pool.deinit(alloc);
+    const usd = try testCurrency(&pool, alloc, "USD");
 
     var inv = Lots.init(.fifo);
     defer inv.deinit(alloc);
@@ -659,7 +686,7 @@ test "cross line" {
         .units = Number.fromInt(-1),
         .cost = Cost{
             .price = Number.fromInt(10),
-            .currency = "USD",
+            .currency = usd,
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
@@ -668,7 +695,7 @@ test "cross line" {
         .units = Number.fromInt(2),
         .cost = Cost{
             .price = Number.fromInt(20),
-            .currency = "USD",
+            .currency = usd,
             .date = try Date.fromSlice("2025-01-03"),
             .label = null,
         },
@@ -681,94 +708,91 @@ test "cross line" {
 }
 
 test "combine" {
-    var plain = try PlainInventory.init(std.testing.allocator, null);
+    const alloc = std.testing.allocator;
+    var pool = try StringPool.init(alloc);
+    defer pool.deinit(alloc);
+    const usd = try testCurrency(&pool, alloc, "USD");
+    const eur = try testCurrency(&pool, alloc, "EUR");
+    const nzd = try testCurrency(&pool, alloc, "NZD");
+
+    var plain = try PlainInventory.init(alloc, null);
     defer plain.deinit();
-    var lots = try LotsInventory.init(
-        std.testing.allocator,
-        .fifo,
-        null,
-    );
+    var lots = try LotsInventory.init(alloc, .fifo, null);
     defer lots.deinit();
-    try plain.add("USD", Number.fromInt(1));
-    _ = try lots.book("USD", Lot{
+    try plain.add(usd, Number.fromInt(1));
+    _ = try lots.book(usd, Lot{
         .units = Number.fromInt(1),
         .cost = Cost{
             .price = Number.fromInt(10),
-            .currency = "USD",
+            .currency = usd,
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
     }, null);
-    _ = try lots.book("EUR", Lot{
+    _ = try lots.book(eur, Lot{
         .units = Number.fromInt(2),
         .cost = Cost{
             .price = Number.fromInt(10),
-            .currency = "NZD",
+            .currency = nzd,
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
     }, null);
-    var plain_sum = try plain.summary(std.testing.allocator);
-    var lots_sum = try lots.summary(std.testing.allocator);
+    var plain_sum = try plain.summary(alloc);
+    var lots_sum = try lots.summary(alloc);
     defer plain_sum.deinit();
     defer lots_sum.deinit();
     try plain_sum.combine(lots_sum);
-    try std.testing.expectEqual(Number.fromInt(1), plain_sum.by_currency.get("USD").?.plain);
-    try std.testing.expectEqual(1, plain_sum.by_currency.get("USD").?.lots.items.len);
-    try std.testing.expectEqual(1, plain_sum.by_currency.get("EUR").?.lots.items.len);
+    try std.testing.expectEqual(Number.fromInt(1), plain_sum.by_currency.get(usd).?.plain);
+    try std.testing.expectEqual(1, plain_sum.by_currency.get(usd).?.lots.items.len);
+    try std.testing.expectEqual(1, plain_sum.by_currency.get(eur).?.lots.items.len);
 }
 
 test "plain empty" {
-    var inv = try PlainInventory.init(std.testing.allocator, null);
+    const alloc = std.testing.allocator;
+    var pool = try StringPool.init(alloc);
+    defer pool.deinit(alloc);
+    const usd = try testCurrency(&pool, alloc, "USD");
+
+    var inv = try PlainInventory.init(alloc, null);
     defer inv.deinit();
 
     try std.testing.expect(inv.isEmpty());
-    try inv.add("USD", Number.fromInt(1));
+    try inv.add(usd, Number.fromInt(1));
     try std.testing.expect(!inv.isEmpty());
-    try inv.add("USD", Number.fromInt(-1));
+    try inv.add(usd, Number.fromInt(-1));
     try std.testing.expect(inv.isEmpty());
 }
 
 test "lots empty" {
-    var inv = try LotsInventory.init(
-        std.testing.allocator,
-        .fifo,
-        null,
-    );
+    const alloc = std.testing.allocator;
+    var pool = try StringPool.init(alloc);
+    defer pool.deinit(alloc);
+    const usd = try testCurrency(&pool, alloc, "USD");
+    const nzd = try testCurrency(&pool, alloc, "NZD");
+
+    var inv = try LotsInventory.init(alloc, .fifo, null);
     defer inv.deinit();
 
     try std.testing.expect(inv.isEmpty());
-    _ = try inv.book("USD", Lot{
+    _ = try inv.book(usd, Lot{
         .units = Number.fromInt(1),
         .cost = Cost{
             .price = Number.fromInt(10),
-            .currency = "NZD",
+            .currency = nzd,
             .date = try Date.fromSlice("2025-01-01"),
             .label = null,
         },
     }, null);
     try std.testing.expect(!inv.isEmpty());
-    _ = try inv.book("USD", Lot{
+    _ = try inv.book(usd, Lot{
         .units = Number.fromInt(-1),
         .cost = Cost{
             .price = Number.fromInt(10),
-            .currency = "NZD",
+            .currency = nzd,
             .date = try Date.fromSlice("2025-01-02"),
             .label = null,
         },
     }, null);
     try std.testing.expect(inv.isEmpty());
 }
-
-// test "format" {
-//     var inv = Inventory.init(std.testing.allocator);
-//     defer inv.deinit();
-//
-//     try inv.add(Number.fromInt(1), "USD");
-//     try inv.add(Number.fromInt(2), "EUR");
-//
-//     const result = try std.fmt.allocPrint(std.testing.allocator, "{any}", .{inv});
-//     defer std.testing.allocator.free(result);
-//
-//     try std.testing.expectEqualStrings("2 EUR, 1 USD", result);
-// }

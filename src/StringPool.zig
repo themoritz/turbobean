@@ -67,6 +67,13 @@ pub fn getOptional(self: *const Self, oi: OptionalIndex) ?[]const u8 {
     return self.get(i);
 }
 
+/// Non-mutating lookup — returns the existing `Index` for `s`, or `null` if
+/// it hasn't been interned. Useful on query/read paths where polluting the
+/// pool with unknown strings would be wrong.
+pub fn find(self: *const Self, s: []const u8) ?Index {
+    return self.map.getKeyAdapted(s, SliceAdapter{ .pool = self });
+}
+
 pub fn intern(self: *Self, alloc: Allocator, s: []const u8) !Index {
     const gop = try self.map.getOrPutContextAdapted(
         alloc,
