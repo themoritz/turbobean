@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Number = @import("number.zig").Number;
 const Date = @import("date.zig").Date;
-const LotSpec = @import("data.zig").LotSpec;
+const LotSpec = @import("data.zig").LotSpecView;
 
 pub const BookingMethod = enum {
     fifo,
@@ -24,8 +24,8 @@ pub const Cost = struct {
     fn with_lot_spec(self: *const Cost, spec: ?LotSpec) Cost {
         if (spec) |s| {
             return Cost{
-                .price = if (s.price) |p| p.number.? else self.price,
-                .currency = if (s.price) |p| p.currency.? else self.currency,
+                .price = s.price orelse self.price,
+                .currency = s.price_currency orelse self.currency,
                 .date = s.date orelse self.date,
                 .label = s.label orelse self.label,
             };
@@ -72,8 +72,10 @@ pub const Lots = struct {
             var match: ?usize = null;
             for (other.items, 0..) |l, i| {
                 if (spec.price) |price| {
-                    if (!l.cost.price.sub(price.number.?).is_zero()) continue;
-                    if (!std.mem.eql(u8, l.cost.currency, price.currency.?)) continue;
+                    if (!l.cost.price.sub(price).is_zero()) continue;
+                    if (spec.price_currency) |pc| {
+                        if (!std.mem.eql(u8, l.cost.currency, pc)) continue;
+                    }
                 }
                 if (spec.date) |date| {
                     if (!std.meta.eql(l.cost.date, date)) continue;

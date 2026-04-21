@@ -1,4 +1,8 @@
-//! Converts an AST into Data (semantic analysis)
+//! Converts an AST into Data (semantic analysis).
+//!
+//! Sema owns the construction side: it touches Data's private storage directly
+//! (intern pools, token_interned side-table, SoA lists). Consumers should go
+//! through views/iterators instead.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Ast = @import("Ast.zig");
@@ -13,36 +17,28 @@ const Node = Ast.Node;
 const Self = @This();
 
 alloc: Allocator,
-ast: *Ast,
-uri: Uri,
+data: *Data,
 is_root: bool,
-
-entries: *Data.Entries,
-config: *Data.Config,
-postings: *Data.Postings,
-tagslinks: *Data.TagsLinks,
-meta: *Data.Meta,
-currencies: *Data.Currencies,
-errors: *std.ArrayList(ErrorDetails),
 
 // Owned
 imports: std.ArrayList(Data.Import),
-active_tags: std.StringHashMap(void),
-active_meta: std.StringHashMap([]const u8),
+/// Active pushtag stack. Value is the original `pushtag` token, used to
+/// attribute synthesized (implicit) tags to a source location.
+active_tags: std.StringHashMap(Ast.TokenIndex),
+/// Active pushmeta stack. Value holds original key/value token indices so
+/// synthesized meta entries inherit real source locations.
+active_meta: std.StringHashMap(StackedKV),
+
+const StackedKV = struct {
+    key_tok: Ast.TokenIndex,
+    value_tok: Ast.TokenIndex,
+};
 
 pub fn init(alloc: Allocator, data: *Data, is_root: bool) Self {
     return .{
         .alloc = alloc,
-        .ast = &data.ast,
-        .uri = data.uri,
+        .data = data,
         .is_root = is_root,
-        .entries = &data.entries,
-        .config = &data.config,
-        .postings = &data.postings,
-        .tagslinks = &data.tagslinks,
-        .meta = &data.meta,
-        .currencies = &data.currencies,
-        .errors = &data.errors,
         .imports = .{},
         .active_tags = .init(alloc),
         .active_meta = .init(alloc),
@@ -55,37 +51,51 @@ pub fn deinit(self: *Self) void {
     self.active_meta.deinit();
 }
 
+// --- token helpers ----------------------------------------------------------
+
 fn tok(self: *Self, index: Ast.TokenIndex) Lexer.Token {
-    return self.ast.tokens.items[@intFromEnum(index)];
+    return self.data.ast.tokens.items[@intFromEnum(index)];
 }
 
 fn tokSlice(self: *Self, index: Ast.TokenIndex) []const u8 {
     return self.tok(index).slice;
 }
 
-fn optTok(self: *Self, index: Ast.OptionalTokenIndex) ?Lexer.Token {
-    const i = index.unwrap() orelse return null;
-    return self.tok(i);
-}
-
 fn optTokSlice(self: *Self, index: Ast.OptionalTokenIndex) ?[]const u8 {
-    const t = self.optTok(index) orelse return null;
-    return t.slice;
+    const i = index.unwrap() orelse return null;
+    return self.tokSlice(i);
 }
 
-fn warnAt(self: *Self, token: Lexer.Token, msg: ErrorDetails.Tag) !void {
-    try self.errors.append(self.alloc, .{
-        .tag = msg,
-        .token = token,
-        .uri = self.uri,
-        .source = self.ast.source,
-        .severity = .warn,
-    });
+// --- intern helpers ---------------------------------------------------------
+
+fn internAccount(self: *Self, t: Ast.TokenIndex) !Data.AccountIndex {
+    const raw = try self.data.accounts.intern(self.alloc, self.tokSlice(t));
+    self.data.token_interned.items[@intFromEnum(t)] = @intFromEnum(raw);
+    return @enumFromInt(@intFromEnum(raw));
 }
+
+fn internCurrency(self: *Self, t: Ast.TokenIndex) !Data.CurrencyIndex {
+    const raw = try self.data.currencies.intern(self.alloc, self.tokSlice(t));
+    self.data.token_interned.items[@intFromEnum(t)] = @intFromEnum(raw);
+    return @enumFromInt(@intFromEnum(raw));
+}
+
+fn internCurrencyOpt(self: *Self, t: Ast.OptionalTokenIndex) !Data.OptionalCurrencyIndex {
+    const i = t.unwrap() orelse return .none;
+    return (try self.internCurrency(i)).toOptional();
+}
+
+// --- error reporting --------------------------------------------------------
+
+fn warnAt(self: *Self, token: Ast.TokenIndex, msg: ErrorDetails.Tag) !void {
+    try self.data.addWarning(token, self.data.uri, msg);
+}
+
+// --- top level --------------------------------------------------------------
 
 pub fn run(self: *Self) !Data.Imports {
-    for (self.ast.root()) |decl_index| {
-        const n = self.ast.node(decl_index);
+    for (self.data.ast.root()) |decl_index| {
+        const n = self.data.ast.node(decl_index);
         switch (n) {
             .entry => |extra| try self.convertEntry(extra),
             .pushtag => |tag_tok| try self.handlePushtag(tag_tok),
@@ -98,22 +108,22 @@ pub fn run(self: *Self) !Data.Imports {
             else => {},
         }
     }
-
     return self.imports.toOwnedSlice(self.alloc);
 }
 
 fn handlePushtag(self: *Self, tag_tok: Ast.TokenIndex) !void {
-    const slice = self.tokSlice(tag_tok);
-    try self.active_tags.put(slice, {});
+    try self.active_tags.put(self.tokSlice(tag_tok), tag_tok);
 }
 
 fn handlePoptag(self: *Self, tag_tok: Ast.TokenIndex) void {
-    const slice = self.tokSlice(tag_tok);
-    _ = self.active_tags.remove(slice);
+    _ = self.active_tags.remove(self.tokSlice(tag_tok));
 }
 
 fn handlePushmeta(self: *Self, kv: Ast.KeyValue) !void {
-    try self.active_meta.put(self.tokSlice(kv.key), self.tokSlice(kv.value));
+    try self.active_meta.put(self.tokSlice(kv.key), .{
+        .key_tok = kv.key,
+        .value_tok = kv.value,
+    });
 }
 
 fn handlePopmeta(self: *Self, kv: Ast.KeyValue) void {
@@ -122,7 +132,7 @@ fn handlePopmeta(self: *Self, kv: Ast.KeyValue) void {
 
 fn handleOption(self: *Self, kv: Ast.KeyValue) !void {
     if (self.is_root) {
-        try self.config.addOption(self.tokSlice(kv.key), self.tokSlice(kv.value));
+        try self.data.config.addOption(self.tokSlice(kv.key), self.tokSlice(kv.value));
     }
 }
 
@@ -137,164 +147,180 @@ fn handleInclude(self: *Self, file_tok: Ast.TokenIndex) !void {
 
 fn handlePlugin(self: *Self, plugin_tok: Ast.TokenIndex) !void {
     if (self.is_root) {
-        try self.config.addPlugin(self.tokSlice(plugin_tok));
+        try self.data.config.addPlugin(self.tokSlice(plugin_tok));
     }
 }
 
+// --- entries ----------------------------------------------------------------
+
 fn convertEntry(self: *Self, extra: Ast.ExtraIndex) !void {
-    const entry_data = self.ast.getExtra(extra, Node.Entry);
-    const date_token = self.tok(entry_data.date);
-    const date = Date.fromSlice(date_token.slice) catch return; // skip invalid dates
+    const entry_data = self.data.ast.getExtra(extra, Node.Entry);
+    const date = Date.fromSlice(self.tokSlice(entry_data.date)) catch return; // skip invalid dates
 
     const tagslinks = try self.convertTagsLinks(entry_data.tagslinks);
     const meta = try self.convertMeta(entry_data.meta, true);
 
-    const payload_node = self.ast.node(entry_data.payload);
+    const payload_node = self.data.ast.node(entry_data.payload);
     const payload: Data.Entry.Payload = switch (payload_node) {
         .transaction => |tx_extra| try self.convertTransaction(tx_extra),
-        .open => |open_extra| self.convertOpen(open_extra),
-        .close => |account_tok| .{ .close = .{ .account = self.tok(account_tok) } },
-        .commodity => |currency_tok| .{ .commodity = .{ .currency = self.tokSlice(currency_tok) } },
-        .pad => |pad| .{ .pad = .{
-            .account = self.tok(pad.account),
-            .pad_to = self.tok(pad.pad_to),
-        } },
-        .pnl => |pnl| .{ .pnl = .{
-            .account = self.tok(pnl.account),
-            .income_account = self.tok(pnl.income_account),
-        } },
-        .balance => |bal_extra| self.convertBalance(bal_extra),
-        .price_decl => |pd| self.convertPriceDecl(pd),
-        .event => |kv| .{ .event = .{
-            .variable = self.tokSlice(kv.key),
-            .value = self.tokSlice(kv.value),
-        } },
-        .query => |kv| .{ .query = .{
-            .name = self.tokSlice(kv.key),
-            .sql = self.tokSlice(kv.value),
-        } },
-        .note => |kv| .{ .note = .{
-            .account = self.tok(kv.key),
-            .note = self.tokSlice(kv.value),
-        } },
-        .document => |kv| .{ .document = .{
-            .account = self.tok(kv.key),
-            .filename = self.tokSlice(kv.value),
-        } },
-        else => return, // skip unknown nodes
+        .open => |open_extra| try self.convertOpen(open_extra),
+        .close => |account_tok| blk: {
+            _ = try self.internAccount(account_tok);
+            break :blk .{ .close = .{ .account = account_tok } };
+        },
+        .commodity => |currency_tok| blk: {
+            const cur = try self.internCurrency(currency_tok);
+            break :blk .{ .commodity = .{ .currency = cur } };
+        },
+        .pad => |pad| blk: {
+            _ = try self.internAccount(pad.account);
+            _ = try self.internAccount(pad.pad_to);
+            break :blk .{ .pad = .{
+                .account = pad.account,
+                .pad_to = pad.pad_to,
+            } };
+        },
+        .pnl => |pnl| blk: {
+            _ = try self.internAccount(pnl.account);
+            _ = try self.internAccount(pnl.income_account);
+            break :blk .{ .pnl = .{
+                .account = pnl.account,
+                .income_account = pnl.income_account,
+            } };
+        },
+        .balance => |bal_extra| try self.convertBalance(bal_extra),
+        .price_decl => |pd| try self.convertPriceDecl(pd),
+        .event => |kv| .{ .event = .{ .variable = kv.key, .value = kv.value } },
+        .query => |kv| .{ .query = .{ .name = kv.key, .sql = kv.value } },
+        .note => |kv| blk: {
+            _ = try self.internAccount(kv.key);
+            break :blk .{ .note = .{ .account = kv.key, .note = kv.value } };
+        },
+        .document => |kv| blk: {
+            _ = try self.internAccount(kv.key);
+            break :blk .{ .document = .{ .account = kv.key, .filename = kv.value } };
+        },
+        else => return,
     };
 
-    try self.entries.append(self.alloc, Data.Entry{
+    try self.data.entries.append(self.alloc, Data.Entry{
         .date = date,
-        .main_token = date_token,
-        .payload = payload,
+        .main_token = entry_data.date,
         .tagslinks = tagslinks,
         .meta = meta,
+        .payload = payload,
     });
 }
 
 fn convertTransaction(self: *Self, tx_extra: Ast.ExtraIndex) !Data.Entry.Payload {
-    const tx = self.ast.getExtra(tx_extra, Node.Transaction);
-    const flag_token = self.tok(tx.flag);
+    const tx = self.data.ast.getExtra(tx_extra, Node.Transaction);
 
-    if (std.mem.eql(u8, flag_token.slice, "!")) try self.warnAt(flag_token, .flagged);
+    if (std.mem.eql(u8, self.tokSlice(tx.flag), "!")) try self.warnAt(tx.flag, .flagged);
 
-    var payee = self.optTokSlice(tx.payee);
-    var narration = self.optTokSlice(tx.narration);
-
-    // AstParser already swaps payee/narration when there's only one string,
-    // so payee=null and narration=the single string. No swap needed here.
-    _ = &payee;
-    _ = &narration;
-
-    const postings_top = self.postings.len;
-    for (self.ast.list(tx.postings)) |posting_index| {
+    const postings_top = self.data.postings.len;
+    for (self.data.ast.list(tx.postings)) |posting_index| {
         try self.convertPosting(posting_index);
     }
-    const postings = Data.Range.create(postings_top, self.postings.len);
+    const postings = Data.Range.from(postings_top, self.data.postings.len);
 
     return .{ .transaction = .{
-        .flag = flag_token,
-        .payee = payee,
-        .narration = narration,
+        .flag = tx.flag,
+        .payee = tx.payee,
+        .narration = tx.narration,
         .postings = postings,
     } };
 }
 
 fn convertPosting(self: *Self, posting_index: Node.Index) !void {
-    const n = self.ast.node(posting_index);
-    const p = self.ast.getExtra(n.posting, Node.Posting);
+    const n = self.data.ast.node(posting_index);
+    const p = self.data.ast.getExtra(n.posting, Node.Posting);
 
-    const flag_tok = self.optTok(p.flag);
-    const account_tok = self.tok(p.account);
-    const amount = self.convertAmount(p.amount);
-
-    if (flag_tok) |f| {
-        if (std.mem.eql(u8, f.slice, "!")) try self.warnAt(f, .flagged);
+    _ = try self.internAccount(p.account);
+    if (p.flag.unwrap()) |flag_tok| {
+        if (std.mem.eql(u8, self.tokSlice(flag_tok), "!")) try self.warnAt(flag_tok, .flagged);
     }
 
-    var lot_spec = if (p.lot_spec.unwrap()) |ls_index| self.convertLotSpec(ls_index) else null;
-    var price = if (p.price.unwrap()) |price_index| self.convertPriceAnnotation(price_index) else null;
+    const amount = try self.convertAmount(p.amount);
+
+    var lot_spec: ?Data.LotSpec = if (p.lot_spec.unwrap()) |ls_idx| try self.convertLotSpec(ls_idx) else null;
+    var price: ?Data.Price = if (p.price.unwrap()) |pr_idx| try self.convertPriceAnnotation(pr_idx) else null;
 
     const meta = try self.convertMeta(p.meta, false);
 
-    // Infer price from cost spec for backwards-compatibility
+    // Beancount backwards-compat: when a lot spec carries a complete price
+    // and no price annotation exists, promote it to the price annotation.
     if (lot_spec) |*ls| {
-        if (ls.price) |lot_price| {
-            if (lot_price.isComplete()) {
-                if (price == null) {
-                    price = .{
-                        .amount = lot_price,
-                        .total = false,
-                    };
-                    ls.price = null;
-                    try self.warnAt(account_tok, .inferred_price);
+        if (ls.price != null and ls.price_currency.unwrap() != null and price == null) {
+            price = .{
+                .amount = ls.price,
+                .amount_currency = ls.price_currency,
+                .total = false,
+            };
+            ls.price = null;
+            ls.price_currency = .none;
+            try self.warnAt(p.account, .inferred_price);
 
-                    // Remove the lot spec if it's empty after this operation
-                    if (ls.date == null and ls.label == null)
-                        lot_spec = null;
-                }
-            }
+            if (ls.date == null and ls.label == .none) lot_spec = null;
         }
     }
 
-    try self.postings.append(self.alloc, Data.Posting{
-        .flag = flag_tok,
-        .account = account_tok,
-        .amount = amount,
-        .lot_spec = lot_spec,
-        .price = price,
+    const price_idx: Data.OptionalPriceIndex = if (price) |pr| blk: {
+        const idx: Data.PriceIndex = @enumFromInt(self.data.prices.items.len);
+        try self.data.prices.append(self.alloc, pr);
+        break :blk idx.toOptional();
+    } else .none;
+
+    const lot_spec_idx: Data.OptionalLotSpecIndex = if (lot_spec) |ls| blk: {
+        const idx: Data.LotSpecIndex = @enumFromInt(self.data.lot_specs.items.len);
+        try self.data.lot_specs.append(self.alloc, ls);
+        break :blk idx.toOptional();
+    } else .none;
+
+    try self.data.postings.append(self.alloc, Data.Posting{
+        .account = p.account,
+        .flag = p.flag,
+        .amount_number = Data.PackedNumber.pack(amount.number),
+        .amount_currency = amount.currency,
+        .price = price_idx,
+        .lot_spec = lot_spec_idx,
         .meta = meta,
         .ast_node = posting_index.toOptional(),
     });
 }
 
-fn convertAmount(self: *Self, amount_index: Node.Index) Data.Amount {
-    const n = self.ast.node(amount_index);
+const AmountResolved = struct {
+    number: ?Number,
+    currency: Data.OptionalCurrencyIndex,
+};
+
+fn convertAmount(self: *Self, amount_index: Node.Index) !AmountResolved {
+    const n = self.data.ast.node(amount_index);
     const amt = n.amount;
-    return .{
-        .number = if (amt.number.unwrap()) |num_tok| self.parseNumber(num_tok) else null,
-        .currency = self.optTokSlice(amt.currency),
-    };
+    const number: ?Number = if (amt.number.unwrap()) |num_tok| self.parseNumber(num_tok) else null;
+    const currency = try self.internCurrencyOpt(amt.currency);
+    return .{ .number = number, .currency = currency };
 }
 
 fn parseNumber(self: *Self, num_tok: Ast.TokenIndex) ?Number {
     const num_i = @intFromEnum(num_tok);
-    const slice = self.ast.tokens.items[num_i].slice;
-    const is_negative = num_i > 0 and self.ast.tokens.items[num_i - 1].tag == .minus;
+    const slice = self.data.ast.tokens.items[num_i].slice;
+    const is_negative = num_i > 0 and self.data.ast.tokens.items[num_i - 1].tag == .minus;
     const number = Number.fromSlice(slice) catch return null;
     return if (is_negative) number.negate() else number;
 }
 
-fn convertLotSpec(self: *Self, ls_index: Node.Index) Data.LotSpec {
-    const n = self.ast.node(ls_index);
-    const ls = self.ast.getExtra(n.lot_spec, Node.LotSpec);
+fn convertLotSpec(self: *Self, ls_index: Node.Index) !Data.LotSpec {
+    const n = self.data.ast.node(ls_index);
+    const ls = self.data.ast.getExtra(n.lot_spec, Node.LotSpec);
 
-    var lot_price: ?Data.Amount = null;
+    var lot_number: ?Number = null;
+    var lot_currency: Data.OptionalCurrencyIndex = .none;
     if (ls.price.unwrap()) |price_index| {
-        const price_amount = self.convertAmount(price_index);
-        if (price_amount.number != null or price_amount.currency != null) {
-            lot_price = price_amount;
+        const amt = try self.convertAmount(price_index);
+        // Keep only non-empty amount (match old behaviour).
+        if (amt.number != null or amt.currency.unwrap() != null) {
+            lot_number = amt.number;
+            lot_currency = amt.currency;
         }
     }
 
@@ -303,35 +329,36 @@ fn convertLotSpec(self: *Self, ls_index: Node.Index) Data.LotSpec {
     else
         null;
 
-    const label = self.optTokSlice(ls.label);
-
     return .{
-        .price = lot_price,
+        .price = lot_number,
+        .price_currency = lot_currency,
         .date = lot_date,
-        .label = label,
+        .label = ls.label,
     };
 }
 
-fn convertPriceAnnotation(self: *Self, price_index: Node.Index) Data.Price {
-    const n = self.ast.node(price_index);
+fn convertPriceAnnotation(self: *Self, price_index: Node.Index) !Data.Price {
+    const n = self.data.ast.node(price_index);
     const pa = n.price_annotation;
     const total = self.tok(pa.total).tag == .atat;
-    const amount = self.convertAmount(pa.amount);
+    const amount = try self.convertAmount(pa.amount);
     return .{
-        .amount = amount,
+        .amount = amount.number,
+        .amount_currency = amount.currency,
         .total = total,
     };
 }
 
-fn convertOpen(self: *Self, open_extra: Ast.ExtraIndex) Data.Entry.Payload {
-    const open = self.ast.getExtra(open_extra, Node.Open);
-    const account_tok = self.tok(open.account);
+fn convertOpen(self: *Self, open_extra: Ast.ExtraIndex) !Data.Entry.Payload {
+    const open = self.data.ast.getExtra(open_extra, Node.Open);
+    _ = try self.internAccount(open.account);
 
-    const currency_top = self.currencies.items.len;
-    for (self.ast.tokenList(open.currencies)) |cur_tok| {
-        self.currencies.append(self.alloc, self.tokSlice(cur_tok)) catch {};
+    const cur_top = self.data.open_currencies.items.len;
+    for (self.data.ast.tokenList(open.currencies)) |cur_tok| {
+        const idx = try self.internCurrency(cur_tok);
+        try self.data.open_currencies.append(self.alloc, idx);
     }
-    const currencies = Data.Range.create(currency_top, self.currencies.items.len);
+    const currencies = Data.Range.from(cur_top, self.data.open_currencies.items.len);
 
     const booking_method: ?Inventory.BookingMethod = if (self.optTokSlice(open.booking_method)) |b|
         if (std.mem.eql(u8, b, "\"FIFO\""))
@@ -346,94 +373,87 @@ fn convertOpen(self: *Self, open_extra: Ast.ExtraIndex) Data.Entry.Payload {
         null;
 
     return .{ .open = .{
-        .account = account_tok,
+        .account = open.account,
         .currencies = currencies,
         .booking_method = booking_method,
     } };
 }
 
-fn convertBalance(self: *Self, bal_extra: Ast.ExtraIndex) Data.Entry.Payload {
-    const bal = self.ast.getExtra(bal_extra, Node.Balance);
-    const account_tok = self.tok(bal.account);
-    const amount = self.convertAmount(bal.amount);
+fn convertBalance(self: *Self, bal_extra: Ast.ExtraIndex) !Data.Entry.Payload {
+    const bal = self.data.ast.getExtra(bal_extra, Node.Balance);
+    _ = try self.internAccount(bal.account);
+    const amount = try self.convertAmount(bal.amount);
     const tolerance: ?Number = if (bal.tolerance.unwrap()) |tol_tok| self.parseNumber(tol_tok) else null;
-
     return .{ .balance = .{
-        .account = account_tok,
-        .amount = amount,
-        .tolerance = tolerance,
+        .account = bal.account,
+        .amount = Data.PackedNumber.pack(amount.number),
+        .amount_currency = amount.currency,
+        .tolerance = Data.PackedNumber.pack(tolerance),
     } };
 }
 
-fn convertPriceDecl(self: *Self, pd: anytype) Data.Entry.Payload {
-    const amount = self.convertAmount(pd.amount);
+fn convertPriceDecl(self: *Self, pd: anytype) !Data.Entry.Payload {
+    const cur_idx = try self.internCurrency(pd.currency);
+    const amount = try self.convertAmount(pd.amount);
     return .{ .price = .{
-        .currency = self.tokSlice(pd.currency),
-        .amount = amount,
+        .currency = cur_idx,
+        .amount_number = Data.PackedNumber.pack(amount.number),
+        .amount_currency = amount.currency.unwrap() orelse unreachable,
     } };
 }
 
-fn convertTagsLinks(self: *Self, range: Node.Range) !?Data.Range {
-    const tagslinks_top = self.tagslinks.len;
+fn convertTagsLinks(self: *Self, range: Node.Range) !Data.Range {
+    const tagslinks_top = self.data.tagslinks.len;
 
     // Explicit tags/links from the AST
-    for (self.ast.tokenList(range)) |tag_tok| {
+    for (self.data.ast.tokenList(range)) |tag_tok| {
         const token = self.tok(tag_tok);
         const kind: Data.TagLink.Kind = switch (token.tag) {
             .tag => .tag,
             .link => .link,
             else => continue,
         };
-        try self.tagslinks.append(self.alloc, Data.TagLink{
+        try self.data.tagslinks.append(self.alloc, Data.TagLink{
             .kind = kind,
-            .token = token,
+            .token = tag_tok,
             .explicit = true,
         });
     }
 
-    // Add tags from pushtag stack
-    var tags_iter = self.active_tags.keyIterator();
-    while (tags_iter.next()) |tag| {
-        const synthetic_token = Lexer.Token{
-            .tag = .tag,
-            .slice = tag.*,
-            .start_line = 0,
-            .end_line = 0,
-            .start_col = 0,
-            .end_col = 0,
-        };
-        try self.tagslinks.append(self.alloc, Data.TagLink{
+    // Implicit tags from active pushtag stack.
+    var tags_iter = self.active_tags.iterator();
+    while (tags_iter.next()) |kv| {
+        try self.data.tagslinks.append(self.alloc, Data.TagLink{
             .kind = .tag,
-            .token = synthetic_token,
+            .token = kv.value_ptr.*,
             .explicit = false,
         });
     }
 
-    return Data.Range.create(tagslinks_top, self.tagslinks.len);
+    return Data.Range.from(tagslinks_top, self.data.tagslinks.len);
 }
 
-fn convertMeta(self: *Self, range: Node.Range, add_from_stack: bool) !?Data.Range {
-    const meta_top = self.meta.len;
+fn convertMeta(self: *Self, range: Node.Range, add_from_stack: bool) !Data.Range {
+    const meta_top = self.data.meta.len;
 
-    for (self.ast.list(range)) |kv_index| {
-        const n = self.ast.node(kv_index);
+    for (self.data.ast.list(range)) |kv_index| {
+        const n = self.data.ast.node(kv_index);
         const kv = n.key_value;
-        try self.meta.append(self.alloc, Data.KeyValue{
-            .key = self.tok(kv.key),
-            .value = self.tok(kv.value),
+        try self.data.meta.append(self.alloc, Data.KeyValue{
+            .key = kv.key,
+            .value = kv.value,
         });
     }
 
-    // Add meta from pushmeta stack
     if (add_from_stack) {
         var meta_iter = self.active_meta.iterator();
         while (meta_iter.next()) |kv| {
-            try self.meta.append(self.alloc, Data.KeyValue{
-                .key = Lexer.Token{ .slice = kv.key_ptr.*, .tag = .key, .start_line = 0, .end_line = 0, .start_col = 0, .end_col = 0 },
-                .value = Lexer.Token{ .slice = kv.value_ptr.*, .tag = .string, .start_line = 0, .end_line = 0, .start_col = 0, .end_col = 0 },
+            try self.data.meta.append(self.alloc, Data.KeyValue{
+                .key = kv.value_ptr.key_tok,
+                .value = kv.value_ptr.value_tok,
             });
         }
     }
 
-    return Data.Range.create(meta_top, self.meta.len);
+    return Data.Range.from(meta_top, self.data.meta.len);
 }

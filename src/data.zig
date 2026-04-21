@@ -9,6 +9,10 @@ const Uri = @import("Uri.zig");
 const Lexer = @import("lexer.zig").Lexer;
 const StringPool = @import("StringPool.zig");
 
+const Sema = @import("Sema.zig");
+const Solver = @import("solver.zig").Solver;
+const Parser = @import("Parser.zig");
+
 const Self = @This();
 
 alloc: Allocator,
@@ -44,7 +48,7 @@ pub const Meta = std.MultiArrayList(KeyValue);
 
 pub const Import = struct {
     path: []const u8,
-    token: Ast.TokenIndex,
+    token: Lexer.Token,
 };
 pub const Imports = []Import;
 
@@ -281,7 +285,7 @@ pub const Pnl = struct {
 pub const Balance = struct {
     account: Ast.TokenIndex,
     amount: PackedNumber,
-    amount_currency: CurrencyIndex,
+    amount_currency: OptionalCurrencyIndex,
     tolerance: PackedNumber,
 };
 
@@ -329,8 +333,8 @@ pub const Posting = struct {
 };
 
 pub const Price = struct {
-    amount: Number,
-    amount_currency: CurrencyIndex,
+    amount: ?Number,
+    amount_currency: OptionalCurrencyIndex,
     total: bool, // true for @@ (total price), false for @ (per-unit)
 };
 
@@ -463,22 +467,27 @@ pub fn tokenSlice(self: *const Self, index: Ast.TokenIndex) []const u8 {
     return self.token(index).slice;
 }
 
+pub fn optTokenSlice(self: *const Self, index: Ast.OptionalTokenIndex) ?[]const u8 {
+    const i = index.unwrap() orelse return null;
+    return self.tokenSlice(i);
+}
+
 pub fn accountText(self: *const Self, i: AccountIndex) []const u8 {
-    return self.accounts.get(i);
+    return self.accounts.get(@enumFromInt(@intFromEnum(i)));
 }
 
 pub fn currencyText(self: *const Self, i: CurrencyIndex) []const u8 {
-    return self.currencies.get(i);
+    return self.currencies.get(@enumFromInt(@intFromEnum(i)));
 }
 
 pub fn accountTextOpt(self: *const Self, oi: OptionalAccountIndex) ?[]const u8 {
     const i = oi.unwrap() orelse return null;
-    return self.accounts.get(i);
+    return self.accountText(i);
 }
 
 pub fn currencyTextOpt(self: *const Self, oi: OptionalCurrencyIndex) ?[]const u8 {
     const i = oi.unwrap() orelse return null;
-    return self.currencies.get(i);
+    return self.currencyText(i);
 }
 
 /// Resolve an account token to its interned `AccountIndex` via the side-table.
@@ -537,6 +546,7 @@ pub const EntryView = struct {
             .pad => |p2| .{ .pad = p2 },
             .pnl => |p2| .{ .pnl = p2 },
             .balance => |b| .{ .balance = .{
+                .data = v.data,
                 .account = v.data.accountOf(b.account),
                 .account_token = b.account,
                 .amount = b.amount.unpack() orelse unreachable,
@@ -544,6 +554,7 @@ pub const EntryView = struct {
                 .tolerance = b.tolerance.unpack(),
             } },
             .price => |pd| .{ .price = .{
+                .data = v.data,
                 .currency = pd.currency,
                 .amount = pd.amount_number.unpack() orelse unreachable,
                 .amount_currency = pd.amount_currency,
@@ -572,6 +583,25 @@ pub const EntryView = struct {
             .transaction => |tx| .{ .data = v.data, .i = tx.postings.start, .end = tx.postings.end },
             else => .{ .data = v.data, .i = 0, .end = 0 },
         };
+    }
+
+    /// Position-stable hash suitable for tagging DOM ids in HTML output.
+    /// Mirrors the pre-refactor behaviour (date + payee/narration / account text).
+    pub fn hash(v: EntryView) u64 {
+        var wy = std.hash.Wyhash.init(0);
+        const d = v.date();
+        wy.update(std.mem.asBytes(&d));
+        switch (v.data.entries.items(.payload)[v.idx]) {
+            .transaction => |tx| {
+                if (v.data.optTokenSlice(tx.payee)) |payee| wy.update(payee);
+                if (v.data.optTokenSlice(tx.narration)) |narration| wy.update(narration);
+            },
+            .open => |open| {
+                wy.update(v.data.tokenSlice(open.account));
+            },
+            else => {},
+        }
+        return wy.final();
     }
 };
 
@@ -630,18 +660,51 @@ pub const OpenView = struct {
 };
 
 pub const BalanceView = struct {
+    data: *const Self,
     account: AccountIndex,
     /// Source token for the account (for error reporting).
     account_token: Ast.TokenIndex,
     amount: Number,
-    amount_currency: CurrencyIndex,
+    amount_currency: OptionalCurrencyIndex,
     tolerance: ?Number,
+
+    pub fn accountText(v: BalanceView) []const u8 {
+        return v.data.tokenSlice(v.account_token);
+    }
+
+    pub fn amountCurrencyText(v: BalanceView) ?[]const u8 {
+        return v.data.currencyTextOpt(v.amount_currency);
+    }
 };
 
 pub const PriceDeclView = struct {
+    data: *const Self,
     currency: CurrencyIndex,
     amount: Number,
     amount_currency: CurrencyIndex,
+
+    pub fn currencyText(v: PriceDeclView) []const u8 {
+        return v.data.currencyText(v.currency);
+    }
+
+    pub fn amountCurrencyText(v: PriceDeclView) []const u8 {
+        return v.data.currencyText(v.amount_currency);
+    }
+};
+
+/// Resolved lot spec (per-file text references).
+pub const LotSpecView = struct {
+    price: ?Number,
+    price_currency: ?[]const u8,
+    date: ?Date,
+    label: ?[]const u8,
+};
+
+/// Resolved price annotation (per-file text references).
+pub const PriceView = struct {
+    amount: ?Number,
+    amount_currency: ?[]const u8,
+    total: bool,
 };
 
 /// Lightweight handle for a posting. Hot fields resolved on demand;
@@ -675,24 +738,34 @@ pub const PostingView = struct {
     }
 
     pub fn amountCurrencyText(v: PostingView) ?[]const u8 {
-        const c = v.amountCurrency().unwrap() orelse return null;
-        return v.data.currencies.get(c);
+        return v.data.currencyTextOpt(v.amountCurrency());
     }
 
     pub fn astNode(v: PostingView) Ast.Node.OptionalIndex {
         return v.data.postings.items(.ast_node)[v.idx];
     }
 
-    pub fn price(v: PostingView) ?Price {
+    pub fn price(v: PostingView) ?PriceView {
         const opt = v.data.postings.items(.price)[v.idx];
         const idx = opt.unwrap() orelse return null;
-        return v.data.prices.items[@intFromEnum(idx)];
+        const p = v.data.prices.items[@intFromEnum(idx)];
+        return .{
+            .amount = p.amount,
+            .amount_currency = v.data.currencyTextOpt(p.amount_currency),
+            .total = p.total,
+        };
     }
 
-    pub fn lotSpec(v: PostingView) ?LotSpec {
+    pub fn lotSpec(v: PostingView) ?LotSpecView {
         const opt = v.data.postings.items(.lot_spec)[v.idx];
         const idx = opt.unwrap() orelse return null;
-        return v.data.lot_specs.items[@intFromEnum(idx)];
+        const ls = v.data.lot_specs.items[@intFromEnum(idx)];
+        return .{
+            .price = ls.price,
+            .price_currency = v.data.currencyTextOpt(ls.price_currency),
+            .date = ls.date,
+            .label = if (ls.label.unwrap()) |t| v.data.tokenSlice(t) else null,
+        };
     }
 
     pub fn metaKVs(v: PostingView) MetaIterator {
@@ -837,13 +910,170 @@ pub fn markDirty(self: *Self, entry_idx: u32) void {
     payloads[entry_idx].transaction.dirty = true;
 }
 
+/// Alias for `currencyTextOpt`, kept for symmetry with callers that already
+/// have an `OptionalCurrencyIndex` in hand.
+pub fn optCurrencyText(self: *const Self, oi: OptionalCurrencyIndex) ?[]const u8 {
+    return self.currencyTextOpt(oi);
+}
+
+fn toPoolIndex(i: anytype) StringPool.Index {
+    return @enumFromInt(@intFromEnum(i));
+}
+
+// --- construction helpers ---------------------------------------------------
+
+/// Parse + run Sema. Takes ownership of `source` and `uri` (by clone).
+pub fn loadSource(alloc: Allocator, uri: Uri, source: [:0]const u8, is_root: bool) !struct { Self, Imports } {
+    var ast = try Ast.parse(alloc, uri, source);
+    errdefer ast.deinit();
+
+    var data = try init(alloc, ast, uri);
+    errdefer data.deinit();
+
+    var sem = Sema.init(alloc, &data, is_root);
+    defer sem.deinit();
+
+    const imports = try sem.run();
+    return .{ data, imports };
+}
+
+/// Append a synthetic posting (pad, pnl). Returns the new index.
+pub fn appendPosting(self: *Self, p: Posting) !PostingIndex {
+    const idx: PostingIndex = @enumFromInt(self.postings.len);
+    try self.postings.append(self.alloc, p);
+    return idx;
+}
+
+/// Run the balancer over every transaction, solving for unknown numbers and
+/// currencies. Sets `dirty = true` on transactions that cannot be solved.
+pub fn balanceTransactions(self: *Self) !void {
+    var solver = Solver.init(self.alloc);
+    defer solver.deinit();
+    var diagnostics: Solver.CurrencyImbalance = undefined;
+
+    var one: ?Number = Number.fromFloat(1);
+
+    // Stable, reused per-tx staging buffers. We ensureTotalCapacity before
+    // filling so that the pointers we hand to the solver stay valid during
+    // `solve()`.
+    var stage_numbers: std.ArrayList(?Number) = .{};
+    defer stage_numbers.deinit(self.alloc);
+    var stage_currencies: std.ArrayList(?[]const u8) = .{};
+    defer stage_currencies.deinit(self.alloc);
+    var stage_prices: std.ArrayList(?Number) = .{};
+    defer stage_prices.deinit(self.alloc);
+    var stage_price_currencies: std.ArrayList(?[]const u8) = .{};
+    defer stage_price_currencies.deinit(self.alloc);
+
+    const payloads = self.entries.items(.payload);
+    const main_tokens = self.entries.items(.main_token);
+
+    entries: for (payloads, 0..) |*ep, entry_idx| {
+        if (std.meta.activeTag(ep.*) != .transaction) continue;
+        const tx = &ep.transaction;
+        const postings = tx.postings;
+        if (postings.isEmpty()) continue;
+
+        const n = postings.len();
+        stage_numbers.clearRetainingCapacity();
+        stage_currencies.clearRetainingCapacity();
+        stage_prices.clearRetainingCapacity();
+        stage_price_currencies.clearRetainingCapacity();
+        try stage_numbers.ensureTotalCapacity(self.alloc, n);
+        try stage_currencies.ensureTotalCapacity(self.alloc, n);
+        try stage_prices.ensureTotalCapacity(self.alloc, n);
+        try stage_price_currencies.ensureTotalCapacity(self.alloc, n);
+
+        for (postings.start..postings.end) |i| {
+            stage_numbers.appendAssumeCapacity(self.postings.items(.amount_number)[i].unpack());
+            stage_currencies.appendAssumeCapacity(self.optCurrencyText(self.postings.items(.amount_currency)[i]));
+
+            if (self.postings.items(.price)[i].unwrap()) |pidx| {
+                const pr = self.prices.items[@intFromEnum(pidx)];
+                stage_prices.appendAssumeCapacity(pr.amount);
+                stage_price_currencies.appendAssumeCapacity(self.optCurrencyText(pr.amount_currency));
+            } else {
+                stage_prices.appendAssumeCapacity(null);
+                stage_price_currencies.appendAssumeCapacity(null);
+            }
+        }
+
+        for (postings.start..postings.end, 0..) |i, k| {
+            const has_price = self.postings.items(.price)[i].unwrap() != null;
+            var price_ptr: *?Number = undefined;
+            var currency_ptr: *?[]const u8 = undefined;
+            var rounding_currency: ?[]const u8 = null;
+
+            if (has_price) {
+                if (stage_currencies.items[k] == null) {
+                    try self.addError(self.postings.items(.account)[i], self.uri, .cannot_infer_amount_currency_when_price_set);
+                    tx.dirty = true;
+                    solver.clear();
+                    continue :entries;
+                }
+                currency_ptr = &stage_price_currencies.items[k];
+                price_ptr = &stage_prices.items[k];
+                if (stage_numbers.items[k] == null) {
+                    rounding_currency = stage_currencies.items[k];
+                } else if (stage_prices.items[k] == null) {
+                    rounding_currency = stage_price_currencies.items[k];
+                }
+            } else {
+                currency_ptr = &stage_currencies.items[k];
+                price_ptr = &one;
+            }
+
+            try solver.addTriple(price_ptr, &stage_numbers.items[k], currency_ptr, rounding_currency);
+
+            if (stage_numbers.items[k]) |num| {
+                if (stage_currencies.items[k]) |c| {
+                    try solver.addToleranceInput(num, c);
+                }
+            }
+        }
+
+        _ = solver.solve(&diagnostics) catch |err| {
+            const tag: ErrorDetails.Tag = switch (err) {
+                error.NoCurrency => .tx_balance_no_currency,
+                error.DoesNotBalance => .{ .tx_does_not_balance = diagnostics },
+                error.NoSolution => .tx_no_solution,
+                error.TooManyVariables => .tx_too_many_variables,
+                error.DivisionByZero => .tx_division_by_zero,
+                error.MultipleSolutions => .tx_multiple_solutions,
+                else => return err,
+            };
+            tx.dirty = true;
+            try self.addError(main_tokens[entry_idx], self.uri, tag);
+            continue;
+        };
+
+        // Write solved values back.
+        for (postings.start..postings.end, 0..) |i, k| {
+            self.postings.items(.amount_number)[i] = PackedNumber.pack(stage_numbers.items[k]);
+            self.postings.items(.amount_currency)[i] = try self.internCurrencyOpt(stage_currencies.items[k]);
+            if (self.postings.items(.price)[i].unwrap()) |pidx| {
+                const p_ptr = &self.prices.items[@intFromEnum(pidx)];
+                p_ptr.amount = stage_prices.items[k];
+                p_ptr.amount_currency = try self.internCurrencyOpt(stage_price_currencies.items[k]);
+            }
+        }
+    }
+}
+
+/// Intern a (possibly-null) currency text, returning an `OptionalCurrencyIndex`.
+pub fn internCurrencyOpt(self: *Self, text: ?[]const u8) !OptionalCurrencyIndex {
+    const t = text orelse return .none;
+    const raw = try self.currencies.intern(self.alloc, t);
+    const idx: CurrencyIndex = @enumFromInt(@intFromEnum(raw));
+    return idx.toOptional();
+}
+
 comptime {
     // Document and guard current sizes. Bump these intentionally if the
     // layout changes; accidental growth should fail here.
     std.debug.assert(@sizeOf(Entry) == 64);
     std.debug.assert(@sizeOf(Entry.Payload) == 36); // sized by Balance (32) + tag byte
     std.debug.assert(@sizeOf(Posting) == 44);
-    std.debug.assert(@sizeOf(Price) == 24);
     std.debug.assert(@sizeOf(LotSpec) == 48);
     std.debug.assert(@sizeOf(TagLink) == 8);
     std.debug.assert(@sizeOf(KeyValue) == 8);

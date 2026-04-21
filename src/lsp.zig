@@ -663,100 +663,103 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         hints.deinit(alloc);
                     }
 
-                    for (file_data.entries.items) |entry| {
-                        switch (entry.payload) {
-                            .transaction => |tx| {
-                                if (tx.dirty) continue;
-                                const postings = tx.postings orelse continue;
+                    var entry_iter = file_data.iterEntriesOfKind(.transaction);
+                    while (entry_iter.next()) |entry| {
+                        const tx = switch (entry.payload()) {
+                            .transaction => |t| t,
+                            else => unreachable,
+                        };
+                        if (tx.tx.dirty) continue;
+                        const postings = tx.tx.postings;
+                        if (postings.isEmpty()) continue;
 
-                                // Measure source dot-column for alignment and
-                                // max frac width across source and inferred numbers.
-                                // Also count plain vs number-inferred postings so we can
-                                // suppress the lone hint when the user can trivially
-                                // mirror a single plain posting.
-                                var amount_dot_col: ?u32 = null;
-                                var frac_width: usize = 0;
-                                var plain_count: u32 = 0;
-                                var num_inferred_count: u32 = 0;
-                                for (postings.start..postings.end) |i| {
-                                    const ast_node_idx = file_data.postings.items(.ast_node)[i].unwrap() orelse continue;
-                                    const ap = file_data.ast.getExtra(
-                                        file_data.ast.node(ast_node_idx).posting,
-                                        Ast.Node.Posting,
-                                    );
-                                    const has_extras = ap.price.unwrap() != null or ap.lot_spec.unwrap() != null;
-                                    switch (file_data.ast.node(ap.amount)) {
-                                        .amount => |a| {
-                                            if (a.number.unwrap()) |n| {
-                                                const tok = file_data.ast.tokens.items[@intFromEnum(n)];
-                                                const nw = Renderer.sliceNumberWidths(tok.slice);
-                                                amount_dot_col = @max(amount_dot_col orelse 0, tok.start_col + @as(u32, @intCast(nw.int)));
-                                                frac_width = @max(frac_width, nw.frac);
-                                                if (!has_extras) plain_count += 1;
-                                            } else if (file_data.postings.items(.amount)[i].number) |num| {
-                                                var num_buf: [64]u8 = undefined;
-                                                const formatted = try std.fmt.bufPrint(&num_buf, "{f}", .{num});
-                                                frac_width = @max(frac_width, Renderer.sliceNumberWidths(formatted).frac);
-                                                if (!has_extras) num_inferred_count += 1;
-                                            }
-                                        },
-                                        else => {},
+                        // Measure source dot-column for alignment and max frac
+                        // width across source and inferred numbers. Also count
+                        // plain vs number-inferred postings so we can suppress
+                        // the lone hint when the user can trivially mirror a
+                        // single plain posting.
+                        var amount_dot_col: ?u32 = null;
+                        var frac_width: usize = 0;
+                        var plain_count: u32 = 0;
+                        var num_inferred_count: u32 = 0;
+                        for (postings.start..postings.end) |i| {
+                            const posting = file_data.postingAt(@intCast(i));
+                            const ast_node_idx = posting.astNode().unwrap() orelse continue;
+                            const ap = file_data.ast.getExtra(
+                                file_data.ast.node(ast_node_idx).posting,
+                                Ast.Node.Posting,
+                            );
+                            const has_extras = ap.price.unwrap() != null or ap.lot_spec.unwrap() != null;
+                            switch (file_data.ast.node(ap.amount)) {
+                                .amount => |a| {
+                                    if (a.number.unwrap()) |n| {
+                                        const tok = file_data.ast.tokens.items[@intFromEnum(n)];
+                                        const nw = Renderer.sliceNumberWidths(tok.slice);
+                                        amount_dot_col = @max(amount_dot_col orelse 0, tok.start_col + @as(u32, @intCast(nw.int)));
+                                        frac_width = @max(frac_width, nw.frac);
+                                        if (!has_extras) plain_count += 1;
+                                    } else if (posting.amountNumber()) |num| {
+                                        var num_buf: [64]u8 = undefined;
+                                        const formatted = try std.fmt.bufPrint(&num_buf, "{f}", .{num});
+                                        frac_width = @max(frac_width, Renderer.sliceNumberWidths(formatted).frac);
+                                        if (!has_extras) num_inferred_count += 1;
                                     }
-                                }
-                                const skip_lone_inferred = (postings.end - postings.start) == 2 and
-                                    plain_count == 1 and num_inferred_count == 1;
+                                },
+                                else => {},
+                            }
+                        }
+                        const skip_lone_inferred = (postings.end - postings.start) == 2 and
+                            plain_count == 1 and num_inferred_count == 1;
 
-                                // Emit hints
-                                for (postings.start..postings.end) |i| {
-                                    const account = file_data.postings.items(.account)[i];
-                                    if (account.start_line < params.range.start.line or
-                                        account.start_line > params.range.end.line) continue;
+                        for (postings.start..postings.end) |i| {
+                            const posting = file_data.postingAt(@intCast(i));
+                            const account_tok = file_data.token(posting.accountToken());
+                            if (account_tok.start_line < params.range.start.line or
+                                account_tok.start_line > params.range.end.line) continue;
 
-                                    const ast_node_idx = file_data.postings.items(.ast_node)[i].unwrap() orelse continue;
-                                    const ap = file_data.ast.getExtra(
-                                        file_data.ast.node(ast_node_idx).posting,
-                                        Ast.Node.Posting,
-                                    );
+                            const ast_node_idx = posting.astNode().unwrap() orelse continue;
+                            const ap = file_data.ast.getExtra(
+                                file_data.ast.node(ast_node_idx).posting,
+                                Ast.Node.Posting,
+                            );
 
-                                    // Amount hints (skip the lone inferred amount that the
-                                    // user can trivially mirror from a single plain posting).
-                                    const skip_this_amount = skip_lone_inferred and switch (file_data.ast.node(ap.amount)) {
-                                        .amount => |a| a.number.unwrap() == null and file_data.postings.items(.amount)[i].number != null,
-                                        else => false,
-                                    };
-                                    if (!skip_this_amount) try emitAmountHint(
-                                        alloc,
-                                        &hints,
-                                        &file_data.ast,
-                                        file_data.ast.node(ap.amount),
-                                        file_data.postings.items(.amount)[i],
-                                        account.start_line,
-                                        account.end_col,
-                                        .{
-                                            .target_col = amount_dot_col orelse account.end_col + 2,
-                                            .frac_width = frac_width,
-                                        },
-                                    );
+                            const resolved = ResolvedAmount{
+                                .number = posting.amountNumber(),
+                                .currency = posting.amountCurrencyText(),
+                            };
+                            const skip_this_amount = skip_lone_inferred and switch (file_data.ast.node(ap.amount)) {
+                                .amount => |a| a.number.unwrap() == null and resolved.number != null,
+                                else => false,
+                            };
+                            if (!skip_this_amount) try emitAmountHint(
+                                alloc,
+                                &hints,
+                                &file_data.ast,
+                                file_data.ast.node(ap.amount),
+                                resolved,
+                                account_tok.start_line,
+                                account_tok.end_col,
+                                .{
+                                    .target_col = amount_dot_col orelse account_tok.end_col + 2,
+                                    .frac_width = frac_width,
+                                },
+                            );
 
-                                    // Price annotation hints
-                                    if (ap.price.unwrap()) |price_node_idx| {
-                                        const price = file_data.postings.items(.price)[i] orelse continue;
-                                        const pa = file_data.ast.node(price_node_idx).price_annotation;
-                                        const at_token = file_data.ast.tokens.items[@intFromEnum(pa.total)];
-                                        try emitAmountHint(
-                                            alloc,
-                                            &hints,
-                                            &file_data.ast,
-                                            file_data.ast.node(pa.amount),
-                                            price.amount,
-                                            at_token.end_line,
-                                            at_token.end_col,
-                                            null,
-                                        );
-                                    }
-                                }
-                            },
-                            else => continue,
+                            if (ap.price.unwrap()) |price_node_idx| {
+                                const price = posting.price() orelse continue;
+                                const pa = file_data.ast.node(price_node_idx).price_annotation;
+                                const at_token = file_data.ast.tokens.items[@intFromEnum(pa.total)];
+                                try emitAmountHint(
+                                    alloc,
+                                    &hints,
+                                    &file_data.ast,
+                                    file_data.ast.node(pa.amount),
+                                    .{ .number = price.amount, .currency = price.amount_currency },
+                                    at_token.end_line,
+                                    at_token.end_col,
+                                    null,
+                                );
+                            }
                         }
                     }
 
@@ -894,6 +897,11 @@ const Alignment = struct {
     frac_width: usize,
 };
 
+const ResolvedAmount = struct {
+    number: ?@import("number.zig").Number,
+    currency: ?[]const u8,
+};
+
 /// Emit an inlay hint for an inferred amount (number and/or currency).
 /// With alignment, positions the hint for column-aligned posting amounts.
 /// Without alignment, positions after the last existing token (for price annotations).
@@ -902,7 +910,7 @@ fn emitAmountHint(
     hints: *std.ArrayList(lsp.types.InlayHint),
     ast: *Ast,
     ast_node: Ast.Node,
-    resolved: Data.Amount,
+    resolved: ResolvedAmount,
     after_line: u32,
     after_col: u32,
     alignment: ?Alignment,

@@ -88,12 +88,13 @@ const NetWorth = struct {
         }
     }
 
-    pub fn updateWithPosting(self: *NetWorth, posting: Data.Posting) !void {
-        if (std.mem.startsWith(u8, posting.account.slice, "Assets") or
-            std.mem.startsWith(u8, posting.account.slice, "Liabilities"))
+    pub fn updateWithPosting(self: *NetWorth, posting: Data.PostingView) !void {
+        const acc = posting.accountText();
+        if (std.mem.startsWith(u8, acc, "Assets") or
+            std.mem.startsWith(u8, acc, "Liabilities"))
         {
-            const currency = posting.amount.currency.?;
-            const amount = posting.amount.number.?;
+            const currency = posting.amountCurrencyText().?;
+            const amount = posting.amountNumber().?;
             try self.inv.add(currency, amount);
         }
     }
@@ -146,7 +147,7 @@ fn render(
             state: switch (date_state) {
                 .before => {
                     if (display.hasStartDate()) {
-                        if (display.isAfterStart(entry.date)) {
+                        if (display.isAfterStart(entry.date())) {
                             try tree.clearEarnings("Equity:Earnings:Previous");
                             continue :state .within;
                         }
@@ -156,34 +157,35 @@ fn render(
                 },
                 .within => {
                     date_state = .within;
-                    if (display.isAfterEnd(entry.date)) {
+                    if (display.isAfterEnd(entry.date())) {
                         break;
                     }
                 },
             }
 
-            switch (entry.payload) {
+            switch (entry.payload()) {
                 .open => |open| {
-                    _ = try tree.open(open.account.slice, null, open.booking_method);
+                    _ = try tree.open(open.accountText(), null, open.open.booking_method);
                 },
                 .transaction => |tx| {
-                    if (tx.dirty) continue;
+                    if (tx.tx.dirty) continue;
 
-                    if (tx.postings) |postings| {
-                        for (postings.start..postings.end) |i| {
-                            const p = data.postings.get(i);
-                            _ = try tree.postInventory(entry.date, p);
-                            try net_worth.updateWithPosting(p);
-                        }
+                    const postings = tx.tx.postings;
+                    for (postings.start..postings.end) |i| {
+                        const p = data.postingAt(@intCast(i));
+                        _ = try tree.postInventory(entry.date(), p);
+                        try net_worth.updateWithPosting(p);
                     }
                 },
                 .pad => |pad| {
-                    if (pad.pad_posting) |p| {
-                        _ = try tree.postInventory(entry.date, p);
+                    if (pad.pad_posting.unwrap()) |pidx| {
+                        const p = data.postingAt(@intFromEnum(pidx));
+                        _ = try tree.postInventory(entry.date(), p);
                         try net_worth.updateWithPosting(p);
                     }
-                    if (pad.pad_to_posting) |p| {
-                        _ = try tree.postInventory(entry.date, p);
+                    if (pad.pad_to_posting.unwrap()) |pidx| {
+                        const p = data.postingAt(@intFromEnum(pidx));
+                        _ = try tree.postInventory(entry.date(), p);
                         try net_worth.updateWithPosting(p);
                     }
                 },
