@@ -122,7 +122,7 @@ pub const Solver = struct {
         p.sum_by_currency.deinit();
     }
 
-    fn clear(p: *Solver) void {
+    pub fn clear(p: *Solver) void {
         p.num_number_vars = 0;
         p.num_currency_vars = 0;
         p.num_currencies = 0;

@@ -137,7 +137,7 @@ pub fn bookPosition(
     account: []const u8,
     currency: []const u8,
     lot: Lot,
-    lot_spec: ?Data.LotSpec,
+    lot_spec: ?Data.LotSpecView,
 ) !?Number {
     const index = self.node_by_name.get(account) orelse return error.AccountNotOpen;
     return try self.nodes.items[index].inventory.book(currency, lot, lot_spec);
@@ -148,32 +148,33 @@ pub const PostResult = struct {
     cost_currency: []const u8,
 };
 
-pub fn postInventory(self: *Self, date: Date, posting: Data.Posting) !?PostResult {
-    if (posting.price) |price| {
+pub fn postInventory(self: *Self, date: Date, posting: Data.PostingView) !?PostResult {
+    const account_text = posting.accountText();
+    const amount_number = posting.amountNumber().?;
+    const amount_currency = posting.amountCurrencyText().?;
+
+    if (posting.price()) |price| {
+        const cost_currency = price.amount_currency.?;
         const cost_weight = try self.bookPosition(
-            posting.account.slice,
-            posting.amount.currency.?,
+            account_text,
+            amount_currency,
             .{
-                .units = posting.amount.number.?,
+                .units = amount_number,
                 .cost = .{
-                    .price = price.amount.number.?,
-                    .currency = price.amount.currency.?,
+                    .price = price.amount.?,
+                    .currency = cost_currency,
                     .date = date,
                     .label = null,
                 },
             },
-            posting.lot_spec,
+            posting.lotSpec(),
         ) orelse return null;
         return PostResult{
             .cost_weight = cost_weight,
-            .cost_currency = price.amount.currency.?,
+            .cost_currency = cost_currency,
         };
     } else {
-        try self.addPosition(
-            posting.account.slice,
-            posting.amount.currency.?,
-            posting.amount.number.?,
-        );
+        try self.addPosition(account_text, amount_currency, amount_number);
         return null;
     }
 }

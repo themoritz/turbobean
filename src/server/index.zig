@@ -13,12 +13,12 @@ pub fn handler(alloc: Allocator, req: *std.http.Server.Request, state: *State) !
     defer state.releaseProject();
 
     for (state.project.sorted_entries.items) |sorted_entry| {
-        const data = state.project.files.items[sorted_entry.file];
-        const entry = data.entries.items[sorted_entry.entry];
-        switch (entry.payload) {
+        const data = &state.project.files.items[sorted_entry.file];
+        const entry = data.entryAt(sorted_entry.entry);
+        switch (entry.payload()) {
             .open => |open| {
                 try zts.print(t, "nav_account", .{
-                    .account = open.account.slice,
+                    .account = open.accountText(),
                 }, body.writer());
             },
             else => {},

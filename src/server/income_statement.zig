@@ -128,11 +128,12 @@ const DataTracker = struct {
         try self.plot_data.endPeriod(date_str, period_str);
     }
 
-    pub fn updateWithPosting(self: *DataTracker, posting: Data.Posting) !void {
-        if (std.mem.startsWith(u8, posting.account.slice, "Income") or
-            std.mem.startsWith(u8, posting.account.slice, "Expenses"))
+    pub fn updateWithPosting(self: *DataTracker, posting: Data.PostingView) !void {
+        const acc = posting.accountText();
+        if (std.mem.startsWith(u8, acc, "Income") or
+            std.mem.startsWith(u8, acc, "Expenses"))
         {
-            try self.inv.postInventory(&posting);
+            try self.inv.postInventory(posting);
         }
     }
 };
@@ -178,32 +179,33 @@ fn render(
         .entry => |e| {
             const data, const entry = e;
 
-            switch (entry.payload) {
+            switch (entry.payload()) {
                 .open => |open| {
-                    _ = try tree.open(open.account.slice, null, open.booking_method);
+                    _ = try tree.open(open.accountText(), null, open.open.booking_method);
                 },
                 .transaction => |tx| {
-                    if (tx.dirty) continue;
-                    if (!display.isWithinDateRange(entry.date)) continue;
+                    if (tx.tx.dirty) continue;
+                    if (!display.isWithinDateRange(entry.date())) continue;
 
-                    if (tx.postings) |postings| {
-                        for (postings.start..postings.end) |i| {
-                            const p = data.postings.get(i);
-                            _ = try tree.postInventory(entry.date, p);
-                            try data_tracker.updateWithPosting(p);
-                        }
+                    const postings = tx.tx.postings;
+                    for (postings.start..postings.end) |i| {
+                        const p = data.postingAt(@intCast(i));
+                        _ = try tree.postInventory(entry.date(), p);
+                        try data_tracker.updateWithPosting(p);
                     }
                 },
                 .pad => |pad| {
-                    if (pad.pad_posting == null) continue;
-                    if (!display.isWithinDateRange(entry.date)) continue;
+                    if (pad.pad_posting.unwrap() == null) continue;
+                    if (!display.isWithinDateRange(entry.date())) continue;
 
-                    if (pad.pad_posting) |p| {
-                        _ = try tree.postInventory(entry.date, p);
+                    if (pad.pad_posting.unwrap()) |pidx| {
+                        const p = data.postingAt(@intFromEnum(pidx));
+                        _ = try tree.postInventory(entry.date(), p);
                         try data_tracker.updateWithPosting(p);
                     }
-                    if (pad.pad_to_posting) |p| {
-                        _ = try tree.postInventory(entry.date, p);
+                    if (pad.pad_to_posting.unwrap()) |pidx| {
+                        const p = data.postingAt(@intFromEnum(pidx));
+                        _ = try tree.postInventory(entry.date(), p);
                         try data_tracker.updateWithPosting(p);
                     }
                 },
@@ -284,8 +286,8 @@ const Inventories = struct {
         try self.map.put(pair, old.add(amount));
     }
 
-    pub fn postInventory(self: *Inventories, posting: *const Data.Posting) !void {
-        try self.add(posting.account.slice, posting.amount.currency.?, posting.amount.number.?);
+    pub fn postInventory(self: *Inventories, posting: Data.PostingView) !void {
+        try self.add(posting.accountText(), posting.amountCurrencyText().?, posting.amountNumber().?);
     }
 
     pub fn balance(self: *const Inventories, account: []const u8, currency: []const u8) Number {

@@ -315,7 +315,7 @@ pub const IntervalIterator = struct {
 
     pub const Elem = union(enum) {
         cutoff: Date,
-        entry: struct { *Data, *Data.Entry },
+        entry: struct { *Data, Data.EntryView },
     };
 
     pub fn init(project: *const Project, interval: DisplaySettings.Interval) IntervalIterator {
@@ -329,7 +329,7 @@ pub const IntervalIterator = struct {
         // No more entries - emit remaining cutoff if any
         if (it.current_index >= it.project.sorted_entries.items.len) {
             if (it.next_cutoff) |cutoff| {
-                it.next_cutoff = null; // Clear it so we don't emit it again
+                it.next_cutoff = null;
                 return .{ .cutoff = cutoff };
             }
             return null;
@@ -337,23 +337,19 @@ pub const IntervalIterator = struct {
 
         const sorted_entry = it.project.sorted_entries.items[it.current_index];
         const data = &it.project.files.items[sorted_entry.file];
-        const entry = &data.entries.items[sorted_entry.entry];
+        const entry = data.entryAt(sorted_entry.entry);
 
-        // Initialize next_cutoff on first call
         if (it.next_cutoff == null) {
-            it.next_cutoff = it.interval.advanceDate(entry.date);
+            it.next_cutoff = it.interval.advanceDate(entry.date());
         }
 
         const cutoff = it.next_cutoff.?;
-        const cmp = cutoff.compare(entry.date);
+        const cmp = cutoff.compare(entry.date());
 
-        // If entry is before or on the same date as cutoff, emit entry first
-        // This ensures cutoffs come after entries when dates are equal
         if (cmp == .before or cmp == .equal) {
             it.current_index += 1;
             return .{ .entry = .{ data, entry } };
         } else {
-            // Entry is after cutoff, emit cutoff first and advance
             it.next_cutoff = it.interval.advanceDate(cutoff);
             return .{ .cutoff = cutoff };
         }

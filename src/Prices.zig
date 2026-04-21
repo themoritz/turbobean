@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Number = @import("number.zig").Number;
-const PriceDecl = @import("data.zig").PriceDecl;
+const PriceDeclView = @import("data.zig").PriceDeclView;
 const PlainInventory = @import("inventory.zig").PlainInventory;
 const Summary = @import("inventory.zig").Summary;
 
@@ -66,9 +66,9 @@ pub fn setPricePlain(self: *Self, from: []const u8, to: []const u8, rate: Number
     }
 }
 
-/// Assumes a `PriceDecl` has already been validated and contains a valid amount.
-pub fn setPrice(self: *Self, decl: PriceDecl) !void {
-    try self.setPricePlain(decl.currency, decl.amount.currency.?, decl.amount.number.?);
+/// Assumes a `PriceDeclView` has already been validated and contains a valid amount.
+pub fn setPrice(self: *Self, decl: PriceDeclView) !void {
+    try self.setPricePlain(decl.currencyText(), decl.amountCurrencyText(), decl.amount);
 }
 
 /// Get the conversion rate from one currency to another. Returns `null` if no
