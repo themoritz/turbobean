@@ -8,6 +8,7 @@ const Number = @import("number.zig").Number;
 const Data = @import("data.zig");
 const Date = @import("date.zig").Date;
 const StringPool = @import("StringPool.zig");
+const pool_maps = @import("pool_maps.zig");
 const AccountIndex = Data.AccountIndex;
 const CurrencyIndex = Data.CurrencyIndex;
 const Self = @This();
@@ -20,7 +21,7 @@ accounts_pool: *StringPool,
 currencies_pool: *StringPool,
 /// Dense lookup: `AccountIndex` → node index. Entries are `null` when the
 /// account hasn't been opened in this tree (or isn't a leaf directly).
-node_by_account: std.ArrayList(?u32),
+nodes_by_account: pool_maps.AccountMap(u32),
 nodes: std.ArrayList(Node),
 
 pub const Node = struct {
@@ -55,25 +56,17 @@ pub fn init(alloc: Allocator, accounts_pool: *StringPool, currencies_pool: *Stri
         .alloc = alloc,
         .accounts_pool = accounts_pool,
         .currencies_pool = currencies_pool,
-        .node_by_account = .{},
+        .nodes_by_account = .{},
         .nodes = nodes,
     };
 }
 
 pub fn deinit(self: *Self) void {
-    self.node_by_account.deinit(self.alloc);
+    self.nodes_by_account.deinit(self.alloc);
     for (self.nodes.items) |*node| {
         node.deinit(self.alloc);
     }
     self.nodes.deinit(self.alloc);
-}
-
-fn ensureAccountSlot(self: *Self, idx: AccountIndex) !*?u32 {
-    const i = @intFromEnum(idx);
-    while (self.node_by_account.items.len <= i) {
-        try self.node_by_account.append(self.alloc, null);
-    }
-    return &self.node_by_account.items[i];
 }
 
 fn accountText(self: *const Self, idx: AccountIndex) []const u8 {
@@ -87,8 +80,7 @@ pub fn open(
     currencies: ?[]const CurrencyIndex,
     booking_method: ?BookingMethod,
 ) !?u32 {
-    const slot = try self.ensureAccountSlot(account);
-    if (slot.* != null) return null;
+    if (self.nodes_by_account.contains(account)) return null;
 
     const name = self.accountText(account);
 
@@ -113,28 +105,21 @@ pub fn open(
         current_index = new_index;
     }
 
-    slot.* = current_index;
+    try self.nodes_by_account.put(self.alloc, account, current_index);
     return current_index;
 }
 
 pub fn close(self: *Self, account: AccountIndex) !void {
-    const i = @intFromEnum(account);
-    if (i >= self.node_by_account.items.len or self.node_by_account.items[i] == null) {
-        return error.AccountNotOpen;
-    }
-    self.node_by_account.items[i] = null;
+    if (!self.nodes_by_account.contains(account)) return error.AccountNotOpen;
+    self.nodes_by_account.remove(account);
 }
 
 pub fn accountOpen(self: *const Self, account: AccountIndex) bool {
-    const i = @intFromEnum(account);
-    if (i >= self.node_by_account.items.len) return false;
-    return self.node_by_account.items[i] != null;
+    return self.nodes_by_account.contains(account);
 }
 
 pub fn nodeOf(self: *const Self, account: AccountIndex) ?u32 {
-    const i = @intFromEnum(account);
-    if (i >= self.node_by_account.items.len) return null;
-    return self.node_by_account.items[i];
+    return self.nodes_by_account.get(account);
 }
 
 pub fn isPlainAccount(self: *const Self, account: AccountIndex) !bool {
@@ -215,8 +200,8 @@ pub fn postInventory(self: *Self, date: Date, posting: Data.PostingView) !?PostR
 pub fn clearEarnings(self: *Self, to_account: AccountIndex) !void {
     const to_index = self.nodeOf(to_account) orelse (try self.open(to_account, null, null)).?;
 
-    for (self.node_by_account.items) |maybe| {
-        const from_index = maybe orelse continue;
+    var it = self.nodes_by_account.iterator();
+    while (it.next()) |from_index| {
         const relevant = blk: {
             var cur = from_index;
             while (self.nodes.items[cur].parent) |p| {
