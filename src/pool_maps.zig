@@ -35,20 +35,49 @@ fn GenericMap(K: type, V: type) type {
             if (i < self.array.items.len) self.array.items[i] = null;
         }
 
+        /// Keeps capacity
+        pub fn clear(self: *Self) void {
+            @memset(self.array.items, null);
+        }
+
         pub fn contains(self: *const Self, k: K) bool {
             return self.get(k) != null;
         }
+
+        pub const Entry = struct {
+            key: K,
+            value_ptr: *V,
+        };
 
         pub const Iterator = struct {
             parent: *const Self,
             index: usize = 0,
 
-            pub fn next(it: *Iterator) ?V {
+            pub fn next(it: *Iterator) ?Entry {
                 const items = it.parent.array.items;
                 while (it.index < items.len) : (it.index += 1) {
-                    if (items[it.index]) |v| {
+                    if (items[it.index] != null) {
+                        const key: K = @enumFromInt(it.index);
+                        const value_ptr = &items[it.index].?;
                         it.index += 1;
-                        return v;
+                        return .{ .key = key, .value_ptr = value_ptr };
+                    }
+                }
+                return null;
+            }
+        };
+
+        pub const ValueIterator = struct {
+            parent: *const Self,
+            index: usize = 0,
+
+            pub fn next(it: *ValueIterator) ?*V {
+                const items = it.parent.array.items;
+                while (it.index < items.len) : (it.index += 1) {
+                    if (items[it.index] != null) {
+                        const value_ptr = &items[it.index].?;
+                        it.index += 1;
+                        return value_ptr;
                     }
                 }
                 return null;
@@ -56,6 +85,10 @@ fn GenericMap(K: type, V: type) type {
         };
 
         pub fn iterator(self: *const Self) Iterator {
+            return .{ .parent = self };
+        }
+
+        pub fn valueIterator(self: *const Self) ValueIterator {
             return .{ .parent = self };
         }
 

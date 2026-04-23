@@ -200,8 +200,9 @@ pub fn postInventory(self: *Self, date: Date, posting: Data.PostingView) !?PostR
 pub fn clearEarnings(self: *Self, to_account: AccountIndex) !void {
     const to_index = self.nodeOf(to_account) orelse (try self.open(to_account, null, null)).?;
 
-    var it = self.nodes_by_account.iterator();
-    while (it.next()) |from_index| {
+    var it = self.nodes_by_account.valueIterator();
+    while (it.next()) |from_index_ptr| {
+        const from_index = from_index_ptr.*;
         const relevant = blk: {
             var cur = from_index;
             while (self.nodes.items[cur].parent) |p| {
