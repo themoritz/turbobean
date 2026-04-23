@@ -143,7 +143,7 @@ fn render(
                         if (!units.is_zero()) {
                             try zts.print(tpl, "transaction_balance_cur", .{
                                 .units = units.withPrecision(2),
-                                .cur = project.currencies.get(@enumFromInt(@intFromEnum(kv.key_ptr.*))),
+                                .cur = project.currencies.get(@enumFromInt(@intFromEnum(kv.key))),
                             }, out);
                         }
                     }

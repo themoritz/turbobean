@@ -222,7 +222,7 @@ pub fn clearEarnings(self: *Self, to_account: AccountIndex) !void {
 
             var cur_iter = summary.by_currency.iterator();
             while (cur_iter.next()) |cur_kv| {
-                try to_inv.add(cur_kv.key_ptr.*, cur_kv.value_ptr.total_units());
+                try to_inv.add(cur_kv.key, cur_kv.value_ptr.total_units());
             }
 
             from_inv.clear();

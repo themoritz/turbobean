@@ -6,6 +6,7 @@ const Data = @import("data.zig");
 const LotSpec = Data.LotSpecView;
 const CurrencyIndex = Data.CurrencyIndex;
 const StringPool = @import("StringPool.zig");
+const CurrencyMap = @import("pool_maps.zig").CurrencyMap;
 
 pub const BookingMethod = enum {
     fifo,
@@ -190,25 +191,21 @@ pub const Lots = struct {
     }
 };
 
-/// `AutoHashMap` keyed by the dense `CurrencyIndex` u32. Trivial hash = u64
-/// identity; no string compare on lookup.
-pub const CurrencyMap = std.AutoHashMap;
-
 pub const LotsInventory = struct {
     alloc: Allocator,
     restricted: bool,
     booking_method: BookingMethod,
-    by_currency: CurrencyMap(CurrencyIndex, Lots),
+    by_currency: CurrencyMap(Lots),
 
     pub fn init(
         alloc: Allocator,
         booking_method: BookingMethod,
         currencies: ?[]const CurrencyIndex,
     ) !LotsInventory {
-        var by_currency = CurrencyMap(CurrencyIndex, Lots).init(alloc);
-        errdefer by_currency.deinit();
+        var by_currency: CurrencyMap(Lots) = .{};
+        errdefer by_currency.deinit(alloc);
         if (currencies) |cs| {
-            for (cs) |c| try by_currency.put(c, Lots.init(booking_method));
+            for (cs) |c| try by_currency.put(alloc, c, Lots.init(booking_method));
         }
         return .{
             .alloc = alloc,
@@ -221,7 +218,7 @@ pub const LotsInventory = struct {
     pub fn deinit(self: *LotsInventory) void {
         var iter = self.by_currency.valueIterator();
         while (iter.next()) |v| v.deinit(self.alloc);
-        self.by_currency.deinit();
+        self.by_currency.deinit(self.alloc);
     }
 
     pub fn book(
@@ -238,7 +235,7 @@ pub const LotsInventory = struct {
             } else {
                 var lots = Lots.init(self.booking_method);
                 const cost_weight = lots.book(self.alloc, lot, lot_spec);
-                try self.by_currency.put(currency, lots);
+                try self.by_currency.put(self.alloc, currency, lots);
                 return cost_weight;
             }
         }
@@ -260,7 +257,7 @@ pub const LotsInventory = struct {
             var lots = try kv.value_ptr.longs.clone(alloc);
             errdefer lots.deinit(alloc);
             try lots.appendSlice(alloc, kv.value_ptr.shorts.items);
-            try result.by_currency.put(kv.key_ptr.*, .{
+            try result.by_currency.put(alloc, kv.key, .{
                 .plain = Number.zero(),
                 .lots = lots,
             });
@@ -274,7 +271,7 @@ pub const LotsInventory = struct {
 
         var iter = self.by_currency.iterator();
         while (iter.next()) |kv| {
-            try inv.add(kv.key_ptr.*, kv.value_ptr.balance());
+            try inv.add(kv.key, kv.value_ptr.balance());
         }
 
         return inv;
@@ -293,14 +290,14 @@ pub const LotsInventory = struct {
             .alloc = alloc,
             .restricted = self.restricted,
             .booking_method = self.booking_method,
-            .by_currency = CurrencyMap(CurrencyIndex, Lots).init(alloc),
+            .by_currency = .{},
         };
         errdefer result.deinit();
         var iter = self.by_currency.iterator();
         while (iter.next()) |kv| {
             var lots = try kv.value_ptr.clone(alloc);
             errdefer lots.deinit(alloc);
-            try result.by_currency.put(kv.key_ptr.*, lots);
+            try result.by_currency.put(alloc, kv.key, lots);
         }
         return result;
     }
@@ -308,7 +305,7 @@ pub const LotsInventory = struct {
     pub fn clear(self: *LotsInventory) void {
         var iter = self.by_currency.valueIterator();
         while (iter.next()) |v| v.deinit(self.alloc);
-        self.by_currency.clearRetainingCapacity();
+        self.by_currency.clear();
     }
 };
 
@@ -316,13 +313,13 @@ pub const LotsInventory = struct {
 pub const PlainInventory = struct {
     alloc: Allocator,
     restricted: bool,
-    by_currency: CurrencyMap(CurrencyIndex, Number),
+    by_currency: CurrencyMap(Number),
 
     pub fn init(alloc: Allocator, currencies: ?[]const CurrencyIndex) !PlainInventory {
-        var by_currency = CurrencyMap(CurrencyIndex, Number).init(alloc);
-        errdefer by_currency.deinit();
+        var by_currency: CurrencyMap(Number) = .{};
+        errdefer by_currency.deinit(alloc);
         if (currencies) |cs| {
-            for (cs) |c| try by_currency.put(c, Number.zero());
+            for (cs) |c| try by_currency.put(alloc, c, Number.zero());
         }
         return .{
             .alloc = alloc,
@@ -332,13 +329,13 @@ pub const PlainInventory = struct {
     }
 
     pub fn deinit(self: *PlainInventory) void {
-        self.by_currency.deinit();
+        self.by_currency.deinit(self.alloc);
     }
 
     pub fn add(self: *PlainInventory, currency: CurrencyIndex, number: Number) !void {
         const old = try self.balance(currency);
         const new = old.add(number);
-        try self.by_currency.put(currency, new);
+        try self.by_currency.put(self.alloc, currency, new);
     }
 
     pub fn balance(self: *const PlainInventory, currency: CurrencyIndex) !Number {
@@ -359,7 +356,7 @@ pub const PlainInventory = struct {
         errdefer result.deinit();
         var iter = self.by_currency.iterator();
         while (iter.next()) |kv| {
-            try result.by_currency.put(kv.key_ptr.*, .{
+            try result.by_currency.put(alloc, kv.key, .{
                 .plain = kv.value_ptr.*,
                 .lots = .{},
             });
@@ -371,12 +368,12 @@ pub const PlainInventory = struct {
         return .{
             .alloc = alloc,
             .restricted = self.restricted,
-            .by_currency = try self.by_currency.cloneWithAllocator(alloc),
+            .by_currency = try self.by_currency.clone(alloc),
         };
     }
 
     pub fn clear(self: *PlainInventory) void {
-        self.by_currency.clearRetainingCapacity();
+        self.by_currency.clear();
     }
 };
 
@@ -471,7 +468,7 @@ pub const Inventory = union(enum) {
 };
 
 pub const Summary = struct {
-    by_currency: CurrencyMap(CurrencyIndex, CurrencySummary),
+    by_currency: CurrencyMap(CurrencySummary),
     alloc: Allocator,
 
     pub const CurrencySummary = struct {
@@ -487,7 +484,7 @@ pub const Summary = struct {
 
     pub fn init(alloc: Allocator) Summary {
         return .{
-            .by_currency = CurrencyMap(CurrencyIndex, CurrencySummary).init(alloc),
+            .by_currency = .{},
             .alloc = alloc,
         };
     }
@@ -495,7 +492,7 @@ pub const Summary = struct {
     pub fn deinit(self: *Summary) void {
         var iter = self.by_currency.valueIterator();
         while (iter.next()) |v| v.lots.deinit(self.alloc);
-        self.by_currency.deinit();
+        self.by_currency.deinit(self.alloc);
     }
 
     pub fn isEmpty(self: *const Summary) bool {
@@ -509,11 +506,11 @@ pub const Summary = struct {
     pub fn combine(self: *Summary, other: Summary) !void {
         var iter = other.by_currency.iterator();
         while (iter.next()) |entry| {
-            if (self.by_currency.getPtr(entry.key_ptr.*)) |v| {
+            if (self.by_currency.getPtr(entry.key)) |v| {
                 v.plain = v.plain.add(entry.value_ptr.plain);
                 for (entry.value_ptr.lots.items) |l| try v.lots.append(self.alloc, l);
             } else {
-                try self.by_currency.put(entry.key_ptr.*, .{
+                try self.by_currency.put(self.alloc, entry.key, .{
                     .plain = entry.value_ptr.plain,
                     .lots = try entry.value_ptr.lots.clone(self.alloc),
                 });
@@ -596,7 +593,7 @@ pub const Summary = struct {
         std.debug.assert(n <= buf.len);
         var i: usize = 0;
         var it = self.by_currency.keyIterator();
-        while (it.next()) |k| : (i += 1) buf[i] = k.*;
+        while (it.next()) |k| : (i += 1) buf[i] = k;
         const slice = buf[0..n];
         const SortCtx = struct {
             pool: *const StringPool,
@@ -616,7 +613,7 @@ pub const Summary = struct {
 
         var iter = self.by_currency.iterator();
         while (iter.next()) |entry| {
-            try result.add(entry.key_ptr.*, entry.value_ptr.total_units());
+            try result.add(entry.key, entry.value_ptr.total_units());
         }
 
         return result;

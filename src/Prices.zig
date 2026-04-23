@@ -70,7 +70,7 @@ pub fn convertInventory(
     result.clear();
     var iter = inventory.by_currency.iterator();
     while (iter.next()) |kv| {
-        const from = kv.key_ptr.*;
+        const from = kv.key;
         const balance = kv.value_ptr.*;
         if (self.convert(balance, from, to)) |converted| {
             try result.add(to, converted);
