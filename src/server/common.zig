@@ -252,7 +252,7 @@ pub const TreeRenderer = struct {
         }, self.out);
         var iter = inv.by_currency.iterator();
         currency: while (iter.next()) |kv| {
-            const cur_text = self.project.currencies.get(@enumFromInt(@intFromEnum(kv.key_ptr.*)));
+            const cur_text = self.project.currencies.get(@enumFromInt(@intFromEnum(kv.key)));
             for (self.operating_currencies) |cur| {
                 if (std.mem.eql(u8, cur, cur_text)) continue :currency;
             }

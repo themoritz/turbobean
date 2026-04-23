@@ -83,7 +83,7 @@ const NetWorth = struct {
             const balance = kv.value_ptr.*;
             try self.plot_data.points.append(self.alloc, .{
                 .date = try self.string_store.print("{f}", .{date}),
-                .currency = self.project.currencies.get(@enumFromInt(@intFromEnum(kv.key_ptr.*))),
+                .currency = self.project.currencies.get(@enumFromInt(@intFromEnum(kv.key))),
                 .balance = balance.toFloat(),
                 .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
             });

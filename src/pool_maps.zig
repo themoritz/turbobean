@@ -24,6 +24,13 @@ fn GenericMap(K: type, V: type) type {
             return if (i < self.array.items.len) self.array.items[i] else null;
         }
 
+        pub fn getPtr(self: *const Self, k: K) ?*V {
+            const i: usize = @intFromEnum(k);
+            if (i >= self.array.items.len) return null;
+            if (self.array.items[i] == null) return null;
+            return &self.array.items[i].?;
+        }
+
         pub fn put(self: *Self, alloc: Allocator, k: K, v: V) !void {
             const i: usize = @intFromEnum(k);
             try self.ensure(alloc, i);
@@ -42,6 +49,21 @@ fn GenericMap(K: type, V: type) type {
 
         pub fn contains(self: *const Self, k: K) bool {
             return self.get(k) != null;
+        }
+
+        /// Linear scan — dense arrays keep no tally.
+        pub fn count(self: *const Self) usize {
+            var n: usize = 0;
+            for (self.array.items) |slot| if (slot != null) {
+                n += 1;
+            };
+            return n;
+        }
+
+        /// Shallow copy. Caller is responsible for deep-copying values if V
+        /// owns external memory.
+        pub fn clone(self: *const Self, alloc: Allocator) !Self {
+            return .{ .array = try self.array.clone(alloc) };
         }
 
         pub const Entry = struct {
@@ -84,11 +106,34 @@ fn GenericMap(K: type, V: type) type {
             }
         };
 
+        /// Yields keys by value (dense keys are derived from the slot index,
+        /// so there is nothing to take a pointer to).
+        pub const KeyIterator = struct {
+            parent: *const Self,
+            index: usize = 0,
+
+            pub fn next(it: *KeyIterator) ?K {
+                const items = it.parent.array.items;
+                while (it.index < items.len) : (it.index += 1) {
+                    if (items[it.index] != null) {
+                        const key: K = @enumFromInt(it.index);
+                        it.index += 1;
+                        return key;
+                    }
+                }
+                return null;
+            }
+        };
+
         pub fn iterator(self: *const Self) Iterator {
             return .{ .parent = self };
         }
 
         pub fn valueIterator(self: *const Self) ValueIterator {
+            return .{ .parent = self };
+        }
+
+        pub fn keyIterator(self: *const Self) KeyIterator {
             return .{ .parent = self };
         }
 

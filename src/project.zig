@@ -328,15 +328,15 @@ pub fn check(self: *Self) !void {
         file: u8,
     };
 
-    var lastPads: std.AutoHashMap(AccountIndex, LastPad) = .init(self.alloc);
-    defer lastPads.deinit();
+    var lastPads: pool_maps.AccountMap(LastPad) = .{};
+    defer lastPads.deinit(self.alloc);
 
     const PnlEntry = struct {
         income_token: Ast.TokenIndex,
         file: u8,
     };
-    var pnlAccounts: std.AutoHashMap(AccountIndex, PnlEntry) = .init(self.alloc);
-    defer pnlAccounts.deinit();
+    var pnlAccounts: pool_maps.AccountMap(PnlEntry) = .{};
+    defer pnlAccounts.deinit(self.alloc);
 
     var tree = try Tree.init(self.alloc, self.accounts, self.currencies);
     defer tree.deinit();
@@ -383,11 +383,11 @@ pub fn check(self: *Self) !void {
                     continue;
                 }
 
-                if (lastPads.get(acc_idx)) |_| {
+                if (lastPads.contains(acc_idx)) {
                     try self.addError(entry.mainToken(), sorted.file, .multiple_pads);
                 } else {
                     const pad_ptr: *Data.Pad = &data.entries.items(.payload)[sorted.entry].pad;
-                    try lastPads.put(acc_idx, .{
+                    try lastPads.put(self.alloc, acc_idx, .{
                         .date = entry.date(),
                         .pad_account_token = pad.account,
                         .pad_to_token = pad.pad_to,
@@ -449,7 +449,7 @@ pub fn check(self: *Self) !void {
                     try tree.addPosition(pad_to_acc_idx, cur_idx, missing.negate());
                     last_pad.pad_ptr.pad_to_posting = pad_to_idx.toOptional();
 
-                    _ = lastPads.remove(acc_idx);
+                    lastPads.remove(acc_idx);
                 } else {
                     const tolerance = if (balance.tolerance) |t| t else expected.getTolerance();
                     if (!expected.is_within_tolerance(accumulated, tolerance)) {
@@ -475,7 +475,7 @@ pub fn check(self: *Self) !void {
                     try self.addError(pnl.account, sorted.file, .pnl_account_must_be_lots);
                     continue;
                 }
-                try pnlAccounts.put(acc_idx, .{ .income_token = pnl.income_account, .file = sorted.file });
+                try pnlAccounts.put(self.alloc, acc_idx, .{ .income_token = pnl.income_account, .file = sorted.file });
             },
             .transaction => |_| {
                 const tx_ptr: *Data.Transaction = &data.entries.items(.payload)[sorted.entry].transaction;
