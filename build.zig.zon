@@ -2,7 +2,7 @@
     .name = .turbobean,
     .fingerprint = 0x8380b6b6b2f5bf2b,
     .version = "0.0.0-dev",
-
+    .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .zts = .{
             .url = "git+https://github.com/zigster64/zts?ref=main#ca98e23fcf1a4fa331c80f5cd2e72f6838daf7ee",
