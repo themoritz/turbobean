@@ -527,15 +527,14 @@ pub const Summary = struct {
     }
 
     /// Resolve currency texts through a `StringPool` borrowed from the caller.
-    /// Output is sorted by currency text for deterministic rendering.
+    /// Iteration order follows `CurrencyIndex`, i.e., the order in which
+    /// currencies were first interned — deterministic across runs.
     pub fn treeDisplay(self: *const Summary, pool: *const StringPool, indent: u32, writer: std.io.AnyWriter) !void {
-        var alloc_buf: [64]CurrencyIndex = undefined;
-        const sorted = try sortedKeys(self, pool, &alloc_buf);
-
+        var it = self.by_currency.iterator();
         var first = true;
-        for (sorted) |cur_idx| {
-            const v = self.by_currency.get(cur_idx).?;
-            const cur_text = pool.get(@enumFromInt(@intFromEnum(cur_idx)));
+        while (it.next()) |entry| {
+            const v = entry.value_ptr;
+            const cur_text = pool.get(@enumFromInt(@intFromEnum(entry.key)));
             if (!v.plain.is_zero()) {
                 if (!first) {
                     try writer.writeByte('\n');
@@ -561,12 +560,10 @@ pub const Summary = struct {
     }
 
     pub fn hoverDisplay(self: *const Summary, pool: *const StringPool, writer: *std.Io.Writer) !void {
-        var alloc_buf: [64]CurrencyIndex = undefined;
-        const sorted = try sortedKeys(self, pool, &alloc_buf);
-
-        for (sorted) |cur_idx| {
-            const v = self.by_currency.get(cur_idx).?;
-            const cur_text = pool.get(@enumFromInt(@intFromEnum(cur_idx)));
+        var it = self.by_currency.iterator();
+        while (it.next()) |entry| {
+            const v = entry.value_ptr;
+            const cur_text = pool.get(@enumFromInt(@intFromEnum(entry.key)));
             if (!v.plain.is_zero()) {
                 try writer.print("• {f} {s}\n", .{ v.plain, cur_text });
             }
@@ -579,32 +576,6 @@ pub const Summary = struct {
                 try writer.print("}}\n", .{});
             }
         }
-    }
-
-    /// Fill `buf` with the summary's currencies, sorted by their text. Returns
-    /// the populated slice (caller's stack buffer is large enough in practice
-    /// — inventories rarely span more than a handful of currencies).
-    fn sortedKeys(
-        self: *const Summary,
-        pool: *const StringPool,
-        buf: *[64]CurrencyIndex,
-    ) ![]CurrencyIndex {
-        const n = self.by_currency.count();
-        std.debug.assert(n <= buf.len);
-        var i: usize = 0;
-        var it = self.by_currency.keyIterator();
-        while (it.next()) |k| : (i += 1) buf[i] = k;
-        const slice = buf[0..n];
-        const SortCtx = struct {
-            pool: *const StringPool,
-            pub fn lessThan(ctx: @This(), a: CurrencyIndex, b: CurrencyIndex) bool {
-                const a_text = ctx.pool.get(@enumFromInt(@intFromEnum(a)));
-                const b_text = ctx.pool.get(@enumFromInt(@intFromEnum(b)));
-                return std.mem.order(u8, a_text, b_text) == .lt;
-            }
-        };
-        std.sort.block(CurrencyIndex, slice, SortCtx{ .pool = pool }, SortCtx.lessThan);
-        return slice;
     }
 
     pub fn toPlain(self: *const Summary, alloc: Allocator) !PlainInventory {
