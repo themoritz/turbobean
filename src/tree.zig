@@ -7,7 +7,9 @@ const Summary = @import("inventory.zig").Summary;
 const Number = @import("number.zig").Number;
 const Data = @import("data.zig");
 const Date = @import("date.zig").Date;
-const StringPool = @import("StringPool.zig");
+const string_pool = @import("string_pool.zig");
+const AccountPool = string_pool.AccountPool;
+const CurrencyPool = string_pool.CurrencyPool;
 const AccountMap = @import("pool_maps.zig").AccountMap;
 const AccountIndex = Data.AccountIndex;
 const CurrencyIndex = Data.CurrencyIndex;
@@ -17,8 +19,8 @@ const Stack = @import("StackStack.zig").Stack(usize, 64);
 alloc: Allocator,
 /// Borrowed project intern pools — used for account/currency lookups and
 /// when rendering text.
-accounts_pool: *StringPool,
-currencies_pool: *StringPool,
+accounts_pool: *AccountPool,
+currencies_pool: *CurrencyPool,
 /// Dense lookup: `AccountIndex` → node index. Entries are `null` when the
 /// account hasn't been opened in this tree (or isn't a leaf directly).
 nodes_by_account: AccountMap(u32),
@@ -45,7 +47,7 @@ pub const Node = struct {
     }
 };
 
-pub fn init(alloc: Allocator, accounts_pool: *StringPool, currencies_pool: *StringPool) !Self {
+pub fn init(alloc: Allocator, accounts_pool: *AccountPool, currencies_pool: *CurrencyPool) !Self {
     var nodes = std.ArrayList(Node){};
     try nodes.append(alloc, Node.init(
         "",
@@ -69,10 +71,6 @@ pub fn deinit(self: *Self) void {
     self.nodes.deinit(self.alloc);
 }
 
-fn accountText(self: *const Self, idx: AccountIndex) []const u8 {
-    return self.accounts_pool.get(@enumFromInt(@intFromEnum(idx)));
-}
-
 /// Returns null if the account is already open.
 pub fn open(
     self: *Self,
@@ -82,7 +80,7 @@ pub fn open(
 ) !?u32 {
     if (self.nodes_by_account.contains(account)) return null;
 
-    const name = self.accountText(account);
+    const name = self.accounts_pool.get(account);
 
     var current_index: u32 = 0; // Start from root
     var iter = std.mem.splitScalar(u8, name, ':');
@@ -413,53 +411,47 @@ fn unicodeLen(name: []const u8) !u32 {
 // --- tests ------------------------------------------------------------------
 
 const TestFixture = struct {
-    accounts: StringPool,
-    currencies: StringPool,
+    accounts: AccountPool,
+    currencies: CurrencyPool,
     tree: Self,
 
-    fn init(alloc: Allocator) !TestFixture {
-        var accounts = try StringPool.init(alloc);
-        errdefer accounts.deinit(alloc);
-        var currencies = try StringPool.init(alloc);
-        errdefer currencies.deinit(alloc);
-        return .{
-            .accounts = accounts,
-            .currencies = currencies,
-            .tree = undefined,
-        };
-    }
-
-    fn setupTree(self: *TestFixture, alloc: Allocator) !void {
+    fn init(alloc: Allocator) !*TestFixture {
+        const self = try alloc.create(TestFixture);
+        errdefer alloc.destroy(self);
+        self.accounts = try AccountPool.init(alloc);
+        errdefer self.accounts.deinit(alloc);
+        self.currencies = try CurrencyPool.init(alloc);
+        errdefer self.currencies.deinit(alloc);
         self.tree = try Self.init(alloc, &self.accounts, &self.currencies);
+        return self;
     }
 
-    fn deinit(self: *TestFixture, alloc: Allocator) void {
-        self.tree.deinit();
+    fn deinit(self: *TestFixture) void {
+        const alloc = self.tree.alloc;
         self.accounts.deinit(alloc);
         self.currencies.deinit(alloc);
+        self.tree.deinit();
+        alloc.destroy(self);
     }
 
-    fn account(self: *TestFixture, alloc: Allocator, name: []const u8) !AccountIndex {
-        const raw = try self.accounts.intern(alloc, name);
-        return @enumFromInt(@intFromEnum(raw));
+    fn account(self: *TestFixture, name: []const u8) !AccountIndex {
+        return try self.accounts.intern(self.tree.alloc, name);
     }
 
-    fn currency(self: *TestFixture, alloc: Allocator, name: []const u8) !CurrencyIndex {
-        const raw = try self.currencies.intern(alloc, name);
-        return @enumFromInt(@intFromEnum(raw));
+    fn currency(self: *TestFixture, name: []const u8) !CurrencyIndex {
+        return try self.currencies.intern(self.tree.alloc, name);
     }
 };
 
 test "tree" {
     const alloc = std.testing.allocator;
     var fx = try TestFixture.init(alloc);
-    defer fx.deinit(alloc);
-    try fx.setupTree(alloc);
+    defer fx.deinit();
 
-    _ = try fx.tree.open(try fx.account(alloc, "Assets:Currency:Chase"), null, null);
-    _ = try fx.tree.open(try fx.account(alloc, "Assets:Currency:BoA"), null, null);
-    _ = try fx.tree.open(try fx.account(alloc, "Income:Dividends"), null, null);
-    _ = try fx.tree.open(try fx.account(alloc, "Assets:Stocks"), null, null);
+    _ = try fx.tree.open(try fx.account("Assets:Currency:Chase"), null, null);
+    _ = try fx.tree.open(try fx.account("Assets:Currency:BoA"), null, null);
+    _ = try fx.tree.open(try fx.account("Income:Dividends"), null, null);
+    _ = try fx.tree.open(try fx.account("Assets:Stocks"), null, null);
 
     const rendered = try fx.tree.render();
     defer alloc.free(rendered);
@@ -481,8 +473,7 @@ test "tree" {
 test "render empty tree" {
     const alloc = std.testing.allocator;
     var fx = try TestFixture.init(alloc);
-    defer fx.deinit(alloc);
-    try fx.setupTree(alloc);
+    defer fx.deinit();
 
     const rendered = try fx.tree.render();
     defer alloc.free(rendered);
@@ -493,19 +484,18 @@ test "render empty tree" {
 test "aggregated" {
     const alloc = std.testing.allocator;
     var fx = try TestFixture.init(alloc);
-    defer fx.deinit(alloc);
-    try fx.setupTree(alloc);
+    defer fx.deinit();
 
-    const acc_chas = try fx.account(alloc, "Assets:Currency:Chas𝄞");
-    const acc_boa = try fx.account(alloc, "Assets:Currency:BoA");
-    const acc_div = try fx.account(alloc, "Income:Dividends");
+    const acc_chas = try fx.account("Assets:Currency:Chas𝄞");
+    const acc_boa = try fx.account("Assets:Currency:BoA");
+    const acc_div = try fx.account("Income:Dividends");
 
     _ = try fx.tree.open(acc_chas, null, null);
     _ = try fx.tree.open(acc_boa, null, null);
     _ = try fx.tree.open(acc_div, null, null);
 
-    const eur = try fx.currency(alloc, "EUR");
-    const usd = try fx.currency(alloc, "USD");
+    const eur = try fx.currency("EUR");
+    const usd = try fx.currency("USD");
 
     try fx.tree.addPosition(acc_chas, usd, Number.fromInt(1));
     try fx.tree.addPosition(acc_boa, eur, Number.fromInt(1));
@@ -534,14 +524,13 @@ test "aggregated" {
 test "isDescendant" {
     const alloc = std.testing.allocator;
     var fx = try TestFixture.init(alloc);
-    defer fx.deinit(alloc);
-    try fx.setupTree(alloc);
+    defer fx.deinit();
 
-    const a = try fx.account(alloc, "Assets");
-    const chase = try fx.account(alloc, "Assets:Currency:Chase");
-    const boa = try fx.account(alloc, "Assets:Currency:BoA");
-    const div = try fx.account(alloc, "Income:Dividends");
-    const stocks = try fx.account(alloc, "Assets:Stocks");
+    const a = try fx.account("Assets");
+    const chase = try fx.account("Assets:Currency:Chase");
+    const boa = try fx.account("Assets:Currency:BoA");
+    const div = try fx.account("Income:Dividends");
+    const stocks = try fx.account("Assets:Stocks");
 
     _ = try fx.tree.open(a, null, null);
     _ = try fx.tree.open(chase, null, null);
@@ -557,15 +546,14 @@ test "isDescendant" {
 test "balanceAggregatedByAccount" {
     const alloc = std.testing.allocator;
     var fx = try TestFixture.init(alloc);
-    defer fx.deinit(alloc);
-    try fx.setupTree(alloc);
+    defer fx.deinit();
 
-    const foo = try fx.account(alloc, "Assets:Foo");
-    const foo_bar = try fx.account(alloc, "Assets:Foo:Bar");
-    const baz = try fx.account(alloc, "Assets:Baz");
-    const nzd = try fx.currency(alloc, "NZD");
-    const eur = try fx.currency(alloc, "EUR");
-    const usd = try fx.currency(alloc, "USD");
+    const foo = try fx.account("Assets:Foo");
+    const foo_bar = try fx.account("Assets:Foo:Bar");
+    const baz = try fx.account("Assets:Baz");
+    const nzd = try fx.currency("NZD");
+    const eur = try fx.currency("EUR");
+    const usd = try fx.currency("USD");
 
     _ = try fx.tree.open(foo, &.{nzd}, null);
     _ = try fx.tree.open(foo_bar, &.{eur}, null);
@@ -584,6 +572,6 @@ test "balanceAggregatedByAccount" {
     try std.testing.expectEqual(Number.fromFloat(3), try fx.tree.balanceAggregatedByAccount(baz, usd));
     try std.testing.expectEqual(Number.fromFloat(0), try fx.tree.balanceAggregatedByAccount(baz, eur));
 
-    const assets = try fx.account(alloc, "Assets");
+    const assets = try fx.account("Assets");
     try std.testing.expectError(error.AccountNotOpen, fx.tree.balanceAggregatedByAccount(assets, usd));
 }

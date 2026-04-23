@@ -6,7 +6,7 @@ const PriceDeclView = Data.PriceDeclView;
 const CurrencyIndex = Data.CurrencyIndex;
 const PlainInventory = @import("inventory.zig").PlainInventory;
 const Summary = @import("inventory.zig").Summary;
-const StringPool = @import("StringPool.zig");
+const CurrencyPool = @import("string_pool.zig").CurrencyPool;
 
 const Self = @This();
 
@@ -82,14 +82,13 @@ pub fn convertInventory(
 
 // --- tests ------------------------------------------------------------------
 
-fn testCurrency(pool: *StringPool, alloc: Allocator, name: []const u8) !CurrencyIndex {
-    const raw = try pool.intern(alloc, name);
-    return @enumFromInt(@intFromEnum(raw));
+fn testCurrency(pool: *CurrencyPool, alloc: Allocator, name: []const u8) !CurrencyIndex {
+    return try pool.intern(alloc, name);
 }
 
 test "setPrice stores both forward and inverse rates" {
     const alloc = std.testing.allocator;
-    var pool = try StringPool.init(alloc);
+    var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
 
     const usd = try testCurrency(&pool, alloc, "USD");
@@ -105,7 +104,7 @@ test "setPrice stores both forward and inverse rates" {
 
 test "getPrice returns null for unknown pair" {
     const alloc = std.testing.allocator;
-    var pool = try StringPool.init(alloc);
+    var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
 
     const usd = try testCurrency(&pool, alloc, "USD");
@@ -119,7 +118,7 @@ test "getPrice returns null for unknown pair" {
 
 test "convert same currency" {
     const alloc = std.testing.allocator;
-    var pool = try StringPool.init(alloc);
+    var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
     const usd = try testCurrency(&pool, alloc, "USD");
 
@@ -132,7 +131,7 @@ test "convert same currency" {
 
 test "convert across currencies" {
     const alloc = std.testing.allocator;
-    var pool = try StringPool.init(alloc);
+    var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
     const usd = try testCurrency(&pool, alloc, "USD");
     const eur = try testCurrency(&pool, alloc, "EUR");
@@ -146,7 +145,7 @@ test "convert across currencies" {
 
 test "no inverse of zero rate" {
     const alloc = std.testing.allocator;
-    var pool = try StringPool.init(alloc);
+    var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
     const usd = try testCurrency(&pool, alloc, "USD");
     const eur = try testCurrency(&pool, alloc, "EUR");
