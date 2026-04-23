@@ -11,6 +11,7 @@ const InvSummary = @import("inventory.zig").Summary;
 const Date = @import("date.zig").Date;
 const Number = @import("number.zig").Number;
 const StringPool = @import("StringPool.zig");
+const pool_maps = @import("pool_maps.zig");
 const AccountIndex = Data.AccountIndex;
 const CurrencyIndex = Data.CurrencyIndex;
 const ztracy = @import("ztracy");
@@ -35,10 +36,10 @@ sorted_entries: std.ArrayList(SortedEntry),
 
 errors: std.ArrayList(ErrorDetails),
 
-/// Dense lookup `AccountIndex → FileLine` for opened accounts. Null for
+/// Dense lookup `AccountIndex → FileLine` for opened accounts. Missing for
 /// indices that were interned (e.g., via posting text) but not explicitly
 /// opened.
-account_open_pos: std.ArrayList(?FileLine),
+account_open_pos: pool_maps.AccountMap(FileLine),
 tags: std.StringHashMap(void),
 links: std.StringHashMap(void),
 
@@ -113,14 +114,6 @@ pub fn deinit(self: *Self) void {
     self.currencies.deinit(self.alloc);
     self.alloc.destroy(self.accounts);
     self.alloc.destroy(self.currencies);
-}
-
-fn ensureAccountSlot(self: *Self, idx: AccountIndex) !*?FileLine {
-    const i = @intFromEnum(idx);
-    while (self.account_open_pos.items.len <= i) {
-        try self.account_open_pos.append(self.alloc, null);
-    }
-    return &self.account_open_pos.items[i];
 }
 
 /// Is the provided file_uri included in this project?
@@ -745,9 +738,8 @@ pub fn tagLinkIterator(self: *const Self, uri: ?[]const u8) TagLinkIterator {
 }
 
 fn refreshLspCache(self: *Self) !void {
-    // Re-size dense account table and clear all entries.
-    try self.account_open_pos.resize(self.alloc, self.accounts.count());
-    @memset(self.account_open_pos.items, null);
+    // Clear dense account table; entries are repopulated below.
+    self.account_open_pos.clear();
     self.tags.clearRetainingCapacity();
     self.links.clearRetainingCapacity();
 
@@ -769,11 +761,10 @@ fn refreshLspCache(self: *Self) !void {
                 else => unreachable,
             };
             const acc_idx = open.account();
-            const slot = try self.ensureAccountSlot(acc_idx);
-            slot.* = .{
+            try self.account_open_pos.put(self.alloc, acc_idx, .{
                 .file = @intCast(f),
                 .line = data.token(entry.mainToken()).start_line,
-            };
+            });
         }
     }
 }
@@ -868,31 +859,22 @@ pub fn accountInventoryUntilLine(
 pub fn get_account_open_pos(self: *const Self, account: []const u8) ?struct { Uri, u32 } {
     const raw = self.accounts.find(account) orelse return null;
     const idx: AccountIndex = @enumFromInt(@intFromEnum(raw));
-    const i = @intFromEnum(idx);
-    if (i >= self.account_open_pos.items.len) return null;
-    const pos = self.account_open_pos.items[i] orelse return null;
+    const pos = self.account_open_pos.get(idx) orelse return null;
     return .{ self.uris.items[pos.file], pos.line };
 }
 
 /// LSP completion: iterate over all known account texts.
 pub fn accountsIterator(self: *const Self) AccountsTextIterator {
-    return .{ .project = self, .i = 0 };
+    return .{ .project = self, .inner = self.account_open_pos.iterator() };
 }
 
 pub const AccountsTextIterator = struct {
     project: *const Self,
-    i: u32,
+    inner: pool_maps.AccountMap(FileLine).Iterator,
 
     pub fn next(it: *AccountsTextIterator) ?[]const u8 {
-        while (it.i < it.project.account_open_pos.items.len) {
-            const slot = it.project.account_open_pos.items[it.i];
-            const idx = it.i;
-            it.i += 1;
-            if (slot != null) {
-                return it.project.accounts.get(@enumFromInt(idx));
-            }
-        }
-        return null;
+        const entry = it.inner.next() orelse return null;
+        return it.project.accounts.get(@enumFromInt(@intFromEnum(entry.key)));
     }
 };
 
