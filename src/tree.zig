@@ -8,7 +8,7 @@ const Number = @import("number.zig").Number;
 const Data = @import("data.zig");
 const Date = @import("date.zig").Date;
 const StringPool = @import("StringPool.zig");
-const pool_maps = @import("pool_maps.zig");
+const AccountMap = @import("pool_maps.zig").AccountMap;
 const AccountIndex = Data.AccountIndex;
 const CurrencyIndex = Data.CurrencyIndex;
 const Self = @This();
@@ -21,7 +21,7 @@ accounts_pool: *StringPool,
 currencies_pool: *StringPool,
 /// Dense lookup: `AccountIndex` → node index. Entries are `null` when the
 /// account hasn't been opened in this tree (or isn't a leaf directly).
-nodes_by_account: pool_maps.AccountMap(u32),
+nodes_by_account: AccountMap(u32),
 nodes: std.ArrayList(Node),
 
 pub const Node = struct {
@@ -504,8 +504,8 @@ test "aggregated" {
     _ = try fx.tree.open(acc_boa, null, null);
     _ = try fx.tree.open(acc_div, null, null);
 
-    const usd = try fx.currency(alloc, "USD");
     const eur = try fx.currency(alloc, "EUR");
+    const usd = try fx.currency(alloc, "USD");
 
     try fx.tree.addPosition(acc_chas, usd, Number.fromInt(1));
     try fx.tree.addPosition(acc_boa, eur, Number.fromInt(1));
