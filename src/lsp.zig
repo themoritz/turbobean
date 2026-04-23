@@ -202,7 +202,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
     loop: while (true) : ({
         const elapsed_ns = timer.read();
         const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
-        std.log.debug("Completed in {d} ms\n", .{elapsed_ms});
+        std.log.info("Completed in {d} ms\n", .{elapsed_ms});
     }) {
         const json_message = try transport.readJsonMessage(alloc);
         defer alloc.free(json_message);
@@ -215,9 +215,9 @@ pub fn loop(alloc: std.mem.Allocator) !void {
         defer parsed_message.deinit();
 
         switch (parsed_message.value) {
-            .request => |request| std.log.debug("Received '{s}' request", .{@tagName(request.params)}),
-            .notification => |notification| std.log.debug("Received '{s}' notification", .{@tagName(notification.params)}),
-            .response => std.log.debug("Received response from client", .{}),
+            .request => |request| std.log.info("Received '{s}' request", .{@tagName(request.params)}),
+            .notification => |notification| std.log.info("Received '{s}' notification", .{@tagName(notification.params)}),
+            .response => std.log.info("Received response from client", .{}),
         }
         timer.reset();
 
