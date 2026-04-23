@@ -69,15 +69,15 @@ fn optTokSlice(self: *Self, index: Ast.OptionalTokenIndex) ?[]const u8 {
 // --- intern helpers ---------------------------------------------------------
 
 fn internAccount(self: *Self, t: Ast.TokenIndex) !Data.AccountIndex {
-    const raw = try self.data.accounts.intern(self.alloc, self.tokSlice(t));
-    self.data.token_interned.items[@intFromEnum(t)] = @intFromEnum(raw);
-    return @enumFromInt(@intFromEnum(raw));
+    const idx = try self.data.accounts.intern(self.alloc, self.tokSlice(t));
+    self.data.token_interned.items[@intFromEnum(t)] = @intFromEnum(idx);
+    return idx;
 }
 
 fn internCurrency(self: *Self, t: Ast.TokenIndex) !Data.CurrencyIndex {
-    const raw = try self.data.currencies.intern(self.alloc, self.tokSlice(t));
-    self.data.token_interned.items[@intFromEnum(t)] = @intFromEnum(raw);
-    return @enumFromInt(@intFromEnum(raw));
+    const idx = try self.data.currencies.intern(self.alloc, self.tokSlice(t));
+    self.data.token_interned.items[@intFromEnum(t)] = @intFromEnum(idx);
+    return idx;
 }
 
 fn internCurrencyOpt(self: *Self, t: Ast.OptionalTokenIndex) !Data.OptionalCurrencyIndex {

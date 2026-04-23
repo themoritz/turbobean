@@ -10,7 +10,9 @@ const Inventory = @import("inventory.zig").Inventory;
 const InvSummary = @import("inventory.zig").Summary;
 const Date = @import("date.zig").Date;
 const Number = @import("number.zig").Number;
-const StringPool = @import("StringPool.zig");
+const string_pool = @import("string_pool.zig");
+const AccountPool = string_pool.AccountPool;
+const CurrencyPool = string_pool.CurrencyPool;
 const pool_maps = @import("pool_maps.zig");
 const AccountIndex = Data.AccountIndex;
 const CurrencyIndex = Data.CurrencyIndex;
@@ -26,8 +28,8 @@ alloc: Allocator,
 /// pointers at construction time, and `Project` itself gets moved (returned
 /// by value from `load`, appended into `ArrayList(Project)` in the LSP) in
 /// ways that would invalidate pointers to inline fields.
-accounts: *StringPool,
-currencies: *StringPool,
+accounts: *AccountPool,
+currencies: *CurrencyPool,
 files: std.ArrayList(Data),
 uris: std.ArrayList(Uri),
 /// Keys are URI values, values are index into files and uris.
@@ -61,14 +63,14 @@ pub fn load(alloc: Allocator, uri: Uri, source: ?[:0]const u8) !Self {
     const tracy_zone = ztracy.ZoneNC(@src(), "Load project", 0x00_00_ff_00);
     defer tracy_zone.End();
 
-    const accounts = try alloc.create(StringPool);
+    const accounts = try alloc.create(AccountPool);
     errdefer alloc.destroy(accounts);
-    accounts.* = try StringPool.init(alloc);
+    accounts.* = try AccountPool.init(alloc);
     errdefer accounts.deinit(alloc);
 
-    const currencies = try alloc.create(StringPool);
+    const currencies = try alloc.create(CurrencyPool);
     errdefer alloc.destroy(currencies);
-    currencies.* = try StringPool.init(alloc);
+    currencies.* = try CurrencyPool.init(alloc);
     errdefer currencies.deinit(alloc);
 
     var self = Self{
@@ -179,22 +181,17 @@ pub fn getConfig(self: *const Self) *Data.Config {
     return &self.files.items[0].config;
 }
 
-/// Look up a currency text in the shared pool without adding it. Handy for
-/// translating URL params and other user-supplied strings.
 pub fn findCurrency(self: *const Self, text: []const u8) ?CurrencyIndex {
-    const raw = self.currencies.find(text) orelse return null;
-    return @enumFromInt(@intFromEnum(raw));
+    return self.currencies.find(text);
 }
 
 pub fn findAccount(self: *const Self, text: []const u8) ?AccountIndex {
-    const raw = self.accounts.find(text) orelse return null;
-    return @enumFromInt(@intFromEnum(raw));
+    return self.accounts.find(text);
 }
 
 /// Intern `text` into the project's account pool, adding it if needed.
 pub fn internAccount(self: *Self, text: []const u8) !AccountIndex {
-    const raw = try self.accounts.intern(self.alloc, text);
-    return @enumFromInt(@intFromEnum(raw));
+    return try self.accounts.intern(self.alloc, text);
 }
 
 pub fn hasErrors(self: *Self) bool {
@@ -777,8 +774,7 @@ pub fn accountInventoryUntilLine(
     line: u32,
 ) !?struct { before: InvSummary, after: InvSummary } {
     const file = self.files_by_uri.get(uri) orelse return null;
-    const raw_idx = self.accounts.find(account) orelse return null;
-    const account_idx: AccountIndex = @enumFromInt(@intFromEnum(raw_idx));
+    const account_idx = self.accounts.find(account) orelse return null;
 
     var tree = try Tree.init(self.alloc, self.accounts, self.currencies);
     defer tree.deinit();
@@ -857,8 +853,7 @@ pub fn accountInventoryUntilLine(
 }
 
 pub fn get_account_open_pos(self: *const Self, account: []const u8) ?struct { Uri, u32 } {
-    const raw = self.accounts.find(account) orelse return null;
-    const idx: AccountIndex = @enumFromInt(@intFromEnum(raw));
+    const idx = self.accounts.find(account) orelse return null;
     const pos = self.account_open_pos.get(idx) orelse return null;
     return .{ self.uris.items[pos.file], pos.line };
 }
@@ -874,7 +869,7 @@ pub const AccountsTextIterator = struct {
 
     pub fn next(it: *AccountsTextIterator) ?[]const u8 {
         const entry = it.inner.next() orelse return null;
-        return it.project.accounts.get(@enumFromInt(@intFromEnum(entry.key)));
+        return it.project.accounts.get(entry.key);
     }
 };
 

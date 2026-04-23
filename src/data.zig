@@ -7,7 +7,8 @@ const Inventory = @import("inventory.zig");
 const ErrorDetails = @import("ErrorDetails.zig");
 const Uri = @import("Uri.zig");
 const Lexer = @import("lexer.zig").Lexer;
-const StringPool = @import("StringPool.zig");
+const CurrencyPool = @import("string_pool.zig").CurrencyPool;
+const AccountPool = @import("string_pool.zig").AccountPool;
 
 const Sema = @import("Sema.zig");
 const Solver = @import("solver.zig").Solver;
@@ -22,8 +23,8 @@ ast: Ast,
 
 /// Project-wide intern pools, borrowed. The `Project` owns them; `Data` just
 /// reads/writes through the pointer so indices are comparable across files.
-accounts: *StringPool,
-currencies: *StringPool,
+accounts: *AccountPool,
+currencies: *CurrencyPool,
 /// Parallel to `ast.tokens`; interpretation depends on the token's tag.
 token_interned: std.ArrayList(u32),
 
@@ -412,7 +413,7 @@ pub const Config = struct {
 
 /// Takes ownership of `ast`. The pools are borrowed — caller (Project) owns
 /// them and must outlive this `Data`.
-pub fn init(alloc: Allocator, ast: Ast, uri: Uri, accounts: *StringPool, currencies: *StringPool) !Self {
+pub fn init(alloc: Allocator, ast: Ast, uri: Uri, accounts: *AccountPool, currencies: *CurrencyPool) !Self {
     var token_interned: std.ArrayList(u32) = .{};
     errdefer token_interned.deinit(alloc);
     try token_interned.appendNTimes(alloc, std.math.maxInt(u32), ast.tokens.items.len);
@@ -468,11 +469,11 @@ pub fn optTokenSlice(self: *const Self, index: Ast.OptionalTokenIndex) ?[]const 
 }
 
 pub fn accountText(self: *const Self, i: AccountIndex) []const u8 {
-    return self.accounts.get(@enumFromInt(@intFromEnum(i)));
+    return self.accounts.get(i);
 }
 
 pub fn currencyText(self: *const Self, i: CurrencyIndex) []const u8 {
-    return self.currencies.get(@enumFromInt(@intFromEnum(i)));
+    return self.currencies.get(i);
 }
 
 pub fn accountTextOpt(self: *const Self, oi: OptionalAccountIndex) ?[]const u8 {
@@ -928,10 +929,6 @@ pub fn optCurrencyText(self: *const Self, oi: OptionalCurrencyIndex) ?[]const u8
     return self.currencyTextOpt(oi);
 }
 
-fn toPoolIndex(i: anytype) StringPool.Index {
-    return @enumFromInt(@intFromEnum(i));
-}
-
 // --- construction helpers ---------------------------------------------------
 
 /// Parse + run Sema. Takes ownership of `source`. Pools are borrowed from
@@ -939,8 +936,8 @@ fn toPoolIndex(i: anytype) StringPool.Index {
 /// across files.
 pub fn loadSource(
     alloc: Allocator,
-    accounts: *StringPool,
-    currencies: *StringPool,
+    accounts: *AccountPool,
+    currencies: *CurrencyPool,
     uri: Uri,
     source: [:0]const u8,
     is_root: bool,
@@ -1084,8 +1081,7 @@ pub fn balanceTransactions(self: *Self) !void {
 /// Intern a (possibly-null) currency text, returning an `OptionalCurrencyIndex`.
 pub fn internCurrencyOpt(self: *Self, text: ?[]const u8) !OptionalCurrencyIndex {
     const t = text orelse return .none;
-    const raw = try self.currencies.intern(self.alloc, t);
-    const idx: CurrencyIndex = @enumFromInt(@intFromEnum(raw));
+    const idx = try self.currencies.intern(self.alloc, t);
     return idx.toOptional();
 }
 

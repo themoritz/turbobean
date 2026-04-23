@@ -122,7 +122,7 @@ fn render(
                     );
                     try zts.print(tpl, "transaction_legs_end", .{
                         .change_units = conv_units.withPrecision(2),
-                        .change_cur = project.currencies.get(@enumFromInt(@intFromEnum(conv_cur_idx))),
+                        .change_cur = project.currencies.get(conv_cur_idx),
                     }, out);
 
                     if (try tree.isDescendant(account_idx, p.account())) {
@@ -143,7 +143,7 @@ fn render(
                         if (!units.is_zero()) {
                             try zts.print(tpl, "transaction_balance_cur", .{
                                 .units = units.withPrecision(2),
-                                .cur = project.currencies.get(@enumFromInt(@intFromEnum(kv.key))),
+                                .cur = project.currencies.get(kv.key),
                             }, out);
                         }
                     }
@@ -173,7 +173,7 @@ fn render(
                             try zts.print(tpl, "tree_end", .{
                                 .account = p2.accountText(),
                                 .change_units = units.withPrecision(2),
-                                .change_cur = project.currencies.get(@enumFromInt(@intFromEnum(cur_idx))),
+                                .change_cur = project.currencies.get(cur_idx),
                             }, out);
                         }
                     }
@@ -183,7 +183,7 @@ fn render(
                     const balance = conv_inv.by_currency.get(conv_cur_idx).?;
                     try plot_data.points.append(alloc, .{
                         .date = try string_store.print("{f}", .{entry.date()}),
-                        .currency = project.currencies.get(@enumFromInt(@intFromEnum(conv_cur_idx))),
+                        .currency = project.currencies.get(conv_cur_idx),
                         .balance = balance.toFloat(),
                         .balance_rendered = try string_store.print("{f}", .{balance.withPrecision(2)}),
                     });

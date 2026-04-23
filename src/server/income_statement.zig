@@ -119,8 +119,8 @@ const DataTracker = struct {
             const pair = kv.key_ptr.*;
             const balance = kv.value_ptr.*;
             try self.plot_data.addDataPoint(.{
-                .currency = self.project.currencies.get(@enumFromInt(@intFromEnum(pair.currency))),
-                .account = self.project.accounts.get(@enumFromInt(@intFromEnum(pair.account))),
+                .currency = self.project.currencies.get(pair.currency),
+                .account = self.project.accounts.get(pair.account),
                 .balance = balance.toFloat(),
                 .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
             });

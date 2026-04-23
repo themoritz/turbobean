@@ -83,7 +83,7 @@ const NetWorth = struct {
             const balance = kv.value_ptr.*;
             try self.plot_data.points.append(self.alloc, .{
                 .date = try self.string_store.print("{f}", .{date}),
-                .currency = self.project.currencies.get(@enumFromInt(@intFromEnum(kv.key))),
+                .currency = self.project.currencies.get(kv.key),
                 .balance = balance.toFloat(),
                 .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
             });
@@ -103,11 +103,6 @@ const NetWorth = struct {
 };
 
 const DateState = enum { before, within };
-
-fn internAccountInPool(alloc: std.mem.Allocator, pool: *@import("../StringPool.zig"), text: []const u8) !Data.AccountIndex {
-    const raw = try pool.intern(alloc, text);
-    return @enumFromInt(@intFromEnum(raw));
-}
 
 fn render(
     alloc: std.mem.Allocator,
@@ -137,8 +132,8 @@ fn render(
     // `Equity:Earnings:Previous` / `Equity:Earnings:Current` are system
     // accounts used by the earnings clearing step; intern so we have stable
     // indices regardless of whether the file declared them.
-    const earnings_prev_idx: Data.AccountIndex = try internAccountInPool(alloc, project.accounts, "Equity:Earnings:Previous");
-    const earnings_curr_idx: Data.AccountIndex = try internAccountInPool(alloc, project.accounts, "Equity:Earnings:Current");
+    const earnings_prev_idx: Data.AccountIndex = try project.accounts.intern(alloc, "Equity:Earnings:Previous");
+    const earnings_curr_idx: Data.AccountIndex = try project.accounts.intern(alloc, "Equity:Earnings:Current");
 
     var net_worth = try NetWorth.init(
         alloc,

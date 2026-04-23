@@ -5,7 +5,7 @@ const Date = @import("date.zig").Date;
 const Data = @import("data.zig");
 const LotSpec = Data.LotSpecView;
 const CurrencyIndex = Data.CurrencyIndex;
-const StringPool = @import("StringPool.zig");
+const CurrencyPool = @import("string_pool.zig").CurrencyPool;
 const CurrencyMap = @import("pool_maps.zig").CurrencyMap;
 
 pub const BookingMethod = enum {
@@ -445,6 +445,7 @@ pub const Inventory = union(enum) {
         };
     }
 
+    /// Flatten the inventory to a PlainInventory
     pub fn toPlain(self: *const Inventory, alloc: Allocator) !PlainInventory {
         return switch (self.*) {
             .plain => |inv| inv.clone(alloc),
@@ -526,15 +527,15 @@ pub const Summary = struct {
         }
     }
 
-    /// Resolve currency texts through a `StringPool` borrowed from the caller.
+    /// Resolve currency texts through a `CurrencyPool` borrowed from the caller.
     /// Iteration order follows `CurrencyIndex`, i.e., the order in which
     /// currencies were first interned — deterministic across runs.
-    pub fn treeDisplay(self: *const Summary, pool: *const StringPool, indent: u32, writer: std.io.AnyWriter) !void {
+    pub fn treeDisplay(self: *const Summary, pool: *const CurrencyPool, indent: u32, writer: std.io.AnyWriter) !void {
         var it = self.by_currency.iterator();
         var first = true;
         while (it.next()) |entry| {
             const v = entry.value_ptr;
-            const cur_text = pool.get(@enumFromInt(@intFromEnum(entry.key)));
+            const cur_text = pool.get(entry.key);
             if (!v.plain.is_zero()) {
                 if (!first) {
                     try writer.writeByte('\n');
@@ -548,7 +549,7 @@ pub const Summary = struct {
                     try writer.writeByte('\n');
                     try writer.writeByteNTimes(' ', indent);
                 }
-                const cost_cur = pool.get(@enumFromInt(@intFromEnum(lot.cost.currency)));
+                const cost_cur = pool.get(lot.cost.currency);
                 try writer.print("{f} {s} @ {f} {s} {{{f}", .{
                     lot.units, cur_text, lot.cost.price, cost_cur, lot.cost.date,
                 });
@@ -559,16 +560,16 @@ pub const Summary = struct {
         }
     }
 
-    pub fn hoverDisplay(self: *const Summary, pool: *const StringPool, writer: *std.Io.Writer) !void {
+    pub fn hoverDisplay(self: *const Summary, pool: *const CurrencyPool, writer: *std.Io.Writer) !void {
         var it = self.by_currency.iterator();
         while (it.next()) |entry| {
             const v = entry.value_ptr;
-            const cur_text = pool.get(@enumFromInt(@intFromEnum(entry.key)));
+            const cur_text = pool.get(entry.key);
             if (!v.plain.is_zero()) {
                 try writer.print("• {f} {s}\n", .{ v.plain, cur_text });
             }
             for (v.lots.items) |lot| {
-                const cost_cur = pool.get(@enumFromInt(@intFromEnum(lot.cost.currency)));
+                const cost_cur = pool.get(lot.cost.currency);
                 try writer.print("• {f} {s} @ {f} {s} {{{f}", .{
                     lot.units, cur_text, lot.cost.price, cost_cur, lot.cost.date,
                 });
@@ -591,18 +592,11 @@ pub const Summary = struct {
     }
 };
 
-// --- tests ------------------------------------------------------------------
-
-fn testCurrency(pool: *StringPool, alloc: Allocator, name: []const u8) !CurrencyIndex {
-    const raw = try pool.intern(alloc, name);
-    return @enumFromInt(@intFromEnum(raw));
-}
-
 test "cost weight" {
     const alloc = std.testing.allocator;
-    var pool = try StringPool.init(alloc);
+    var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
-    const usd = try testCurrency(&pool, alloc, "USD");
+    const usd = try pool.intern(alloc, "USD");
 
     var inv = Lots.init(.fifo);
     defer inv.deinit(alloc);
@@ -643,9 +637,9 @@ test "cost weight" {
 
 test "cross line" {
     const alloc = std.testing.allocator;
-    var pool = try StringPool.init(alloc);
+    var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
-    const usd = try testCurrency(&pool, alloc, "USD");
+    const usd = try pool.intern(alloc, "USD");
 
     var inv = Lots.init(.fifo);
     defer inv.deinit(alloc);
@@ -677,11 +671,11 @@ test "cross line" {
 
 test "combine" {
     const alloc = std.testing.allocator;
-    var pool = try StringPool.init(alloc);
+    var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
-    const usd = try testCurrency(&pool, alloc, "USD");
-    const eur = try testCurrency(&pool, alloc, "EUR");
-    const nzd = try testCurrency(&pool, alloc, "NZD");
+    const usd = try pool.intern(alloc, "USD");
+    const eur = try pool.intern(alloc, "EUR");
+    const nzd = try pool.intern(alloc, "NZD");
 
     var plain = try PlainInventory.init(alloc, null);
     defer plain.deinit();
@@ -718,9 +712,9 @@ test "combine" {
 
 test "plain empty" {
     const alloc = std.testing.allocator;
-    var pool = try StringPool.init(alloc);
+    var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
-    const usd = try testCurrency(&pool, alloc, "USD");
+    const usd = try pool.intern(alloc, "USD");
 
     var inv = try PlainInventory.init(alloc, null);
     defer inv.deinit();
@@ -734,10 +728,10 @@ test "plain empty" {
 
 test "lots empty" {
     const alloc = std.testing.allocator;
-    var pool = try StringPool.init(alloc);
+    var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
-    const usd = try testCurrency(&pool, alloc, "USD");
-    const nzd = try testCurrency(&pool, alloc, "NZD");
+    const usd = try pool.intern(alloc, "USD");
+    const nzd = try pool.intern(alloc, "NZD");
 
     var inv = try LotsInventory.init(alloc, .fifo, null);
     defer inv.deinit();
