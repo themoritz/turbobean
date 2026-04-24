@@ -753,10 +753,7 @@ fn refreshLspCache(self: *Self) !void {
 
         var it = data.iterEntriesOfKind(.open);
         while (it.next()) |entry| {
-            const open = switch (entry.payload()) {
-                .open => |o| o,
-                else => unreachable,
-            };
+            const open = entry.payload().open;
             const acc_idx = open.account();
             try self.account_open_pos.put(self.alloc, acc_idx, .{
                 .file = @intCast(f),

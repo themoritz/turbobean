@@ -10,6 +10,7 @@ const completion = @import("lsp/completion.zig");
 const semantic_tokens = @import("lsp/semantic_tokens.zig");
 const Date = @import("date.zig").Date;
 const Uri = @import("Uri.zig");
+const Number = @import("number.zig").Number;
 
 const Data = @import("data.zig");
 const Ast = @import("Ast.zig");
@@ -665,13 +666,9 @@ pub fn loop(alloc: std.mem.Allocator) !void {
 
                     var entry_iter = file_data.iterEntriesOfKind(.transaction);
                     while (entry_iter.next()) |entry| {
-                        const tx = switch (entry.payload()) {
-                            .transaction => |t| t,
-                            else => unreachable,
-                        };
-                        if (tx.tx.dirty) continue;
-                        const postings = tx.tx.postings;
-                        if (postings.isEmpty()) continue;
+                        const tx = entry.payload().transaction;
+                        if (tx.dirty()) continue;
+                        var postings = tx.postings();
 
                         // Measure source dot-column for alignment and max frac
                         // width across source and inferred numbers. Also count
@@ -682,8 +679,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         var frac_width: usize = 0;
                         var plain_count: u32 = 0;
                         var num_inferred_count: u32 = 0;
-                        for (postings.start..postings.end) |i| {
-                            const posting = file_data.postingAt(@intCast(i));
+                        while (postings.next()) |posting| {
                             const ast_node_idx = posting.astNode().unwrap() orelse continue;
                             const ap = file_data.ast.getExtra(
                                 file_data.ast.node(ast_node_idx).posting,
@@ -708,11 +704,11 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                 else => {},
                             }
                         }
-                        const skip_lone_inferred = (postings.end - postings.start) == 2 and
+                        const skip_lone_inferred = tx.numPostings() == 2 and
                             plain_count == 1 and num_inferred_count == 1;
 
-                        for (postings.start..postings.end) |i| {
-                            const posting = file_data.postingAt(@intCast(i));
+                        var postings2 = tx.postings();
+                        while (postings2.next()) |posting| {
                             const account_tok = file_data.token(posting.accountToken());
                             if (account_tok.start_line < params.range.start.line or
                                 account_tok.start_line > params.range.end.line) continue;
@@ -723,12 +719,9 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                 Ast.Node.Posting,
                             );
 
-                            const resolved = ResolvedAmount{
-                                .number = posting.amountNumber(),
-                                .currency = posting.amountCurrencyText(),
-                            };
+                            const resolved_number = posting.amountNumber();
                             const skip_this_amount = skip_lone_inferred and switch (file_data.ast.node(ap.amount)) {
-                                .amount => |a| a.number.unwrap() == null and resolved.number != null,
+                                .amount => |a| a.number.unwrap() == null and resolved_number != null,
                                 else => false,
                             };
                             if (!skip_this_amount) try emitAmountHint(
@@ -736,7 +729,8 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                 &hints,
                                 &file_data.ast,
                                 file_data.ast.node(ap.amount),
-                                resolved,
+                                resolved_number,
+                                posting.amountCurrencyText(),
                                 account_tok.start_line,
                                 account_tok.end_col,
                                 .{
@@ -754,7 +748,8 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                                     &hints,
                                     &file_data.ast,
                                     file_data.ast.node(pa.amount),
-                                    .{ .number = price.amount, .currency = price.amountCurrencyText() },
+                                    price.amount,
+                                    price.amountCurrencyText(),
                                     at_token.end_line,
                                     at_token.end_col,
                                     null,
@@ -897,11 +892,6 @@ const Alignment = struct {
     frac_width: usize,
 };
 
-const ResolvedAmount = struct {
-    number: ?@import("number.zig").Number,
-    currency: ?[]const u8,
-};
-
 /// Emit an inlay hint for an inferred amount (number and/or currency).
 /// With alignment, positions the hint for column-aligned posting amounts.
 /// Without alignment, positions after the last existing token (for price annotations).
@@ -910,7 +900,8 @@ fn emitAmountHint(
     hints: *std.ArrayList(lsp.types.InlayHint),
     ast: *Ast,
     ast_node: Ast.Node,
-    resolved: ResolvedAmount,
+    amount_number: ?Number,
+    amount_currency: ?[]const u8,
     after_line: u32,
     after_col: u32,
     alignment: ?Alignment,
@@ -920,12 +911,12 @@ fn emitAmountHint(
         else => return,
     };
 
-    const num_inferred = ast_amount.number.unwrap() == null and resolved.number != null;
-    const cur_inferred = ast_amount.currency.unwrap() == null and resolved.currency != null;
+    const num_inferred = ast_amount.number.unwrap() == null and amount_number != null;
+    const cur_inferred = ast_amount.currency.unwrap() == null and amount_currency != null;
     if (!num_inferred and !cur_inferred) return;
 
     if (num_inferred) {
-        const num = resolved.number.?;
+        const num = amount_number.?;
         var num_buf: [64]u8 = undefined;
         const formatted = try std.fmt.bufPrint(&num_buf, "{f}", .{num});
 
@@ -948,7 +939,7 @@ fn emitAmountHint(
                 try w.writeAll(formatted);
             }
             try w.writeByte(' ');
-            try w.writeAll(resolved.currency orelse "");
+            try w.writeAll(amount_currency orelse "");
 
             try hints.append(alloc, .{
                 .position = .{ .line = after_line, .character = after_col },
@@ -985,7 +976,7 @@ fn emitAmountHint(
         }
         try hints.append(alloc, .{
             .position = .{ .line = pos_line, .character = pos_col },
-            .label = .{ .string = try alloc.dupe(u8, resolved.currency.?) },
+            .label = .{ .string = try alloc.dupe(u8, amount_currency.?) },
             .paddingLeft = true,
         });
     }
