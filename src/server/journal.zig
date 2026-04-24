@@ -190,7 +190,7 @@ fn render(
                 }
             },
             .price => |price| {
-                try prices.setPriceFromDecl(price);
+                try prices.setPrice(price);
             },
             else => {},
         }
