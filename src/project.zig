@@ -13,7 +13,7 @@ const Number = @import("number.zig").Number;
 const string_pool = @import("string_pool.zig");
 const AccountPool = string_pool.AccountPool;
 const CurrencyPool = string_pool.CurrencyPool;
-const pool_maps = @import("pool_maps.zig");
+const AccountMap = @import("pool_maps.zig").AccountMap;
 const AccountIndex = Data.AccountIndex;
 const CurrencyIndex = Data.CurrencyIndex;
 const ztracy = @import("ztracy");
@@ -21,15 +21,12 @@ const ztracy = @import("ztracy");
 const Self = @This();
 
 alloc: Allocator,
-/// Project-wide intern pools, shared by every `Data` and by `Tree`.
-/// Interned account/currency indices are therefore comparable across files.
-///
-/// Heap-allocated so their addresses stay stable — `Data` caches pool
-/// pointers at construction time, and `Project` itself gets moved (returned
-/// by value from `load`, appended into `ArrayList(Project)` in the LSP) in
-/// ways that would invalidate pointers to inline fields.
+
+// Project-wide intern pools, shared by every `Data` and by `Tree`.
+// Interned account/currency indices are therefore comparable across files.
 accounts: *AccountPool,
 currencies: *CurrencyPool,
+
 files: std.ArrayList(Data),
 uris: std.ArrayList(Uri),
 /// Keys are URI values, values are index into files and uris.
@@ -38,10 +35,8 @@ sorted_entries: std.ArrayList(SortedEntry),
 
 errors: std.ArrayList(ErrorDetails),
 
-/// Dense lookup `AccountIndex → FileLine` for opened accounts. Missing for
-/// indices that were interned (e.g., via posting text) but not explicitly
-/// opened.
-account_open_pos: pool_maps.AccountMap(FileLine),
+// LSP specific caches
+account_open_pos: AccountMap(FileLine),
 tags: std.StringHashMap(void),
 links: std.StringHashMap(void),
 
@@ -63,6 +58,9 @@ pub fn load(alloc: Allocator, uri: Uri, source: ?[:0]const u8) !Self {
     const tracy_zone = ztracy.ZoneNC(@src(), "Load project", 0x00_00_ff_00);
     defer tracy_zone.End();
 
+    // Heap-allocated so their addresses stay stable — Project itself gets
+    // moved (returned by value from `load`, appended into ArrayList(Project)
+    // in the LSP) in ways that would invalidate pointers to inline fields.
     const accounts = try alloc.create(AccountPool);
     errdefer alloc.destroy(accounts);
     accounts.* = try AccountPool.init(alloc);
@@ -135,6 +133,7 @@ fn loadFileRec(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !voi
     for (imports) |import| {
         var import_uri = try uri.move_relative(self.alloc, import.path);
         defer import_uri.deinit(self.alloc);
+        // Check if the file exists before recursing
         std.fs.accessAbsolute(import_uri.absolute(), .{}) catch {
             const data = &self.files.items[file_id];
             try data.errors.append(self.alloc, .{
@@ -178,6 +177,8 @@ fn loadSingleFile(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !
 }
 
 pub fn getConfig(self: *const Self) *Data.Config {
+    // Config is always in the first file since it's the entry point for
+    // loading a project.
     return &self.files.items[0].config;
 }
 
@@ -187,11 +188,6 @@ pub fn findCurrency(self: *const Self, text: []const u8) ?CurrencyIndex {
 
 pub fn findAccount(self: *const Self, text: []const u8) ?AccountIndex {
     return self.accounts.find(text);
-}
-
-/// Intern `text` into the project's account pool, adding it if needed.
-pub fn internAccount(self: *Self, text: []const u8) !AccountIndex {
-    return try self.accounts.intern(self.alloc, text);
 }
 
 pub fn hasErrors(self: *Self) bool {
@@ -245,6 +241,7 @@ pub fn printErrors(self: *Self) !void {
 
     if (errors.count() == 0) return;
 
+    // Separate errors and warnings
     var error_list = std.ArrayList(ErrorDetails){};
     defer error_list.deinit(self.alloc);
     var warning_list = std.ArrayList(ErrorDetails){};
@@ -268,6 +265,7 @@ pub fn printErrors(self: *Self) !void {
 
     var num_printed: usize = 0;
 
+    // Print errors first
     for (error_list.items) |err| {
         if (num_printed == 10) {
             const remaining_errors = num_errors - num_printed;
@@ -279,6 +277,7 @@ pub fn printErrors(self: *Self) !void {
         num_printed += 1;
     }
 
+    // Then print warnings
     for (warning_list.items) |warn| {
         if (num_printed == 10) {
             const remaining_warnings = num_warnings - (num_printed - num_errors);
@@ -319,20 +318,20 @@ pub fn pipeline(self: *Self) !void {
 pub fn check(self: *Self) !void {
     const LastPad = struct {
         date: Date,
-        pad_account_token: Ast.TokenIndex,
-        pad_to_token: Ast.TokenIndex,
+        pad: Ast.TokenIndex,
+        pad_to: Ast.TokenIndex,
         pad_ptr: *Data.Pad,
         file: u8,
     };
 
-    var lastPads: pool_maps.AccountMap(LastPad) = .{};
+    var lastPads: AccountMap(LastPad) = .{};
     defer lastPads.deinit(self.alloc);
 
     const PnlEntry = struct {
         income_token: Ast.TokenIndex,
         file: u8,
     };
-    var pnlAccounts: pool_maps.AccountMap(PnlEntry) = .{};
+    var pnlAccounts: AccountMap(PnlEntry) = .{};
     defer pnlAccounts.deinit(self.alloc);
 
     var tree = try Tree.init(self.alloc, self.accounts, self.currencies);
@@ -386,8 +385,8 @@ pub fn check(self: *Self) !void {
                     const pad_ptr: *Data.Pad = &data.entries.items(.payload)[sorted.entry].pad;
                     try lastPads.put(self.alloc, acc_idx, .{
                         .date = entry.date(),
-                        .pad_account_token = pad.account,
-                        .pad_to_token = pad.pad_to,
+                        .pad = pad.account,
+                        .pad_to = pad.pad_to,
                         .pad_ptr = pad_ptr,
                         .file = sorted.file,
                     });
@@ -430,10 +429,10 @@ pub fn check(self: *Self) !void {
                     last_pad.pad_ptr.pad_posting = pad_idx.toOptional();
 
                     const pad_file_data = &self.files.items[last_pad.file];
-                    const pad_to_acc_idx = pad_file_data.accountOf(last_pad.pad_to_token);
+                    const pad_to_acc_idx = pad_file_data.accountOf(last_pad.pad_to);
 
                     const pad_to_posting = Data.Posting{
-                        .account = last_pad.pad_to_token,
+                        .account = last_pad.pad_to,
                         .flag = .none,
                         .amount_number = Data.PackedNumber.pack(missing.negate()),
                         .amount_currency = cur_idx.toOptional(),
@@ -560,17 +559,35 @@ fn postInventoryRecovering(
 ) !?Tree.PostResult {
     return tree.postInventory(date, posting) catch |err| {
         tx.dirty = true;
-        const account_tok = posting.accountToken();
+        const tok = posting.accountToken();
         switch (err) {
-            error.DoesNotHoldCurrency => try self.addError(account_tok, file_id, .account_does_not_hold_currency),
-            error.CannotAddToLotsInventory => try self.addError(account_tok, file_id, .account_is_booked),
-            error.PlainInventoryDoesNotSupportLotSpec => try self.addError(account_tok, file_id, .account_does_not_support_lot_spec),
-            error.AccountNotOpen => try self.addError(account_tok, file_id, .account_not_open),
-            error.LotSpecAmbiguousMatch => try self.addError(account_tok, file_id, .lot_spec_ambiguous_match),
-            error.LotSpecMatchTooSmall => try self.addError(account_tok, file_id, .lot_spec_match_too_small),
-            error.LotSpecNoMatch => try self.addError(account_tok, file_id, .lot_spec_no_match),
-            error.AmbiguousStrictBooking => try self.addError(account_tok, file_id, .ambiguous_strict_booking),
-            error.CostCurrencyMismatch => try self.addError(account_tok, file_id, .cost_currency_mismatch),
+            error.DoesNotHoldCurrency => {
+                try self.addError(tok, file_id, .account_does_not_hold_currency);
+            },
+            error.CannotAddToLotsInventory => {
+                try self.addError(tok, file_id, .account_is_booked);
+            },
+            error.PlainInventoryDoesNotSupportLotSpec => {
+                try self.addError(tok, file_id, .account_does_not_support_lot_spec);
+            },
+            error.AccountNotOpen => {
+                try self.addError(tok, file_id, .account_not_open);
+            },
+            error.LotSpecAmbiguousMatch => {
+                try self.addError(tok, file_id, .lot_spec_ambiguous_match);
+            },
+            error.LotSpecMatchTooSmall => {
+                try self.addError(tok, file_id, .lot_spec_match_too_small);
+            },
+            error.LotSpecNoMatch => {
+                try self.addError(tok, file_id, .lot_spec_no_match);
+            },
+            error.AmbiguousStrictBooking => {
+                try self.addError(tok, file_id, .ambiguous_strict_booking);
+            },
+            error.CostCurrencyMismatch => {
+                try self.addError(tok, file_id, .cost_currency_mismatch);
+            },
             else => return err,
         }
         return null;
@@ -862,7 +879,7 @@ pub fn accountsIterator(self: *const Self) AccountsTextIterator {
 
 pub const AccountsTextIterator = struct {
     project: *const Self,
-    inner: pool_maps.AccountMap(FileLine).Iterator,
+    inner: AccountMap(FileLine).Iterator,
 
     pub fn next(it: *AccountsTextIterator) ?[]const u8 {
         const entry = it.inner.next() orelse return null;
@@ -887,6 +904,7 @@ pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !vo
         is_root,
     );
     defer self.alloc.free(imports);
+    // TODO: Do something with imports
     try new_data.balanceTransactions();
 
     data.deinit();
