@@ -77,9 +77,7 @@ pub const Lots = struct {
             for (other.items, 0..) |l, i| {
                 if (spec.price) |price| {
                     if (!l.cost.price.sub(price).is_zero()) continue;
-                    if (spec.price_currency.unwrap()) |pc| {
-                        if (l.cost.currency != pc) continue;
-                    }
+                    if (l.cost.currency != spec.price_currency.unwrap().?) continue;
                 }
                 if (spec.date) |date| {
                     if (!std.meta.eql(l.cost.date, date)) continue;
