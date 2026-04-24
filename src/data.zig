@@ -627,6 +627,14 @@ pub const TransactionView = struct {
         return .{ .data = v.data, .i = v.tx.postings.start, .end = v.tx.postings.end };
     }
 
+    pub fn numPostings(v: TransactionView) usize {
+        return v.tx.postings.end - v.tx.postings.start;
+    }
+
+    pub fn dirty(v: TransactionView) bool {
+        return v.tx.dirty;
+    }
+
     pub fn payeeText(v: TransactionView) ?[]const u8 {
         const i = v.tx.payee.unwrap() orelse return null;
         return v.data.tokenSlice(i);

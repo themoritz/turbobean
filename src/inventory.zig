@@ -527,9 +527,6 @@ pub const Summary = struct {
         }
     }
 
-    /// Resolve currency texts through a `CurrencyPool` borrowed from the caller.
-    /// Iteration order follows `CurrencyIndex`, i.e., the order in which
-    /// currencies were first interned — deterministic across runs.
     pub fn treeDisplay(self: *const Summary, pool: *const CurrencyPool, indent: u32, writer: std.io.AnyWriter) !void {
         var it = self.by_currency.iterator();
         var first = true;
