@@ -172,4 +172,11 @@ test {
     try std.testing.expectEqual(map.get(b), 7);
     try std.testing.expectEqual(map.get(c), null);
     try std.testing.expectEqual(map.get(d), null);
+
+    try std.testing.expectEqual(map.count(), 2);
+
+    map.clear();
+    try std.testing.expectEqual(map.get(a), null);
+    try std.testing.expectEqual(map.get(b), null);
+    try std.testing.expectEqual(map.count(), 0);
 }
