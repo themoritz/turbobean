@@ -228,8 +228,7 @@ pub const Entry = struct {
     };
 
     /// Sort entries by date, then by "time of day": commodity/price/open/pnl < balance < tx < close.
-    pub fn compare(ctx: void, self: Entry, other: Entry) bool {
-        _ = ctx;
+    pub fn compare(self: Entry, other: Entry) bool {
         return switch (self.date.compare(other.date)) {
             .after => true,
             .before => false,
@@ -537,7 +536,7 @@ pub const EntryView = struct {
         return switch (v.data.entries.items(.payload)[v.idx]) {
             .transaction => |tx| .{ .transaction = .{ .data = v.data, .tx = tx } },
             .open => |o| .{ .open = .{ .data = v.data, .open = o } },
-            .close => |c| .{ .close = c },
+            .close => |c| .{ .close = .{ .data = v.data, .close = c } },
             .commodity => |c| .{ .commodity = c },
             .pad => |p2| .{ .pad = p2 },
             .pnl => |p2| .{ .pnl = p2 },
@@ -607,7 +606,7 @@ pub const EntryView = struct {
 pub const PayloadView = union(Entry.Tag) {
     transaction: TransactionView,
     open: OpenView,
-    close: Close,
+    close: CloseView,
     commodity: Commodity,
     pad: Pad,
     pnl: Pnl,
@@ -650,16 +649,42 @@ pub const OpenView = struct {
     data: *const Self,
     open: Open,
 
-    pub fn currencies(v: OpenView) CurrencySliceIterator {
-        return .{ .data = v.data, .i = v.open.currencies.start, .end = v.open.currencies.end };
+    pub fn currencies(v: OpenView) ?[]const CurrencyIndex {
+        if (v.open.currencies.start == v.open.currencies.end) return null;
+        return v.data.open_currencies.items[v.open.currencies.start..v.open.currencies.end];
+    }
+
+    pub fn booking_method(v: OpenView) ?Inventory.BookingMethod {
+        return v.open.booking_method;
     }
 
     pub fn account(v: OpenView) AccountIndex {
         return v.data.accountOf(v.open.account);
     }
 
+    pub fn accountTokenIndex(v: OpenView) Ast.TokenIndex {
+        return v.open.account;
+    }
+
     pub fn accountText(v: OpenView) []const u8 {
         return v.data.tokenSlice(v.open.account);
+    }
+};
+
+pub const CloseView = struct {
+    data: *const Self,
+    close: Close,
+
+    pub fn account(v: CloseView) AccountIndex {
+        return v.data.accountOf(v.close.account);
+    }
+
+    pub fn accountTokenIndex(v: CloseView) Ast.TokenIndex {
+        return v.close.account;
+    }
+
+    pub fn accountText(v: CloseView) []const u8 {
+        return v.data.tokenSlice(v.close.account);
     }
 };
 
@@ -883,20 +908,6 @@ pub const MetaIterator = struct {
             .key = it.data.meta.items(.key)[it.i],
             .value = it.data.meta.items(.value)[it.i],
         };
-        it.i += 1;
-        return v;
-    }
-};
-
-/// Iterates a `Range` into `Data.open_currencies`.
-pub const CurrencySliceIterator = struct {
-    data: *const Self,
-    i: u32,
-    end: u32,
-
-    pub fn next(it: *CurrencySliceIterator) ?CurrencyIndex {
-        if (it.i >= it.end) return null;
-        const v = it.data.open_currencies.items[it.i];
         it.i += 1;
         return v;
     }
