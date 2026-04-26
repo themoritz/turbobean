@@ -383,10 +383,7 @@ pub fn check(self: *Self) !void {
             },
             .balance => |balance| {
                 const acc_idx = balance.account;
-                const cur_idx = balance.amount_currency.unwrap() orelse {
-                    try self.addError(balance.account_token, sorted.file, ErrorDetails.Tag.account_does_not_hold_currency);
-                    continue;
-                };
+                const cur_idx = balance.amount_currency;
                 const accumulated = tree.balanceAggregatedByAccount(acc_idx, cur_idx) catch |err| switch (err) {
                     error.AccountNotOpen => {
                         try self.addError(balance.account_token, sorted.file, ErrorDetails.Tag.account_not_open);

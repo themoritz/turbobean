@@ -387,7 +387,7 @@ fn convertBalance(self: *Self, bal_extra: Ast.ExtraIndex) !Data.Entry.Payload {
     return .{ .balance = .{
         .account = bal.account,
         .amount = Data.PackedNumber.pack(amount.number),
-        .amount_currency = amount.currency,
+        .amount_currency = amount.currency.unwrap().?,
         .tolerance = Data.PackedNumber.pack(tolerance),
     } };
 }

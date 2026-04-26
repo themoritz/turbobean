@@ -287,7 +287,7 @@ pub const Pnl = struct {
 pub const Balance = struct {
     account: Ast.TokenIndex,
     amount: PackedNumber,
-    amount_currency: OptionalCurrencyIndex,
+    amount_currency: CurrencyIndex,
     tolerance: PackedNumber,
 };
 
@@ -694,7 +694,7 @@ pub const BalanceView = struct {
     /// Source token for the account (for error reporting).
     account_token: Ast.TokenIndex,
     amount: Number,
-    amount_currency: OptionalCurrencyIndex,
+    amount_currency: CurrencyIndex,
     tolerance: ?Number,
 
     pub fn accountText(v: BalanceView) []const u8 {
