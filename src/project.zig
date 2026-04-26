@@ -321,7 +321,25 @@ pub fn check(self: *Self) !void {
         pad: Ast.TokenIndex,
         pad_to: Ast.TokenIndex,
         pad_ptr: *Data.Pad,
-        file: u8,
+        pad_data: *Data,
+
+        pub fn newPosting(
+            p: *const @This(),
+            account: Ast.TokenIndex,
+            number: Number,
+            currency: CurrencyIndex,
+        ) !Data.PostingIndex {
+            return p.pad_data.appendPosting(Data.Posting{
+                .account = account,
+                .flag = .none,
+                .amount_number = Data.PackedNumber.pack(number),
+                .amount_currency = currency.toOptional(),
+                .price = .none,
+                .lot_spec = .none,
+                .meta = Data.Range.empty,
+                .ast_node = .none,
+            });
+        }
     };
 
     var lastPads: AccountMap(LastPad) = .{};
@@ -334,7 +352,7 @@ pub fn check(self: *Self) !void {
     defer tree.deinit();
 
     for (self.sorted_entries.items) |sorted| {
-        const data = &self.files.items[sorted.file];
+        var data = &self.files.items[sorted.file];
         const entry = data.entryAt(sorted.entry);
         switch (entry.payload()) {
             .open => |open| {
@@ -377,7 +395,7 @@ pub fn check(self: *Self) !void {
                         .pad = pad.account,
                         .pad_to = pad.pad_to,
                         .pad_ptr = pad_ptr,
-                        .file = sorted.file,
+                        .pad_data = data,
                     });
                 }
             },
@@ -400,36 +418,15 @@ pub fn check(self: *Self) !void {
                 if (lastPads.get(acc_idx)) |last_pad| {
                     const missing = expected.add(accumulated.negate());
 
-                    const pad_posting = Data.Posting{
-                        .account = balance.account_token,
-                        .flag = .none,
-                        .amount_number = Data.PackedNumber.pack(missing),
-                        .amount_currency = cur_idx.toOptional(),
-                        .price = .none,
-                        .lot_spec = .none,
-                        .meta = Data.Range.empty,
-                        .ast_node = .none,
-                    };
-                    const pad_idx = try data.appendPosting(pad_posting);
-                    try tree.addPosition(acc_idx, cur_idx, missing);
+                    const pad_idx = try last_pad.newPosting(last_pad.pad, missing, cur_idx);
                     last_pad.pad_ptr.pad_posting = pad_idx.toOptional();
+                    try tree.addPosition(acc_idx, cur_idx, missing);
 
-                    const pad_file_data = &self.files.items[last_pad.file];
-                    const pad_to_acc_idx = pad_file_data.accountOf(last_pad.pad_to);
+                    const pad_to_acc_idx = last_pad.pad_data.accountOf(last_pad.pad_to);
 
-                    const pad_to_posting = Data.Posting{
-                        .account = last_pad.pad_to,
-                        .flag = .none,
-                        .amount_number = Data.PackedNumber.pack(missing.negate()),
-                        .amount_currency = cur_idx.toOptional(),
-                        .price = .none,
-                        .lot_spec = .none,
-                        .meta = Data.Range.empty,
-                        .ast_node = .none,
-                    };
-                    const pad_to_idx = try pad_file_data.appendPosting(pad_to_posting);
-                    try tree.addPosition(pad_to_acc_idx, cur_idx, missing.negate());
+                    const pad_to_idx = try last_pad.newPosting(last_pad.pad_to, missing.negate(), cur_idx);
                     last_pad.pad_ptr.pad_to_posting = pad_to_idx.toOptional();
+                    try tree.addPosition(pad_to_acc_idx, cur_idx, missing.negate());
 
                     lastPads.remove(acc_idx);
                 } else {
@@ -476,7 +473,7 @@ pub fn check(self: *Self) !void {
                         entry.date(),
                         posting,
                         sorted.file,
-                        tx_ptr,
+                        &tx_ptr.dirty,
                     );
                     if (post_result) |pr| {
                         if (pnlAccounts.get(posting.account())) |pnl_account| {
@@ -541,10 +538,10 @@ fn postInventoryRecovering(
     date: Date,
     posting: Data.PostingView,
     file_id: u8,
-    tx: *Data.Transaction,
+    dirty_ptr: *bool,
 ) !?Tree.PostResult {
     return tree.postInventory(date, posting) catch |err| {
-        tx.dirty = true;
+        dirty_ptr.* = true;
         const tok = posting.accountToken();
         switch (err) {
             error.DoesNotHoldCurrency => {
