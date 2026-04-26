@@ -305,7 +305,7 @@ pub fn sortEntries(self: *Self) !void {
 fn lessThanFn(self: *Self, lhs: SortedEntry, rhs: SortedEntry) bool {
     const entry_lhs = self.files.items[lhs.file].entries.get(lhs.entry);
     const entry_rhs = self.files.items[rhs.file].entries.get(rhs.entry);
-    return Data.Entry.compare({}, entry_lhs, entry_rhs);
+    return Data.Entry.compare(entry_lhs, entry_rhs);
 }
 
 pub fn pipeline(self: *Self) !void {
@@ -327,11 +327,7 @@ pub fn check(self: *Self) !void {
     var lastPads: AccountMap(LastPad) = .{};
     defer lastPads.deinit(self.alloc);
 
-    const PnlEntry = struct {
-        income_token: Ast.TokenIndex,
-        file: u8,
-    };
-    var pnlAccounts: AccountMap(PnlEntry) = .{};
+    var pnlAccounts: AccountMap(Ast.TokenIndex) = .{};
     defer pnlAccounts.deinit(self.alloc);
 
     var tree = try Tree.init(self.alloc, self.accounts, self.currencies);
@@ -342,20 +338,13 @@ pub fn check(self: *Self) !void {
         const entry = data.entryAt(sorted.entry);
         switch (entry.payload()) {
             .open => |open| {
-                const acc_idx = data.accountOf(open.open.account);
-                var cur_list = std.ArrayList(CurrencyIndex){};
-                defer cur_list.deinit(self.alloc);
-                var cit = open.currencies();
-                while (cit.next()) |c| try cur_list.append(self.alloc, c);
-                const cur_slice: ?[]const CurrencyIndex = if (cur_list.items.len == 0) null else cur_list.items;
-                if (try tree.open(acc_idx, cur_slice, open.open.booking_method) == null) {
-                    try self.addError(open.open.account, sorted.file, ErrorDetails.Tag.account_already_open);
+                if (try tree.open(open.account(), open.currencies(), open.open.booking_method) == null) {
+                    try self.addError(open.accountTokenIndex(), sorted.file, ErrorDetails.Tag.account_already_open);
                 }
             },
             .close => |close| {
-                const acc_idx = data.accountOf(close.account);
-                tree.close(acc_idx) catch |err| switch (err) {
-                    error.AccountNotOpen => try self.addError(close.account, sorted.file, ErrorDetails.Tag.account_not_open),
+                tree.close(close.account()) catch |err| switch (err) {
+                    error.AccountNotOpen => try self.addError(close.accountTokenIndex(), sorted.file, ErrorDetails.Tag.account_not_open),
                     else => return err,
                 };
             },
@@ -471,7 +460,7 @@ pub fn check(self: *Self) !void {
                     try self.addError(pnl.account, sorted.file, .pnl_account_must_be_lots);
                     continue;
                 }
-                try pnlAccounts.put(self.alloc, acc_idx, .{ .income_token = pnl.income_account, .file = sorted.file });
+                try pnlAccounts.put(self.alloc, acc_idx, pnl.income_account);
             },
             .transaction => |_| {
                 const tx_ptr: *Data.Transaction = &data.entries.items(.payload)[sorted.entry].transaction;
@@ -493,7 +482,7 @@ pub fn check(self: *Self) !void {
                         tx_ptr,
                     );
                     if (post_result) |pr| {
-                        if (pnlAccounts.get(posting.account())) |pnl_entry| {
+                        if (pnlAccounts.get(posting.account())) |pnl_account| {
                             if (posting.price()) |price| {
                                 const amount_num = posting.amountNumber().?;
                                 const sale_weight = if (price.total)
@@ -511,7 +500,7 @@ pub fn check(self: *Self) !void {
                                         has_pnl = true;
                                     }
                                     const pnl_posting = Data.Posting{
-                                        .account = pnl_entry.income_token,
+                                        .account = pnl_account,
                                         .flag = .none,
                                         .amount_number = Data.PackedNumber.pack(pnl_amount),
                                         .amount_currency = pr.cost_currency.toOptional(),
@@ -521,7 +510,7 @@ pub fn check(self: *Self) !void {
                                         .ast_node = .none,
                                     };
                                     _ = try data.appendPosting(pnl_posting);
-                                    const inc_acc_idx = data.accountOf(pnl_entry.income_token);
+                                    const inc_acc_idx = data.accountOf(pnl_account);
                                     try tree.addPosition(inc_acc_idx, pr.cost_currency, pnl_amount);
                                 }
                             }
@@ -799,12 +788,7 @@ pub fn accountInventoryUntilLine(
         switch (entry.payload()) {
             .open => |open| {
                 if (open.account() == account_idx) {
-                    var cur_list = std.ArrayList(CurrencyIndex){};
-                    defer cur_list.deinit(self.alloc);
-                    var cit = open.currencies();
-                    while (cit.next()) |c| try cur_list.append(self.alloc, c);
-                    const cur_slice: ?[]const CurrencyIndex = if (cur_list.items.len == 0) null else cur_list.items;
-                    _ = try tree.open(account_idx, cur_slice, open.open.booking_method);
+                    _ = try tree.open(account_idx, open.currencies(), open.open.booking_method);
                 }
             },
             .transaction => |tx| {
@@ -922,12 +906,7 @@ pub fn printTree(self: *Self) !void {
         const entry = data.entryAt(sorted_entry.entry);
         switch (entry.payload()) {
             .open => |open| {
-                var cur_list = std.ArrayList(CurrencyIndex){};
-                defer cur_list.deinit(self.alloc);
-                var cit = open.currencies();
-                while (cit.next()) |c| try cur_list.append(self.alloc, c);
-                const cur_slice: ?[]const CurrencyIndex = if (cur_list.items.len == 0) null else cur_list.items;
-                _ = try tree.open(open.account(), cur_slice, open.open.booking_method);
+                _ = try tree.open(open.account(), open.currencies(), open.open.booking_method);
             },
             .transaction => |tx| {
                 if (tx.tx.dirty) continue;
