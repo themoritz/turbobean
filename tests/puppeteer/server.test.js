@@ -99,8 +99,8 @@ describe('TurboBean Server', () => {
         { date: '2024-01-07', currency: 'USD', balance: 1000.0, balance_rendered: '1,000.00' },
         { date: '2024-01-14', currency: 'USD', balance: 1000.0, balance_rendered: '1,000.00' },
         { date: '2024-01-21', currency: 'USD', balance: 3850.0, balance_rendered: '3,850.00' },
-        { date: '2024-01-28', currency: 'AAPL', balance: 1.0, balance_rendered: '1.00' },
         { date: '2024-01-28', currency: 'USD', balance: 2850.0, balance_rendered: '2,850.00' },
+        { date: '2024-01-28', currency: 'AAPL', balance: 1.0, balance_rendered: '1.00' },
       ];
 
       expect(plotPoints).toEqual(expected);
@@ -149,15 +149,15 @@ describe('TurboBean Server', () => {
           period: "W3 2024",
           data_points: [
             {
-              account: "Income:Salary",
-              balance: -3000,
-              balance_rendered: "-3,000.00",
-              currency: "USD",
-            },
-            {
               account: "Expenses:Groceries",
               balance: 150,
               balance_rendered: "150.00",
+              currency: "USD",
+            },
+            {
+              account: "Income:Salary",
+              balance: -3000,
+              balance_rendered: "-3,000.00",
               currency: "USD",
             },
           ],
