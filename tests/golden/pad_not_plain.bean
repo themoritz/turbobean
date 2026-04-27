@@ -1,0 +1,9 @@
+2025-12-20 open Assets:Stocks "FIFO"
+2025-12-20 open Assets:Cash
+2025-12-20 open Equity:Opening
+
+2025-12-20 pad Assets:Stocks Equity:Opening
+2025-12-21 balance Assets:Stocks  5 AAPL
+
+2025-12-20 pad Assets:Cash Equity:Opening
+2025-12-21 balance Assets:Cash  5 USD

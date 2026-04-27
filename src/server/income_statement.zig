@@ -206,16 +206,13 @@ fn render(
                     }
                 },
                 .pad => |pad| {
-                    if (pad.pad_posting.unwrap() == null) continue;
                     if (!display.isWithinDateRange(entry.date())) continue;
 
-                    if (pad.pad_posting.unwrap()) |pidx| {
-                        const p = data.postingAt(@intFromEnum(pidx));
+                    if (pad.padPosting()) |p| {
                         _ = try tree.postInventory(entry.date(), p);
                         try data_tracker.updateWithPosting(p);
                     }
-                    if (pad.pad_to_posting.unwrap()) |pidx| {
-                        const p = data.postingAt(@intFromEnum(pidx));
+                    if (pad.padToPosting()) |p| {
                         _ = try tree.postInventory(entry.date(), p);
                         try data_tracker.updateWithPosting(p);
                     }
