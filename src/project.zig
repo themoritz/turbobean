@@ -388,7 +388,7 @@ pub fn check(self: *Self) !void {
                     try last_pad.setPadAmount(missing, cur_idx);
                     try last_pad.setPadToAmount(missing.negate(), cur_idx);
 
-                    try tree.addPosition(acc_idx, cur_idx, missing);
+                    try tree.addPosition(last_pad.account(), cur_idx, missing);
                     try tree.addPosition(last_pad.padToAccount(), cur_idx, missing.negate());
 
                     lastPads.remove(acc_idx);
@@ -419,24 +419,20 @@ pub fn check(self: *Self) !void {
                 }
                 try pnlAccounts.put(self.alloc, acc_idx, pnl.income_account);
             },
-            .transaction => |_| {
-                const tx_ptr: *Data.Transaction = &data.entries.items(.payload)[sorted.entry].transaction;
-                if (tx_ptr.dirty) continue;
+            .transaction => |tx| {
+                if (tx.dirty()) continue;
 
-                const postings = tx_ptr.postings;
-                if (postings.isEmpty()) continue;
+                var pnl_buf: [16]Data.Posting = undefined;
+                var num_pnl: usize = 0;
 
-                var pnl_start: u32 = 0;
-                var has_pnl = false;
-
-                for (postings.start..postings.end) |i| {
-                    const posting = data.postingAt(@intCast(i));
+                var it = tx.postings();
+                while (it.next()) |posting| {
                     const post_result = try self.postInventoryRecovering(
                         &tree,
                         entry.date(),
                         posting,
                         sorted.file,
-                        &tx_ptr.dirty,
+                        tx.dirtyPtr(),
                     );
                     if (post_result) |pr| {
                         if (pnlAccounts.get(posting.account())) |pnl_account| {
@@ -448,35 +444,15 @@ pub fn check(self: *Self) !void {
                                     amount_num.mul(price.amount.?);
                                 const pnl_amount = sale_weight.sub(pr.cost_weight);
                                 if (!pnl_amount.is_zero()) {
-                                    if (!has_pnl) {
-                                        pnl_start = @intCast(data.postings.len);
-                                        for (postings.start..postings.end) |j| {
-                                            const orig = data.postings.get(j);
-                                            _ = try data.appendPosting(orig);
-                                        }
-                                        has_pnl = true;
-                                    }
-                                    const pnl_posting = Data.Posting{
-                                        .account = pnl_account,
-                                        .flag = .none,
-                                        .amount_number = Data.PackedNumber.pack(pnl_amount),
-                                        .amount_currency = pr.cost_currency.toOptional(),
-                                        .price = .none,
-                                        .lot_spec = .none,
-                                        .meta = Data.Range.empty,
-                                        .ast_node = .none,
-                                    };
-                                    _ = try data.appendPosting(pnl_posting);
-                                    const inc_acc_idx = data.accountOf(pnl_account);
-                                    try tree.addPosition(inc_acc_idx, pr.cost_currency, pnl_amount);
+                                    pnl_buf[num_pnl] = .simple(pnl_account, pnl_amount, pr.cost_currency);
+                                    num_pnl += 1;
+                                    try tree.addPosition(data.accountOf(pnl_account), pr.cost_currency, pnl_amount);
                                 }
                             }
                         }
                     }
                 }
-                if (has_pnl) {
-                    tx_ptr.postings = .{ .start = pnl_start, .end = @intCast(data.postings.len) };
-                }
+                try tx.addPnlPostings(pnl_buf[0..num_pnl]);
             },
             .note => |note| {
                 const acc_idx = data.accountOf(note.account);
