@@ -191,13 +191,11 @@ fn render(
                     }
                 },
                 .pad => |pad| {
-                    if (pad.pad_posting.unwrap()) |pidx| {
-                        const p = data.postingAt(@intFromEnum(pidx));
+                    if (pad.padPosting()) |p| {
                         _ = try tree.postInventory(entry.date(), p);
                         try net_worth.updateWithPosting(p);
                     }
-                    if (pad.pad_to_posting.unwrap()) |pidx| {
-                        const p = data.postingAt(@intFromEnum(pidx));
+                    if (pad.padToPosting()) |p| {
                         _ = try tree.postInventory(entry.date(), p);
                         try net_worth.updateWithPosting(p);
                     }

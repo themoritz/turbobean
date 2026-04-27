@@ -517,7 +517,7 @@ pub fn addWarning(self: *Self, tok: Ast.TokenIndex, uri: Uri, tag: ErrorDetails.
 // --- views and iterators ----------------------------------------------------
 
 pub const EntryView = struct {
-    data: *const Self,
+    data: *Self,
     idx: u32,
 
     pub fn date(v: EntryView) Date {
@@ -538,7 +538,7 @@ pub const EntryView = struct {
             .open => |o| .{ .open = .{ .data = v.data, .open = o } },
             .close => |c| .{ .close = .{ .data = v.data, .close = c } },
             .commodity => |c| .{ .commodity = c },
-            .pad => |p2| .{ .pad = p2 },
+            .pad => |*p| .{ .pad = .{ .data = v.data, .pad = p } },
             .pnl => |p2| .{ .pnl = p2 },
             .balance => |b| .{ .balance = .{
                 .data = v.data,
@@ -608,7 +608,7 @@ pub const PayloadView = union(Entry.Tag) {
     open: OpenView,
     close: CloseView,
     commodity: Commodity,
-    pad: Pad,
+    pad: PadView,
     pnl: Pnl,
     balance: BalanceView,
     price: PriceDeclView,
@@ -685,6 +685,65 @@ pub const CloseView = struct {
 
     pub fn accountText(v: CloseView) []const u8 {
         return v.data.tokenSlice(v.close.account);
+    }
+};
+
+pub const PadView = struct {
+    data: *Self,
+    pad: *Pad,
+
+    pub fn account(v: PadView) AccountIndex {
+        return v.data.accountOf(v.pad.account);
+    }
+
+    pub fn accountTokenIndex(v: PadView) Ast.TokenIndex {
+        return v.pad.account;
+    }
+
+    pub fn setPadAmount(v: PadView, number: Number, currency: CurrencyIndex) !void {
+        const p = try v.newPosting(v.pad.account, number, currency);
+        v.pad.pad_posting = p.toOptional();
+    }
+
+    pub fn padPosting(v: PadView) ?PostingView {
+        const i = v.pad.pad_posting.unwrap() orelse return null;
+        return v.data.postingAt(@intFromEnum(i));
+    }
+
+    pub fn padToAccount(v: PadView) AccountIndex {
+        return v.data.accountOf(v.pad.pad_to);
+    }
+
+    pub fn padToAccountTokenIndex(v: PadView) Ast.TokenIndex {
+        return v.pad.pad_to;
+    }
+
+    pub fn setPadToAmount(v: PadView, number: Number, currency: CurrencyIndex) !void {
+        const p = try v.newPosting(v.pad.pad_to, number, currency);
+        v.pad.pad_to_posting = p.toOptional();
+    }
+
+    pub fn padToPosting(v: PadView) ?PostingView {
+        const i = v.pad.pad_to_posting.unwrap() orelse return null;
+        return v.data.postingAt(@intFromEnum(i));
+    }
+
+    fn newPosting(
+        v: PadView,
+        acc: Ast.TokenIndex,
+        number: Number,
+        currency: CurrencyIndex,
+    ) !PostingIndex {
+        return v.data.appendPosting(Posting{
+            .account = acc,
+            .flag = .none,
+            .amount_number = PackedNumber.pack(number),
+            .amount_currency = currency.toOptional(),
+            .price = .none,
+            .lot_spec = .none,
+            .meta = Range.empty,
+            .ast_node = .none,
+        });
     }
 };
 
@@ -848,7 +907,7 @@ pub const EntryIterator = struct {
 
 pub fn EntriesOfKindIterator(comptime kind: Entry.Tag) type {
     return struct {
-        data: *const Self,
+        data: *Self,
         i: u32,
         end: u32,
 
@@ -917,11 +976,11 @@ pub fn iterEntries(self: *const Self) EntryIterator {
     return .{ .data = self, .i = 0, .end = @intCast(self.entries.len) };
 }
 
-pub fn iterEntriesOfKind(self: *const Self, comptime kind: Entry.Tag) EntriesOfKindIterator(kind) {
+pub fn iterEntriesOfKind(self: *Self, comptime kind: Entry.Tag) EntriesOfKindIterator(kind) {
     return .{ .data = self, .i = 0, .end = @intCast(self.entries.len) };
 }
 
-pub fn entryAt(self: *const Self, idx: u32) EntryView {
+pub fn entryAt(self: *Self, idx: u32) EntryView {
     return .{ .data = self, .idx = idx };
 }
 

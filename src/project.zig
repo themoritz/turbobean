@@ -316,33 +316,7 @@ pub fn pipeline(self: *Self) !void {
 }
 
 pub fn check(self: *Self) !void {
-    const LastPad = struct {
-        date: Date,
-        pad: Ast.TokenIndex,
-        pad_to: Ast.TokenIndex,
-        pad_ptr: *Data.Pad,
-        pad_data: *Data,
-
-        pub fn newPosting(
-            p: *const @This(),
-            account: Ast.TokenIndex,
-            number: Number,
-            currency: CurrencyIndex,
-        ) !Data.PostingIndex {
-            return p.pad_data.appendPosting(Data.Posting{
-                .account = account,
-                .flag = .none,
-                .amount_number = Data.PackedNumber.pack(number),
-                .amount_currency = currency.toOptional(),
-                .price = .none,
-                .lot_spec = .none,
-                .meta = Data.Range.empty,
-                .ast_node = .none,
-            });
-        }
-    };
-
-    var lastPads: AccountMap(LastPad) = .{};
+    var lastPads: AccountMap(Data.PadView) = .{};
     defer lastPads.deinit(self.alloc);
 
     var pnlAccounts: AccountMap(Ast.TokenIndex) = .{};
@@ -367,36 +341,29 @@ pub fn check(self: *Self) !void {
                 };
             },
             .pad => |pad| {
-                const acc_idx = data.accountOf(pad.account);
-                const pad_to_idx = data.accountOf(pad.pad_to);
+                const acc_idx = pad.account();
+                const pad_to_idx = pad.padToAccount();
                 if (!tree.accountOpen(acc_idx)) {
-                    try self.addError(pad.account, sorted.file, ErrorDetails.Tag.account_not_open);
+                    try self.addError(pad.accountTokenIndex(), sorted.file, ErrorDetails.Tag.account_not_open);
                     continue;
                 }
                 if (!tree.accountOpen(pad_to_idx)) {
-                    try self.addError(pad.pad_to, sorted.file, ErrorDetails.Tag.account_not_open);
+                    try self.addError(pad.padToAccountTokenIndex(), sorted.file, ErrorDetails.Tag.account_not_open);
                     continue;
                 }
                 if (!(tree.isPlainAccount(pad_to_idx) catch unreachable)) {
-                    try self.addError(pad.pad_to, sorted.file, ErrorDetails.Tag.pad_accounts_must_be_plain);
+                    try self.addError(pad.padToAccountTokenIndex(), sorted.file, ErrorDetails.Tag.pad_accounts_must_be_plain);
                     continue;
                 }
                 if (!(tree.isPlainAccount(acc_idx) catch unreachable)) {
-                    try self.addError(pad.account, sorted.file, ErrorDetails.Tag.pad_accounts_must_be_plain);
+                    try self.addError(pad.accountTokenIndex(), sorted.file, ErrorDetails.Tag.pad_accounts_must_be_plain);
                     continue;
                 }
 
                 if (lastPads.contains(acc_idx)) {
                     try self.addError(entry.mainToken(), sorted.file, .multiple_pads);
                 } else {
-                    const pad_ptr: *Data.Pad = &data.entries.items(.payload)[sorted.entry].pad;
-                    try lastPads.put(self.alloc, acc_idx, .{
-                        .date = entry.date(),
-                        .pad = pad.account,
-                        .pad_to = pad.pad_to,
-                        .pad_ptr = pad_ptr,
-                        .pad_data = data,
-                    });
+                    try lastPads.put(self.alloc, acc_idx, pad);
                 }
             },
             .balance => |balance| {
@@ -418,15 +385,11 @@ pub fn check(self: *Self) !void {
                 if (lastPads.get(acc_idx)) |last_pad| {
                     const missing = expected.add(accumulated.negate());
 
-                    const pad_idx = try last_pad.newPosting(last_pad.pad, missing, cur_idx);
-                    last_pad.pad_ptr.pad_posting = pad_idx.toOptional();
+                    try last_pad.setPadAmount(missing, cur_idx);
+                    try last_pad.setPadToAmount(missing.negate(), cur_idx);
+
                     try tree.addPosition(acc_idx, cur_idx, missing);
-
-                    const pad_to_acc_idx = last_pad.pad_data.accountOf(last_pad.pad_to);
-
-                    const pad_to_idx = try last_pad.newPosting(last_pad.pad_to, missing.negate(), cur_idx);
-                    last_pad.pad_ptr.pad_to_posting = pad_to_idx.toOptional();
-                    try tree.addPosition(pad_to_acc_idx, cur_idx, missing.negate());
+                    try tree.addPosition(last_pad.padToAccount(), cur_idx, missing.negate());
 
                     lastPads.remove(acc_idx);
                 } else {
@@ -786,10 +749,9 @@ pub fn accountInventoryUntilLine(
                 }
             },
             .transaction => |tx| {
-                if (tx.tx.dirty) continue;
-                const postings = tx.tx.postings;
-                for (postings.start..postings.end) |i| {
-                    const posting = data.postingAt(@intCast(i));
+                if (tx.dirty()) continue;
+                var it = tx.postings();
+                while (it.next()) |posting| {
                     if (posting.account() != account_idx) continue;
                     const acc_line = data.token(posting.accountToken()).start_line;
                     if (acc_line == line and sorted_entry.file == file) {
@@ -805,8 +767,7 @@ pub fn accountInventoryUntilLine(
                 }
             },
             .pad => |pad| {
-                if (pad.pad_posting.unwrap()) |pidx| {
-                    const posting = data.postingAt(@intFromEnum(pidx));
+                if (pad.padPosting()) |posting| {
                     if (posting.account() == account_idx) {
                         const acc_line = data.token(posting.accountToken()).start_line;
                         if (acc_line == line and sorted_entry.file == file) {
@@ -821,8 +782,7 @@ pub fn accountInventoryUntilLine(
                         }
                     }
                 }
-                if (pad.pad_to_posting.unwrap()) |pidx| {
-                    const posting = data.postingAt(@intFromEnum(pidx));
+                if (pad.padToPosting()) |posting| {
                     if (posting.account() == account_idx) {
                         const acc_line = data.token(posting.accountToken()).start_line;
                         if (acc_line == line and sorted_entry.file == file) {
@@ -910,11 +870,11 @@ pub fn printTree(self: *Self) !void {
                 }
             },
             .pad => |pad| {
-                if (pad.pad_posting.unwrap()) |pidx| {
-                    _ = try tree.postInventory(entry.date(), data.postingAt(@intFromEnum(pidx)));
+                if (pad.padPosting()) |posting| {
+                    _ = try tree.postInventory(entry.date(), posting);
                 }
-                if (pad.pad_to_posting.unwrap()) |pidx| {
-                    _ = try tree.postInventory(entry.date(), data.postingAt(@intFromEnum(pidx)));
+                if (pad.padToPosting()) |posting| {
+                    _ = try tree.postInventory(entry.date(), posting);
                 }
             },
             else => {},
