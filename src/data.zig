@@ -332,6 +332,19 @@ pub const Posting = struct {
     meta: Range,
     /// AST posting node for source recovery. `.none` for synthetic postings (pad, pnl).
     ast_node: Ast.Node.OptionalIndex = .none,
+
+    pub fn simple(account: Ast.TokenIndex, number: Number, currency: CurrencyIndex) Posting {
+        return .{
+            .account = account,
+            .flag = .none,
+            .amount_number = PackedNumber.pack(number),
+            .amount_currency = currency.toOptional(),
+            .price = .none,
+            .lot_spec = .none,
+            .meta = Range.empty,
+            .ast_node = .none,
+        };
+    }
 };
 
 pub const Price = struct {
@@ -534,7 +547,7 @@ pub const EntryView = struct {
 
     pub fn payload(v: EntryView) PayloadView {
         return switch (v.data.entries.items(.payload)[v.idx]) {
-            .transaction => |tx| .{ .transaction = .{ .data = v.data, .tx = tx } },
+            .transaction => |*tx| .{ .transaction = .{ .data = v.data, .tx = tx } },
             .open => |o| .{ .open = .{ .data = v.data, .open = o } },
             .close => |c| .{ .close = .{ .data = v.data, .close = c } },
             .commodity => |c| .{ .commodity = c },
@@ -619,8 +632,8 @@ pub const PayloadView = union(Entry.Tag) {
 };
 
 pub const TransactionView = struct {
-    data: *const Self,
-    tx: Transaction,
+    data: *Self,
+    tx: *Transaction,
 
     pub fn postings(v: TransactionView) PostingIterator {
         return .{ .data = v.data, .i = v.tx.postings.start, .end = v.tx.postings.end };
@@ -634,6 +647,10 @@ pub const TransactionView = struct {
         return v.tx.dirty;
     }
 
+    pub fn dirtyPtr(v: TransactionView) *bool {
+        return &v.tx.dirty;
+    }
+
     pub fn payeeText(v: TransactionView) ?[]const u8 {
         const i = v.tx.payee.unwrap() orelse return null;
         return v.data.tokenSlice(i);
@@ -642,6 +659,21 @@ pub const TransactionView = struct {
     pub fn narrationText(v: TransactionView) ?[]const u8 {
         const i = v.tx.narration.unwrap() orelse return null;
         return v.data.tokenSlice(i);
+    }
+
+    pub fn addPnlPostings(v: TransactionView, ps: []Posting) !void {
+        if (ps.len == 0) return;
+        const start = v.data.postings.len;
+        for (v.tx.postings.start..v.tx.postings.end) |i| {
+            _ = try v.data.appendPosting(v.data.postings.get(i));
+        }
+        for (ps) |p| {
+            _ = try v.data.appendPosting(p);
+        }
+        v.tx.postings = .{
+            .start = @intCast(start),
+            .end = @intCast(v.data.postings.len),
+        };
     }
 };
 
@@ -734,16 +766,7 @@ pub const PadView = struct {
         number: Number,
         currency: CurrencyIndex,
     ) !PostingIndex {
-        return v.data.appendPosting(Posting{
-            .account = acc,
-            .flag = .none,
-            .amount_number = PackedNumber.pack(number),
-            .amount_currency = currency.toOptional(),
-            .price = .none,
-            .lot_spec = .none,
-            .meta = Range.empty,
-            .ast_node = .none,
-        });
+        return v.data.appendPosting(Posting.simple(acc, number, currency));
     }
 };
 
