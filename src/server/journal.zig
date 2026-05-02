@@ -71,18 +71,18 @@ fn render(
         switch (entry.payload()) {
             .open => |open| {
                 if (open.account() == account_idx) {
-                    _ = try tree.open(account_idx, null, open.open.booking_method);
+                    _ = try tree.open(account_idx, null, open.bookingMethod());
                     if (display.isWithinDateRange(entry.date())) {
                         try zts.print(tpl, "open", .{ .date = entry.date() }, out);
                     }
                 }
             },
             .transaction => |tx| {
-                if (tx.tx.dirty) continue;
+                if (tx.dirty()) continue;
                 if (!display.isWithinDateRange(entry.date())) continue;
-                const postings = tx.tx.postings;
-                for (postings.start..postings.end) |i| {
-                    const p = data.postingAt(@intCast(i));
+                var it = tx.postings();
+                var i: usize = 0;
+                while (it.next()) |p| : (i += 1) {
                     if (p.account() != account_idx) continue;
 
                     const hash = entry.hash() + i;
@@ -109,7 +109,8 @@ fn render(
 
                     try zts.print(tpl, "transaction_legs", .{ .hash = hash }, out);
 
-                    for (postings.start..postings.end) |_| {
+                    var ps = tx.postings();
+                    while (ps.next()) |_| {
                         try zts.write(tpl, "transaction_leg", out);
                     }
 
@@ -150,11 +151,11 @@ fn render(
 
                     try zts.print(tpl, "transaction_balance_end", .{ .hash = hash }, out);
 
-                    for (postings.start..postings.end) |j| {
-                        const p2 = data.postingAt(@intCast(j));
+                    var ps2 = tx.postings();
+                    while (ps2.next()) |p2| {
                         try zts.write(tpl, "transaction_posting", out);
 
-                        if (j < postings.end - 1) {
+                        if (ps2.remaining() > 0) {
                             try zts.write(t.tree, "tree_node_middle", out);
                         } else {
                             try zts.write(t.tree, "tree_node_last", out);

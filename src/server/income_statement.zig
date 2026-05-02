@@ -187,20 +187,17 @@ fn render(
                 try data_tracker.flush(date);
             }
         },
-        .entry => |e| {
-            const data, const entry = e;
-
+        .entry => |entry| {
             switch (entry.payload()) {
                 .open => |open| {
-                    _ = try tree.open(open.account(), null, open.open.booking_method);
+                    _ = try tree.open(open.account(), null, open.bookingMethod());
                 },
                 .transaction => |tx| {
-                    if (tx.tx.dirty) continue;
+                    if (tx.dirty()) continue;
                     if (!display.isWithinDateRange(entry.date())) continue;
 
-                    const postings = tx.tx.postings;
-                    for (postings.start..postings.end) |i| {
-                        const p = data.postingAt(@intCast(i));
+                    var ps = tx.postings();
+                    while (ps.next()) |p| {
                         _ = try tree.postInventory(entry.date(), p);
                         try data_tracker.updateWithPosting(p);
                     }
