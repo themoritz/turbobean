@@ -686,7 +686,7 @@ pub const OpenView = struct {
         return v.data.open_currencies.items[v.open.currencies.start..v.open.currencies.end];
     }
 
-    pub fn booking_method(v: OpenView) ?Inventory.BookingMethod {
+    pub fn bookingMethod(v: OpenView) ?Inventory.BookingMethod {
         return v.open.booking_method;
     }
 
@@ -959,6 +959,10 @@ pub const PostingIterator = struct {
         const v = PostingView{ .data = it.data, .idx = it.i };
         it.i += 1;
         return v;
+    }
+
+    pub fn remaining(it: *PostingIterator) usize {
+        return it.end - it.i;
     }
 };
 

@@ -35,7 +35,6 @@ const NetWorth = struct {
     prices: *Prices,
     project: *const Project,
     conversion_target: ?Data.CurrencyIndex,
-    display: DisplaySettings,
     inv: PlainInventory,
     converted_inv: PlainInventory,
     string_store: *StringStore,
@@ -46,7 +45,6 @@ const NetWorth = struct {
         prices: *Prices,
         project: *const Project,
         conversion_target: ?Data.CurrencyIndex,
-        display: DisplaySettings,
         string_store: *StringStore,
         plot_data: *common.PlotData,
     ) !NetWorth {
@@ -55,7 +53,6 @@ const NetWorth = struct {
             .prices = prices,
             .project = project,
             .conversion_target = conversion_target,
-            .display = display,
             .inv = try PlainInventory.init(alloc, null),
             .converted_inv = try PlainInventory.init(alloc, null),
             .string_store = string_store,
@@ -125,22 +122,21 @@ fn render(
     var plot_data = common.PlotData{ .alloc = alloc };
     errdefer plot_data.deinit();
 
+    // `Equity:Earnings:Previous` / `Equity:Earnings:Current` are system
+    // accounts used by the earnings clearing step; intern so we have stable
+    // indices regardless of whether the file declared them.
+    const previous_idx: Data.AccountIndex = try project.accounts.intern(alloc, "Equity:Earnings:Previous");
+    const current_idx: Data.AccountIndex = try project.accounts.intern(alloc, "Equity:Earnings:Current");
+
     const conversion_target: ?Data.CurrencyIndex = switch (display.conversion) {
         .units => null,
         .currency => |text| project.findCurrency(text),
     };
-    // `Equity:Earnings:Previous` / `Equity:Earnings:Current` are system
-    // accounts used by the earnings clearing step; intern so we have stable
-    // indices regardless of whether the file declared them.
-    const earnings_prev_idx: Data.AccountIndex = try project.accounts.intern(alloc, "Equity:Earnings:Previous");
-    const earnings_curr_idx: Data.AccountIndex = try project.accounts.intern(alloc, "Equity:Earnings:Current");
-
     var net_worth = try NetWorth.init(
         alloc,
         &prices,
         project,
         conversion_target,
-        display,
         string_store,
         &plot_data,
     );
@@ -155,13 +151,12 @@ fn render(
                 try net_worth.flush(date);
             }
         },
-        .entry => |e| {
-            const data, const entry = e;
+        .entry => |entry| {
             state: switch (date_state) {
                 .before => {
                     if (display.hasStartDate()) {
                         if (display.isAfterStart(entry.date())) {
-                            try tree.clearEarnings(earnings_prev_idx);
+                            try tree.clearEarnings(previous_idx);
                             continue :state .within;
                         }
                     } else {
@@ -178,14 +173,13 @@ fn render(
 
             switch (entry.payload()) {
                 .open => |open| {
-                    _ = try tree.open(open.account(), null, open.open.booking_method);
+                    _ = try tree.open(open.account(), null, open.bookingMethod());
                 },
                 .transaction => |tx| {
-                    if (tx.tx.dirty) continue;
+                    if (tx.dirty()) continue;
 
-                    const postings = tx.tx.postings;
-                    for (postings.start..postings.end) |i| {
-                        const p = data.postingAt(@intCast(i));
+                    var ps = tx.postings();
+                    while (ps.next()) |p| {
                         _ = try tree.postInventory(entry.date(), p);
                         try net_worth.updateWithPosting(p);
                     }
@@ -208,7 +202,7 @@ fn render(
         },
     };
 
-    try tree.clearEarnings(earnings_curr_idx);
+    try tree.clearEarnings(current_idx);
 
     try common.renderPlotArea(operating_currencies, out);
 

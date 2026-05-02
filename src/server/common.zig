@@ -114,7 +114,7 @@ pub const TreeRenderer = struct {
     tree: *const Tree,
     project: *const Project,
     operating_currencies: []const []const u8,
-    conversion_target: ?@import("../data.zig").CurrencyIndex,
+    conversion_target: ?Data.CurrencyIndex,
     prices: *const Prices,
 
     const MAX_TREE_DEPTH = 10;
@@ -175,13 +175,11 @@ pub const TreeRenderer = struct {
         var converted_inv = try Inventory.PlainInventory.init(self.alloc, null);
         defer converted_inv.deinit();
 
-        var inv = blk: {
-            if (self.conversion_target) |cur| {
+        var inv =
+            if (self.conversion_target) |cur| blk: {
                 try self.prices.convertInventory(&unconverted_inv, cur, &converted_inv);
                 break :blk &converted_inv;
-            }
-            break :blk &unconverted_inv;
-        };
+            } else &unconverted_inv;
 
         const name_prefix_len = name_prefix.items.len;
         if (depth > 0) {
@@ -316,7 +314,7 @@ pub const IntervalIterator = struct {
 
     pub const Elem = union(enum) {
         cutoff: Date,
-        entry: struct { *Data, Data.EntryView },
+        entry: Data.EntryView,
     };
 
     pub fn init(project: *const Project, interval: DisplaySettings.Interval) IntervalIterator {
@@ -330,7 +328,7 @@ pub const IntervalIterator = struct {
         // No more entries - emit remaining cutoff if any
         if (it.current_index >= it.project.sorted_entries.items.len) {
             if (it.next_cutoff) |cutoff| {
-                it.next_cutoff = null;
+                it.next_cutoff = null; // Clear it so we don't emit it again
                 return .{ .cutoff = cutoff };
             }
             return null;
@@ -347,10 +345,13 @@ pub const IntervalIterator = struct {
         const cutoff = it.next_cutoff.?;
         const cmp = cutoff.compare(entry.date());
 
+        // If entry is before or on the same date as cutoff, emit entry first
+        // This ensures cutoffs come after entries when dates are equal
         if (cmp == .before or cmp == .equal) {
             it.current_index += 1;
-            return .{ .entry = .{ data, entry } };
+            return .{ .entry = entry };
         } else {
+            // Entry is after cutoff, emit cutoff first and advance
             it.next_cutoff = it.interval.advanceDate(cutoff);
             return .{ .cutoff = cutoff };
         }
