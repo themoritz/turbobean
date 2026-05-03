@@ -602,32 +602,29 @@ fn balanceTransactions(self: *Self) !void {
 
 // --- iterators on the project ----------------------------------------------
 
-/// Iterates account-bearing tokens across one or all files. Two-phase per
-/// file: first all entry-level account tokens (open, close, pad, ...), then
-/// all posting tokens belonging to that file's transactions.
+/// Visits every account-bearing token (entry-level and posting), optionally
+/// restricted to one file. Order is per-entry but otherwise unspecified.
 pub const AccountIterator = struct {
     self: *const Self,
-    file: u32,
-    file_max: u32, // exclusive
-    /// Index into data.entries.
+    /// `null` means all files.
+    file_filter: ?u8,
     entry: u32,
-    /// Phase 0 = entry-level tokens; Phase 1 = postings.
-    phase: u8,
-    /// For pad/pnl, indicates we've already returned the first slot.
+    /// For pad/pnl, becomes `true` after the first slot has been yielded so
+    /// the next `next()` returns the second slot of the same entry.
     second_slot: bool,
-    /// Within phase 1, current posting index of the active transaction.
+    /// True while we're partway through a transaction's postings. Disambiguates
+    /// "fresh entry, need to init" from "exhausted, need to advance entry".
+    in_tx: bool,
     posting: u32,
     posting_end: u32,
 
-    pub fn init(self: *const Self, file: ?u32) AccountIterator {
-        const file_max: u32 = if (file) |f| f + 1 else @intCast(self.data.files.items.len);
+    pub fn init(self: *const Self, file: ?u8) AccountIterator {
         return .{
             .self = self,
-            .file = file orelse 0,
-            .file_max = file_max,
+            .file_filter = file,
             .entry = 0,
-            .phase = 0,
             .second_slot = false,
+            .in_tx = false,
             .posting = 0,
             .posting_end = 0,
         };
@@ -646,135 +643,113 @@ pub const AccountIterator = struct {
         document,
     };
 
-    pub fn next(it: *AccountIterator) ?struct { file: u32, token: Token, kind: Kind } {
+    pub fn next(it: *AccountIterator) ?struct { file: u8, token: Token, kind: Kind } {
         const data = &it.self.data;
-        while (it.file < it.file_max) {
-            const fdata = &data.files.items[it.file];
-            const entry_files = data.entries.items(.file);
-            const payloads = data.entries.items(.payload);
+        const entry_files = data.entries.items(.file);
+        const payloads = data.entries.items(.payload);
 
-            if (it.phase == 0) {
-                // Entry-level account tokens.
-                while (it.entry < data.entries.len) {
-                    if (entry_files[it.entry] != it.file) {
-                        it.entry += 1;
-                        continue;
-                    }
-                    switch (payloads[it.entry]) {
-                        .open => |open| {
-                            it.entry += 1;
-                            return .{ .file = it.file, .token = fdata.token(open.account), .kind = .open };
-                        },
-                        .close => |close| {
-                            it.entry += 1;
-                            return .{ .file = it.file, .token = fdata.token(close.account), .kind = .close };
-                        },
-                        .pad => |pad| {
-                            if (!it.second_slot) {
-                                it.second_slot = true;
-                                return .{ .file = it.file, .token = fdata.token(pad.account), .kind = .pad };
-                            } else {
-                                it.second_slot = false;
-                                it.entry += 1;
-                                return .{ .file = it.file, .token = fdata.token(pad.pad_to), .kind = .pad_to };
-                            }
-                        },
-                        .pnl => |pnl| {
-                            if (!it.second_slot) {
-                                it.second_slot = true;
-                                return .{ .file = it.file, .token = fdata.token(pnl.account), .kind = .pnl_income };
-                            } else {
-                                it.second_slot = false;
-                                it.entry += 1;
-                                return .{ .file = it.file, .token = fdata.token(pnl.income_account), .kind = .pnl_income };
-                            }
-                        },
-                        .balance => |balance| {
-                            it.entry += 1;
-                            return .{ .file = it.file, .token = fdata.token(balance.account), .kind = .balance };
-                        },
-                        .note => |note| {
-                            it.entry += 1;
-                            return .{ .file = it.file, .token = fdata.token(note.account), .kind = .note };
-                        },
-                        .document => |document| {
-                            it.entry += 1;
-                            return .{ .file = it.file, .token = fdata.token(document.account), .kind = .document };
-                        },
-                        else => {
-                            it.entry += 1;
-                        },
-                    }
-                }
-                // Done with phase 0 for this file. Advance to phase 1.
-                it.phase = 1;
-                it.entry = 0;
-                it.posting = 0;
-                it.posting_end = 0;
-            }
+        while (it.entry < data.entries.len) {
+            const file = entry_files[it.entry];
+            const fdata = &data.files.items[file];
 
-            // Phase 1: posting tokens for transactions in this file.
-            while (true) {
-                if (it.posting < it.posting_end) {
+            // Drain in-progress transaction first. The filter was already
+            // applied when we entered this transaction.
+            if (it.in_tx) {
+                while (it.posting < it.posting_end) {
                     const idx = it.posting;
                     it.posting += 1;
-                    const ast_node = data.postings.items(.ast_node)[idx];
-                    if (ast_node == .none) continue;
+                    if (data.postings.items(.ast_node)[idx] == .none) continue;
                     const acc_tok = data.postings.items(.account)[idx];
-                    return .{ .file = it.file, .token = fdata.token(acc_tok), .kind = .posting };
+                    return .{ .file = file, .token = fdata.token(acc_tok), .kind = .posting };
                 }
-                // Find the next transaction for this file.
-                if (it.entry >= data.entries.len) break;
-                while (it.entry < data.entries.len) {
-                    if (entry_files[it.entry] == it.file and std.meta.activeTag(payloads[it.entry]) == .transaction) {
-                        const tx = payloads[it.entry].transaction;
-                        it.posting = tx.postings.start;
-                        it.posting_end = tx.postings.end;
-                        it.entry += 1;
-                        break;
-                    }
+                it.in_tx = false;
+                it.entry += 1;
+                continue;
+            }
+
+            if (it.file_filter) |f| {
+                if (file != f) {
                     it.entry += 1;
-                }
-                if (it.posting >= it.posting_end) {
-                    // No more transactions in this file.
-                    break;
+                    continue;
                 }
             }
 
-            it.file += 1;
-            it.entry = 0;
-            it.phase = 0;
-            it.second_slot = false;
-            it.posting = 0;
-            it.posting_end = 0;
+            switch (payloads[it.entry]) {
+                .open => |open| {
+                    it.entry += 1;
+                    return .{ .file = file, .token = fdata.token(open.account), .kind = .open };
+                },
+                .close => |close| {
+                    it.entry += 1;
+                    return .{ .file = file, .token = fdata.token(close.account), .kind = .close };
+                },
+                .pad => |pad| {
+                    if (!it.second_slot) {
+                        it.second_slot = true;
+                        return .{ .file = file, .token = fdata.token(pad.account), .kind = .pad };
+                    }
+                    it.second_slot = false;
+                    it.entry += 1;
+                    return .{ .file = file, .token = fdata.token(pad.pad_to), .kind = .pad_to };
+                },
+                .pnl => |pnl| {
+                    if (!it.second_slot) {
+                        it.second_slot = true;
+                        return .{ .file = file, .token = fdata.token(pnl.account), .kind = .pnl };
+                    }
+                    it.second_slot = false;
+                    it.entry += 1;
+                    return .{ .file = file, .token = fdata.token(pnl.income_account), .kind = .pnl_income };
+                },
+                .balance => |balance| {
+                    it.entry += 1;
+                    return .{ .file = file, .token = fdata.token(balance.account), .kind = .balance };
+                },
+                .note => |note| {
+                    it.entry += 1;
+                    return .{ .file = file, .token = fdata.token(note.account), .kind = .note };
+                },
+                .document => |doc| {
+                    it.entry += 1;
+                    return .{ .file = file, .token = fdata.token(doc.account), .kind = .document };
+                },
+                .transaction => |tx| {
+                    // Mark in-progress; the next loop iteration drains it.
+                    it.in_tx = true;
+                    it.posting = tx.postings.start;
+                    it.posting_end = tx.postings.end;
+                },
+                else => it.entry += 1,
+            }
         }
-
         return null;
     }
 };
 
 pub fn accountIterator(self: *const Self, uri: ?[]const u8) AccountIterator {
-    const file: ?u32 = if (uri) |u| if (self.data.files_by_uri.get(u)) |f| @intCast(f) else null else null;
+    const file: ?u8 = if (uri) |u| if (self.data.files_by_uri.get(u)) |f| @intCast(f) else null else null;
     return AccountIterator.init(self, file);
 }
 
+/// Visits every explicit tag/link token, optionally restricted to one file.
 pub const TagLinkIterator = struct {
     self: *const Self,
-    file: u32,
-    file_max: u32, // exclusive
-    entry_idx: u32,
-    taglink_idx: u32,
-    cur_end: u32,
+    file_filter: ?u8,
+    entry: u32,
+    /// True while we're partway through an entry's tagslinks range.
+    /// Disambiguates "fresh entry" from "exhausted, advance entry".
+    in_range: bool,
+    tl_idx: u32,
+    tl_end: u32,
 
-    pub fn init(self: *const Self, file: ?u32) TagLinkIterator {
-        const file_max: u32 = if (file) |f| f + 1 else @intCast(self.data.files.items.len);
+    pub fn init(self: *const Self, file: ?u8) TagLinkIterator {
         return .{
             .self = self,
-            .file = file orelse 0,
-            .file_max = file_max,
-            .entry_idx = 0,
-            .taglink_idx = 0,
-            .cur_end = 0,
+            .file_filter = file,
+            .entry = 0,
+            .in_range = false,
+            .tl_idx = 0,
+            .tl_end = 0,
         };
     }
 
@@ -784,40 +759,40 @@ pub const TagLinkIterator = struct {
         const entry_taglinks = data.entries.items(.tagslinks);
         const tl_tokens = data.tagslinks.items(.token);
         const tl_explicit = data.tagslinks.items(.explicit);
-        while (it.file < it.file_max) {
-            const fdata = &data.files.items[it.file];
-            // Find next taglink in current entry, or advance to next entry of this file.
-            while (it.entry_idx < data.entries.len) {
-                if (entry_files[it.entry_idx] != it.file) {
-                    it.entry_idx += 1;
+
+        while (it.entry < data.entries.len) {
+            const file = entry_files[it.entry];
+            if (it.file_filter) |f| {
+                if (file != f) {
+                    it.entry += 1;
                     continue;
                 }
-                const tl_range = entry_taglinks[it.entry_idx];
-                if (it.taglink_idx < tl_range.start) it.taglink_idx = tl_range.start;
-                while (it.taglink_idx < tl_range.end) {
-                    const idx = it.taglink_idx;
-                    it.taglink_idx += 1;
-                    if (tl_explicit[idx]) {
-                        return .{
-                            .file = it.file,
-                            .token = fdata.token(tl_tokens[idx]),
-                        };
-                    }
-                }
-                it.entry_idx += 1;
             }
+            const fdata = &data.files.items[file];
 
-            it.file += 1;
-            it.entry_idx = 0;
-            it.taglink_idx = 0;
+            if (!it.in_range) {
+                const tl_range = entry_taglinks[it.entry];
+                it.tl_idx = tl_range.start;
+                it.tl_end = tl_range.end;
+                it.in_range = true;
+            }
+            while (it.tl_idx < it.tl_end) {
+                const idx = it.tl_idx;
+                it.tl_idx += 1;
+                if (tl_explicit[idx]) {
+                    return .{ .file = file, .token = fdata.token(tl_tokens[idx]) };
+                }
+            }
+            // Done with this entry.
+            it.in_range = false;
+            it.entry += 1;
         }
-
         return null;
     }
 };
 
 pub fn tagLinkIterator(self: *const Self, uri: ?[]const u8) TagLinkIterator {
-    const file: ?u32 = if (uri) |u| if (self.data.files_by_uri.get(u)) |f| @intCast(f) else null else null;
+    const file: ?u8 = if (uri) |u| if (self.data.files_by_uri.get(u)) |f| @intCast(f) else null else null;
     return TagLinkIterator.init(self, file);
 }
 
