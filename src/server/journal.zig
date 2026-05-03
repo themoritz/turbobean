@@ -32,13 +32,13 @@ pub fn handler(
 
 fn render(
     alloc: std.mem.Allocator,
-    project: *const Project,
+    project: *Project,
     display: DisplaySettings,
     out: *std.Io.Writer,
     string_store: *StringStore,
     account: []const u8,
 ) !common.PlotData {
-    var tree = try Tree.init(alloc, project.accounts, project.currencies);
+    var tree = try Tree.init(alloc, &project.data.accounts, &project.data.currencies);
     defer tree.deinit();
 
     var plot_data = common.PlotData{ .alloc = alloc };
@@ -65,9 +65,8 @@ fn render(
     var converted_inv = try Inventory.PlainInventory.init(alloc, null);
     defer converted_inv.deinit();
 
-    for (project.sorted_entries.items) |sorted_entry| {
-        const data = &project.files.items[sorted_entry.file];
-        const entry = data.entryAt(sorted_entry.entry);
+    var entry_iter = project.data.iterEntries();
+    while (entry_iter.next()) |entry| {
         switch (entry.payload()) {
             .open => |open| {
                 if (open.account() == account_idx) {
@@ -86,7 +85,7 @@ fn render(
                     if (p.account() != account_idx) continue;
 
                     const hash = entry.hash() + i;
-                    const flag_slice = data.tokenSlice(tx.tx.flag);
+                    const flag_slice = tx.flagSlice();
 
                     try zts.print(tpl, "transaction", .{
                         .date = entry.date(),
@@ -123,7 +122,7 @@ fn render(
                     );
                     try zts.print(tpl, "transaction_legs_end", .{
                         .change_units = conv_units.withPrecision(2),
-                        .change_cur = project.currencies.get(conv_cur_idx),
+                        .change_cur = project.data.currencies.get(conv_cur_idx),
                     }, out);
 
                     if (try tree.isDescendant(account_idx, p.account())) {
@@ -144,7 +143,7 @@ fn render(
                         if (!units.is_zero()) {
                             try zts.print(tpl, "transaction_balance_cur", .{
                                 .units = units.withPrecision(2),
-                                .cur = project.currencies.get(kv.key),
+                                .cur = project.data.currencies.get(kv.key),
                             }, out);
                         }
                     }
@@ -174,7 +173,7 @@ fn render(
                             try zts.print(tpl, "tree_end", .{
                                 .account = p2.accountText(),
                                 .change_units = units.withPrecision(2),
-                                .change_cur = project.currencies.get(cur_idx),
+                                .change_cur = project.data.currencies.get(cur_idx),
                             }, out);
                         }
                     }
@@ -184,7 +183,7 @@ fn render(
                     const balance = conv_inv.by_currency.get(conv_cur_idx).?;
                     try plot_data.points.append(alloc, .{
                         .date = try string_store.print("{f}", .{entry.date()}),
-                        .currency = project.currencies.get(conv_cur_idx),
+                        .currency = project.data.currencies.get(conv_cur_idx),
                         .balance = balance.toFloat(),
                         .balance_rendered = try string_store.print("{f}", .{balance.withPrecision(2)}),
                     });

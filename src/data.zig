@@ -9,24 +9,27 @@ const Uri = @import("Uri.zig");
 const Lexer = @import("lexer.zig").Lexer;
 const CurrencyPool = @import("string_pool.zig").CurrencyPool;
 const AccountPool = @import("string_pool.zig").AccountPool;
+const ztracy = @import("ztracy");
 
 const Sema = @import("Sema.zig");
-const Solver = @import("solver.zig").Solver;
 const Parser = @import("Parser.zig");
+const File = @import("file.zig");
 
 const Self = @This();
 
 alloc: Allocator,
-source: [:0]const u8,
-uri: Uri,
-ast: Ast,
 
-/// Project-wide intern pools, borrowed. The `Project` owns them; `Data` just
-/// reads/writes through the pointer so indices are comparable across files.
-accounts: *AccountPool,
-currencies: *CurrencyPool,
-/// Parallel to `ast.tokens`; interpretation depends on the token's tag.
-token_interned: std.ArrayList(u32),
+/// Project-wide intern pools. Interned account/currency indices are comparable
+/// across files.
+accounts: AccountPool,
+currencies: CurrencyPool,
+
+/// Per-file state (Ast, source, URI, token-interning side table). Indexed by
+/// `Entry.file`. Files are inserted in load order (root file at index 0,
+/// imports follow).
+files: std.ArrayList(File),
+/// Keys are URI values, values are index into `files`.
+files_by_uri: std.StringHashMap(usize),
 
 entries: Entries,
 postings: Postings,
@@ -42,7 +45,6 @@ tagslinks: TagsLinks,
 meta: Meta,
 
 config: Config,
-errors: std.ArrayList(ErrorDetails),
 
 pub const Entries = std.MultiArrayList(Entry);
 pub const Postings = std.MultiArrayList(Posting);
@@ -191,6 +193,7 @@ pub const Range = struct {
 // --- Entry ------------------------------------------------------------------
 
 pub const Entry = struct {
+    file: u8,
     date: Date,
     main_token: Ast.TokenIndex,
     tagslinks: Range,
@@ -399,6 +402,11 @@ pub const Config = struct {
         self.plugins.deinit(self.alloc);
     }
 
+    pub fn clear(self: *Config) void {
+        self.options.clearRetainingCapacity();
+        self.plugins.clearRetainingCapacity();
+    }
+
     pub fn addOption(self: *Config, key: []const u8, value: []const u8) !void {
         try self.options.append(self.alloc, .{ .key = key, .value = value });
     }
@@ -423,23 +431,19 @@ pub const Config = struct {
 
 // --- init / deinit ----------------------------------------------------------
 
-/// Takes ownership of `ast`. The pools are borrowed — caller (Project) owns
-/// them and must outlive this `Data`.
-pub fn init(alloc: Allocator, ast: Ast, uri: Uri, accounts: *AccountPool, currencies: *CurrencyPool) !Self {
-    var token_interned: std.ArrayList(u32) = .{};
-    errdefer token_interned.deinit(alloc);
-    try token_interned.appendNTimes(alloc, std.math.maxInt(u32), ast.tokens.items.len);
+pub fn init(alloc: Allocator) !Self {
+    var accounts = try AccountPool.init(alloc);
+    errdefer accounts.deinit(alloc);
 
-    const errors = try ast.errors.clone(alloc);
+    var currencies = try CurrencyPool.init(alloc);
+    errdefer currencies.deinit(alloc);
 
     return .{
         .alloc = alloc,
-        .source = ast.source,
-        .uri = uri,
-        .ast = ast,
         .accounts = accounts,
         .currencies = currencies,
-        .token_interned = token_interned,
+        .files = .{},
+        .files_by_uri = std.StringHashMap(usize).init(alloc),
         .entries = .{},
         .postings = .{},
         .prices = .{},
@@ -448,14 +452,14 @@ pub fn init(alloc: Allocator, ast: Ast, uri: Uri, accounts: *AccountPool, curren
         .tagslinks = .{},
         .meta = .{},
         .config = Config.init(alloc),
-        .errors = errors,
     };
 }
 
 pub fn deinit(self: *Self) void {
-    self.alloc.free(self.source);
-    self.ast.deinit();
-    self.token_interned.deinit(self.alloc);
+    for (self.files.items) |*f| f.deinit(self.alloc);
+    self.files.deinit(self.alloc);
+    self.files_by_uri.deinit();
+
     self.entries.deinit(self.alloc);
     self.postings.deinit(self.alloc);
     self.prices.deinit(self.alloc);
@@ -464,20 +468,47 @@ pub fn deinit(self: *Self) void {
     self.tagslinks.deinit(self.alloc);
     self.meta.deinit(self.alloc);
     self.config.deinit();
-    self.errors.deinit(self.alloc);
+
+    self.accounts.deinit(self.alloc);
+    self.currencies.deinit(self.alloc);
 }
 
-pub fn token(self: *const Self, index: Ast.TokenIndex) Lexer.Token {
-    return self.ast.tokens.items[@intFromEnum(index)];
+/// Clear all merged-record arrays, but keep `files` and `files_by_uri` and the
+/// intern pools intact. Used by `rebuildFromFiles` ahead of re-running Sema.
+fn clearRecords(self: *Self) void {
+    self.entries.clearRetainingCapacity();
+    self.postings.clearRetainingCapacity();
+    self.prices.clearRetainingCapacity();
+    self.lot_specs.clearRetainingCapacity();
+    self.open_currencies.clearRetainingCapacity();
+    self.tagslinks.clearRetainingCapacity();
+    self.meta.clearRetainingCapacity();
+    self.config.clear();
 }
 
-pub fn tokenSlice(self: *const Self, index: Ast.TokenIndex) []const u8 {
-    return self.token(index).slice;
+/// Returns true if any file has a parse error.
+pub fn hasFileErrors(self: *const Self) bool {
+    for (self.files.items) |f| {
+        if (f.errors.items.len > 0) return true;
+    }
+    return false;
 }
 
-pub fn optTokenSlice(self: *const Self, index: Ast.OptionalTokenIndex) ?[]const u8 {
-    const i = index.unwrap() orelse return null;
-    return self.tokenSlice(i);
+// --- token / intern lookup helpers (project-level) --------------------------
+
+pub const TokenLoc = struct { file_id: u8, index: Ast.TokenIndex };
+pub const OptionalTokenLoc = struct { file_id: u8, index: Ast.OptionalTokenIndex };
+
+pub fn token(self: *const Self, file_id: u8, index: Ast.TokenIndex) Lexer.Token {
+    return self.files.items[file_id].token(index);
+}
+
+pub fn tokenSlice(self: *const Self, file_id: u8, index: Ast.TokenIndex) []const u8 {
+    return self.files.items[file_id].tokenSlice(index);
+}
+
+pub fn optTokenSlice(self: *const Self, file_id: u8, index: Ast.OptionalTokenIndex) ?[]const u8 {
+    return self.files.items[file_id].optTokenSlice(index);
 }
 
 pub fn accountText(self: *const Self, i: AccountIndex) []const u8 {
@@ -498,33 +529,28 @@ pub fn currencyTextOpt(self: *const Self, oi: OptionalCurrencyIndex) ?[]const u8
     return self.currencyText(i);
 }
 
-/// Resolve an account token to its interned `AccountIndex` via the side-table.
-pub fn accountOf(self: *const Self, tok: Ast.TokenIndex) AccountIndex {
-    return @enumFromInt(self.token_interned.items[@intFromEnum(tok)]);
+/// Alias for `currencyTextOpt`, kept for symmetry with callers that already
+/// have an `OptionalCurrencyIndex` in hand.
+pub fn optCurrencyText(self: *const Self, oi: OptionalCurrencyIndex) ?[]const u8 {
+    return self.currencyTextOpt(oi);
 }
 
-/// Resolve a currency token to its interned `CurrencyIndex` via the side-table.
-pub fn currencyOf(self: *const Self, tok: Ast.TokenIndex) CurrencyIndex {
-    return @enumFromInt(self.token_interned.items[@intFromEnum(tok)]);
+/// Resolve an account token to its interned `AccountIndex`.
+pub fn accountOf(self: *const Self, file_id: u8, tok: Ast.TokenIndex) AccountIndex {
+    return self.files.items[file_id].accountOf(tok);
 }
 
-pub fn addError(self: *Self, tok: Ast.TokenIndex, uri: Uri, tag: ErrorDetails.Tag) !void {
-    try self.errors.append(self.alloc, .{
-        .tag = tag,
-        .token = self.token(tok),
-        .uri = uri,
-        .source = self.source,
-    });
+/// Resolve a currency token to its interned `CurrencyIndex`.
+pub fn currencyOf(self: *const Self, file_id: u8, tok: Ast.TokenIndex) CurrencyIndex {
+    return self.files.items[file_id].currencyOf(tok);
 }
 
-pub fn addWarning(self: *Self, tok: Ast.TokenIndex, uri: Uri, tag: ErrorDetails.Tag) !void {
-    try self.errors.append(self.alloc, .{
-        .tag = tag,
-        .severity = .warn,
-        .token = self.token(tok),
-        .uri = uri,
-        .source = self.source,
-    });
+pub fn findAccount(self: *const Self, text: []const u8) ?AccountIndex {
+    return self.accounts.find(text);
+}
+
+pub fn findCurrency(self: *const Self, text: []const u8) ?CurrencyIndex {
+    return self.currencies.find(text);
 }
 
 // --- views and iterators ----------------------------------------------------
@@ -541,21 +567,38 @@ pub const EntryView = struct {
         return v.data.entries.items(.main_token)[v.idx];
     }
 
+    pub fn file(v: EntryView) u8 {
+        return v.data.entries.items(.file)[v.idx];
+    }
+
+    /// Bundle a token index from this entry's file into a project-global
+    /// `TokenLoc`. Use for raw payload tokens (e.g. `pnl.account`) that aren't
+    /// exposed as a typed `*Loc()` helper on a sub-view.
+    pub fn loc(v: EntryView, idx: Ast.TokenIndex) TokenLoc {
+        return .{ .file_id = v.file(), .index = idx };
+    }
+
+    pub fn mainTokenLoc(v: EntryView) TokenLoc {
+        return v.loc(v.mainToken());
+    }
+
     pub fn tag(v: EntryView) Entry.Tag {
         return std.meta.activeTag(v.data.entries.items(.payload)[v.idx]);
     }
 
     pub fn payload(v: EntryView) PayloadView {
+        const file_id = v.file();
         return switch (v.data.entries.items(.payload)[v.idx]) {
-            .transaction => |*tx| .{ .transaction = .{ .data = v.data, .tx = tx } },
-            .open => |o| .{ .open = .{ .data = v.data, .open = o } },
-            .close => |c| .{ .close = .{ .data = v.data, .close = c } },
+            .transaction => |*tx| .{ .transaction = .{ .data = v.data, .file = file_id, .tx = tx } },
+            .open => |o| .{ .open = .{ .data = v.data, .file = file_id, .open = o } },
+            .close => |c| .{ .close = .{ .data = v.data, .file = file_id, .close = c } },
             .commodity => |c| .{ .commodity = c },
-            .pad => |*p| .{ .pad = .{ .data = v.data, .pad = p } },
+            .pad => |*p| .{ .pad = .{ .data = v.data, .file = file_id, .pad = p } },
             .pnl => |p2| .{ .pnl = p2 },
             .balance => |b| .{ .balance = .{
                 .data = v.data,
-                .account = v.data.accountOf(b.account),
+                .file = file_id,
+                .account = v.data.files.items[file_id].accountOf(b.account),
                 .account_token = b.account,
                 .amount = b.amount.unpack() orelse unreachable,
                 .amount_currency = b.amount_currency,
@@ -576,21 +619,30 @@ pub const EntryView = struct {
 
     pub fn tagslinks(v: EntryView) TagLinkIterator {
         const r = v.data.entries.items(.tagslinks)[v.idx];
-        return .{ .data = v.data, .i = r.start, .end = r.end };
+        return .{ .data = v.data, .file = v.file(), .i = r.start, .end = r.end };
     }
 
     pub fn metaKVs(v: EntryView) MetaIterator {
         const r = v.data.entries.items(.meta)[v.idx];
-        return .{ .data = v.data, .i = r.start, .end = r.end };
+        return .{ .data = v.data, .file = v.file(), .i = r.start, .end = r.end };
     }
 
     /// Posting iterator. Empty unless the entry is a transaction.
     pub fn postings(v: EntryView) PostingIterator {
         const p = v.data.entries.items(.payload)[v.idx];
         return switch (p) {
-            .transaction => |tx| .{ .data = v.data, .i = tx.postings.start, .end = tx.postings.end },
-            else => .{ .data = v.data, .i = 0, .end = 0 },
+            .transaction => |tx| .{ .data = v.data, .file = v.file(), .i = tx.postings.start, .end = tx.postings.end },
+            else => .{ .data = v.data, .file = v.file(), .i = 0, .end = 0 },
         };
+    }
+
+    /// Convenience: resolve a token from this entry's owning file.
+    pub fn token(v: EntryView, idx: Ast.TokenIndex) Lexer.Token {
+        return v.data.files.items[v.file()].token(idx);
+    }
+
+    pub fn tokenSlice(v: EntryView, idx: Ast.TokenIndex) []const u8 {
+        return v.data.files.items[v.file()].tokenSlice(idx);
     }
 
     /// Position-stable hash suitable for tagging DOM ids in HTML output.
@@ -599,13 +651,14 @@ pub const EntryView = struct {
         var wy = std.hash.Wyhash.init(0);
         const d = v.date();
         wy.update(std.mem.asBytes(&d));
+        const fdata = &v.data.files.items[v.file()];
         switch (v.data.entries.items(.payload)[v.idx]) {
             .transaction => |tx| {
-                if (v.data.optTokenSlice(tx.payee)) |payee| wy.update(payee);
-                if (v.data.optTokenSlice(tx.narration)) |narration| wy.update(narration);
+                if (fdata.optTokenSlice(tx.payee)) |payee| wy.update(payee);
+                if (fdata.optTokenSlice(tx.narration)) |narration| wy.update(narration);
             },
             .open => |open| {
-                wy.update(v.data.tokenSlice(open.account));
+                wy.update(fdata.tokenSlice(open.account));
             },
             else => {},
         }
@@ -633,10 +686,11 @@ pub const PayloadView = union(Entry.Tag) {
 
 pub const TransactionView = struct {
     data: *Self,
+    file: u8,
     tx: *Transaction,
 
     pub fn postings(v: TransactionView) PostingIterator {
-        return .{ .data = v.data, .i = v.tx.postings.start, .end = v.tx.postings.end };
+        return .{ .data = v.data, .file = v.file, .i = v.tx.postings.start, .end = v.tx.postings.end };
     }
 
     pub fn numPostings(v: TransactionView) usize {
@@ -653,12 +707,16 @@ pub const TransactionView = struct {
 
     pub fn payeeText(v: TransactionView) ?[]const u8 {
         const i = v.tx.payee.unwrap() orelse return null;
-        return v.data.tokenSlice(i);
+        return v.data.files.items[v.file].tokenSlice(i);
     }
 
     pub fn narrationText(v: TransactionView) ?[]const u8 {
         const i = v.tx.narration.unwrap() orelse return null;
-        return v.data.tokenSlice(i);
+        return v.data.files.items[v.file].tokenSlice(i);
+    }
+
+    pub fn flagSlice(v: TransactionView) []const u8 {
+        return v.data.files.items[v.file].tokenSlice(v.tx.flag);
     }
 
     pub fn addPnlPostings(v: TransactionView, ps: []Posting) !void {
@@ -679,6 +737,7 @@ pub const TransactionView = struct {
 
 pub const OpenView = struct {
     data: *const Self,
+    file: u8,
     open: Open,
 
     pub fn currencies(v: OpenView) ?[]const CurrencyIndex {
@@ -691,45 +750,59 @@ pub const OpenView = struct {
     }
 
     pub fn account(v: OpenView) AccountIndex {
-        return v.data.accountOf(v.open.account);
+        return v.data.files.items[v.file].accountOf(v.open.account);
     }
 
     pub fn accountTokenIndex(v: OpenView) Ast.TokenIndex {
         return v.open.account;
     }
 
+    pub fn accountLoc(v: OpenView) TokenLoc {
+        return .{ .file_id = v.file, .index = v.open.account };
+    }
+
     pub fn accountText(v: OpenView) []const u8 {
-        return v.data.tokenSlice(v.open.account);
+        return v.data.files.items[v.file].tokenSlice(v.open.account);
     }
 };
 
 pub const CloseView = struct {
     data: *const Self,
+    file: u8,
     close: Close,
 
     pub fn account(v: CloseView) AccountIndex {
-        return v.data.accountOf(v.close.account);
+        return v.data.files.items[v.file].accountOf(v.close.account);
     }
 
     pub fn accountTokenIndex(v: CloseView) Ast.TokenIndex {
         return v.close.account;
     }
 
+    pub fn accountLoc(v: CloseView) TokenLoc {
+        return .{ .file_id = v.file, .index = v.close.account };
+    }
+
     pub fn accountText(v: CloseView) []const u8 {
-        return v.data.tokenSlice(v.close.account);
+        return v.data.files.items[v.file].tokenSlice(v.close.account);
     }
 };
 
 pub const PadView = struct {
     data: *Self,
+    file: u8,
     pad: *Pad,
 
     pub fn account(v: PadView) AccountIndex {
-        return v.data.accountOf(v.pad.account);
+        return v.data.files.items[v.file].accountOf(v.pad.account);
     }
 
     pub fn accountTokenIndex(v: PadView) Ast.TokenIndex {
         return v.pad.account;
+    }
+
+    pub fn accountLoc(v: PadView) TokenLoc {
+        return .{ .file_id = v.file, .index = v.pad.account };
     }
 
     pub fn setPadAmount(v: PadView, number: Number, currency: CurrencyIndex) !void {
@@ -739,15 +812,19 @@ pub const PadView = struct {
 
     pub fn padPosting(v: PadView) ?PostingView {
         const i = v.pad.pad_posting.unwrap() orelse return null;
-        return v.data.postingAt(@intFromEnum(i));
+        return .{ .data = v.data, .file = v.file, .idx = @intFromEnum(i) };
     }
 
     pub fn padToAccount(v: PadView) AccountIndex {
-        return v.data.accountOf(v.pad.pad_to);
+        return v.data.files.items[v.file].accountOf(v.pad.pad_to);
     }
 
     pub fn padToAccountTokenIndex(v: PadView) Ast.TokenIndex {
         return v.pad.pad_to;
+    }
+
+    pub fn padToAccountLoc(v: PadView) TokenLoc {
+        return .{ .file_id = v.file, .index = v.pad.pad_to };
     }
 
     pub fn setPadToAmount(v: PadView, number: Number, currency: CurrencyIndex) !void {
@@ -757,7 +834,7 @@ pub const PadView = struct {
 
     pub fn padToPosting(v: PadView) ?PostingView {
         const i = v.pad.pad_to_posting.unwrap() orelse return null;
-        return v.data.postingAt(@intFromEnum(i));
+        return .{ .data = v.data, .file = v.file, .idx = @intFromEnum(i) };
     }
 
     fn newPosting(
@@ -772,6 +849,7 @@ pub const PadView = struct {
 
 pub const BalanceView = struct {
     data: *const Self,
+    file: u8,
     account: AccountIndex,
     /// Source token for the account (for error reporting).
     account_token: Ast.TokenIndex,
@@ -780,7 +858,11 @@ pub const BalanceView = struct {
     tolerance: ?Number,
 
     pub fn accountText(v: BalanceView) []const u8 {
-        return v.data.tokenSlice(v.account_token);
+        return v.data.files.items[v.file].tokenSlice(v.account_token);
+    }
+
+    pub fn accountLoc(v: BalanceView) TokenLoc {
+        return .{ .file_id = v.file, .index = v.account_token };
     }
 
     pub fn amountCurrencyText(v: BalanceView) ?[]const u8 {
@@ -807,6 +889,7 @@ pub const PriceDeclView = struct {
 /// consumers can get text via `*Text()` helpers without re-interning.
 pub const LotSpecView = struct {
     data: *const Self,
+    file: u8,
     price: ?Number,
     price_currency: OptionalCurrencyIndex,
     date: ?Date,
@@ -817,7 +900,7 @@ pub const LotSpecView = struct {
     }
 
     pub fn labelText(v: LotSpecView) ?[]const u8 {
-        return v.data.optTokenSlice(v.label);
+        return v.data.files.items[v.file].optTokenSlice(v.label);
     }
 };
 
@@ -837,18 +920,23 @@ pub const PriceView = struct {
 /// `price` and `lot_spec` lazily decoded from `extra`.
 pub const PostingView = struct {
     data: *const Self,
+    file: u8,
     idx: u32,
 
     pub fn accountToken(v: PostingView) Ast.TokenIndex {
         return v.data.postings.items(.account)[v.idx];
     }
 
+    pub fn accountLoc(v: PostingView) TokenLoc {
+        return .{ .file_id = v.file, .index = v.accountToken() };
+    }
+
     pub fn account(v: PostingView) AccountIndex {
-        return v.data.accountOf(v.accountToken());
+        return v.data.files.items[v.file].accountOf(v.accountToken());
     }
 
     pub fn accountText(v: PostingView) []const u8 {
-        return v.data.tokenSlice(v.accountToken());
+        return v.data.files.items[v.file].tokenSlice(v.accountToken());
     }
 
     pub fn flag(v: PostingView) Ast.OptionalTokenIndex {
@@ -889,6 +977,7 @@ pub const PostingView = struct {
         const ls = v.data.lot_specs.items[@intFromEnum(idx)];
         return .{
             .data = v.data,
+            .file = v.file,
             .price = ls.price,
             .price_currency = ls.price_currency,
             .date = ls.date,
@@ -898,14 +987,20 @@ pub const PostingView = struct {
 
     pub fn metaKVs(v: PostingView) MetaIterator {
         const r = v.data.postings.items(.meta)[v.idx];
-        return .{ .data = v.data, .i = r.start, .end = r.end };
+        return .{ .data = v.data, .file = v.file, .i = r.start, .end = r.end };
     }
 };
 
 pub const TagLinkView = struct {
+    data: *const Self,
+    file: u8,
     kind: TagLink.Kind,
     token: Ast.TokenIndex,
     explicit: bool,
+
+    pub fn slice(v: TagLinkView) []const u8 {
+        return v.data.files.items[v.file].tokenSlice(v.token);
+    }
 };
 
 pub const KeyValueView = struct {
@@ -916,7 +1011,7 @@ pub const KeyValueView = struct {
 // --- iterators --------------------------------------------------------------
 
 pub const EntryIterator = struct {
-    data: *const Self,
+    data: *Self,
     i: u32,
     end: u32,
 
@@ -951,12 +1046,13 @@ pub fn EntriesOfKindIterator(comptime kind: Entry.Tag) type {
 
 pub const PostingIterator = struct {
     data: *const Self,
+    file: u8,
     i: u32,
     end: u32,
 
     pub fn next(it: *PostingIterator) ?PostingView {
         if (it.i >= it.end) return null;
-        const v = PostingView{ .data = it.data, .idx = it.i };
+        const v = PostingView{ .data = it.data, .file = it.file, .idx = it.i };
         it.i += 1;
         return v;
     }
@@ -968,12 +1064,15 @@ pub const PostingIterator = struct {
 
 pub const TagLinkIterator = struct {
     data: *const Self,
+    file: u8,
     i: u32,
     end: u32,
 
     pub fn next(it: *TagLinkIterator) ?TagLinkView {
         if (it.i >= it.end) return null;
         const v = TagLinkView{
+            .data = it.data,
+            .file = it.file,
             .kind = it.data.tagslinks.items(.kind)[it.i],
             .token = it.data.tagslinks.items(.token)[it.i],
             .explicit = it.data.tagslinks.items(.explicit)[it.i],
@@ -985,6 +1084,7 @@ pub const TagLinkIterator = struct {
 
 pub const MetaIterator = struct {
     data: *const Self,
+    file: u8,
     i: u32,
     end: u32,
 
@@ -999,7 +1099,7 @@ pub const MetaIterator = struct {
     }
 };
 
-pub fn iterEntries(self: *const Self) EntryIterator {
+pub fn iterEntries(self: *Self) EntryIterator {
     return .{ .data = self, .i = 0, .end = @intCast(self.entries.len) };
 }
 
@@ -1011,53 +1111,94 @@ pub fn entryAt(self: *Self, idx: u32) EntryView {
     return .{ .data = self, .idx = idx };
 }
 
-pub fn postingAt(self: *const Self, idx: u32) PostingView {
-    return .{ .data = self, .idx = idx };
+pub fn postingAt(self: *Self, file_id: u8, idx: u32) PostingView {
+    return .{ .data = self, .file = file_id, .idx = idx };
 }
 
-// --- mutators ---------------------------------------------------------------
-//
-// Views are read-only by convention. The few places that need to mutate
-// entry-level state go through these named helpers so the mutation is obvious
-// in a reader's grep.
+// --- file loading -----------------------------------------------------------
 
-/// Mark a transaction as unbalanced. Asserts the entry is a transaction.
-pub fn markDirty(self: *Self, entry_idx: u32) void {
-    const payloads = self.entries.items(.payload);
-    std.debug.assert(std.meta.activeTag(payloads[entry_idx]) == .transaction);
-    payloads[entry_idx].transaction.dirty = true;
-}
-
-/// Alias for `currencyTextOpt`, kept for symmetry with callers that already
-/// have an `OptionalCurrencyIndex` in hand.
-pub fn optCurrencyText(self: *const Self, oi: OptionalCurrencyIndex) ?[]const u8 {
-    return self.currencyTextOpt(oi);
-}
-
-// --- construction helpers ---------------------------------------------------
-
-/// Parse + run Sema. Takes ownership of `source`. Pools are borrowed from
-/// the caller (Project), so indices produced during Sema are comparable
-/// across files.
-pub fn loadSource(
-    alloc: Allocator,
-    accounts: *AccountPool,
-    currencies: *CurrencyPool,
+/// Add a new file to the project: parse its source, run Sema (which appends
+/// entries/postings/etc into the merged arrays), and return its file index
+/// alongside the list of `include` directives encountered.
+///
+/// Takes ownership of `uri` (cloned internally is the caller's responsibility)
+/// and of `source`. Caller must check capacity (file_id fits in u8).
+pub fn loadFile(
+    self: *Self,
     uri: Uri,
-    source: [:0]const u8,
     is_root: bool,
-) !struct { Self, Imports } {
-    var ast = try Ast.parse(alloc, uri, source);
-    errdefer ast.deinit();
+    source: [:0]const u8,
+) !struct { usize, Imports } {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Data.loadFile", 0x00_00_ff_00);
+    defer tracy_zone.End();
 
-    var data = try init(alloc, ast, uri, accounts, currencies);
-    errdefer data.deinit();
+    var file = try File.loadFromSource(self.alloc, uri, source);
+    errdefer file.deinit(self.alloc);
 
-    var sem = Sema.init(alloc, &data, is_root);
+    try self.files.append(self.alloc, file);
+    const file_id = self.files.items.len - 1;
+    if (file_id >= std.math.maxInt(u8)) return error.TooManyFiles;
+    try self.files_by_uri.put(self.files.items[file_id].uri.value, file_id);
+
+    var sem = Sema.init(self.alloc, self, @intCast(file_id), is_root);
     defer sem.deinit();
-
     const imports = try sem.run();
-    return .{ data, imports };
+    return .{ file_id, imports };
+}
+
+/// Replace one file's source and rebuild all merged record arrays from
+/// scratch by re-running Sema over every file in original order. Takes
+/// ownership of `source`.
+pub fn updateFile(self: *Self, uri_value: []const u8, source: [:0]const u8) !void {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Data.updateFile", 0x00_00_ff_00);
+    defer tracy_zone.End();
+
+    const file_id = self.files_by_uri.get(uri_value) orelse return error.FileNotFound;
+    const old_uri = self.files.items[file_id].uri;
+    const cloned_uri = try old_uri.clone(self.alloc);
+    var new_file = File.loadFromSource(self.alloc, cloned_uri, source) catch |err| {
+        var u = cloned_uri;
+        u.deinit(self.alloc);
+        return err;
+    };
+    errdefer new_file.deinit(self.alloc);
+
+    // Replace file. The hashmap key (uri.value) is the same string contents,
+    // but cloning gave us a fresh allocation; rewire the map to the new key
+    // so it stays valid after the old file is freed.
+    _ = self.files_by_uri.remove(uri_value);
+    var old_file = self.files.items[file_id];
+    self.files.items[file_id] = new_file;
+    old_file.deinit(self.alloc);
+    try self.files_by_uri.put(self.files.items[file_id].uri.value, file_id);
+
+    try self.rebuildFromFiles();
+}
+
+/// Clear all merged record arrays and re-run Sema over every file in order.
+/// Files (their Asts/sources) are kept; only the semantic layer is rebuilt.
+fn rebuildFromFiles(self: *Self) !void {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Data.rebuildFromFiles", 0x00_00_ff_00);
+    defer tracy_zone.End();
+
+    self.clearRecords();
+    // Reset per-file token_interned tables (the indices are about to be
+    // re-assigned by Sema).
+    for (self.files.items) |*f| {
+        const n = f.ast.tokens.items.len;
+        f.token_interned.clearRetainingCapacity();
+        try f.token_interned.appendNTimes(self.alloc, std.math.maxInt(u32), n);
+    }
+
+    for (self.files.items, 0..) |_, i| {
+        const is_root = i == 0;
+        var sem = Sema.init(self.alloc, self, @intCast(i), is_root);
+        defer sem.deinit();
+        const imports = try sem.run();
+        // Imports are tracked from the outer Project on initial load, but on
+        // rebuild we don't currently re-walk them; the file set is unchanged.
+        self.alloc.free(imports);
+    }
 }
 
 /// Append a synthetic posting (pad, pnl). Returns the new index.
@@ -1065,122 +1206,6 @@ pub fn appendPosting(self: *Self, p: Posting) !PostingIndex {
     const idx: PostingIndex = @enumFromInt(self.postings.len);
     try self.postings.append(self.alloc, p);
     return idx;
-}
-
-/// Run the balancer over every transaction, solving for unknown numbers and
-/// currencies. Sets `dirty = true` on transactions that cannot be solved.
-pub fn balanceTransactions(self: *Self) !void {
-    var solver = Solver.init(self.alloc);
-    defer solver.deinit();
-    var diagnostics: Solver.CurrencyImbalance = undefined;
-
-    var one: ?Number = Number.fromFloat(1);
-
-    // Stable, reused per-tx staging buffers. We ensureTotalCapacity before
-    // filling so that the pointers we hand to the solver stay valid during
-    // `solve()`.
-    var stage_numbers: std.ArrayList(?Number) = .{};
-    defer stage_numbers.deinit(self.alloc);
-    var stage_currencies: std.ArrayList(?[]const u8) = .{};
-    defer stage_currencies.deinit(self.alloc);
-    var stage_prices: std.ArrayList(?Number) = .{};
-    defer stage_prices.deinit(self.alloc);
-    var stage_price_currencies: std.ArrayList(?[]const u8) = .{};
-    defer stage_price_currencies.deinit(self.alloc);
-
-    const payloads = self.entries.items(.payload);
-    const main_tokens = self.entries.items(.main_token);
-
-    entries: for (payloads, 0..) |*ep, entry_idx| {
-        if (std.meta.activeTag(ep.*) != .transaction) continue;
-        const tx = &ep.transaction;
-        const postings = tx.postings;
-        if (postings.isEmpty()) continue;
-
-        const n = postings.len();
-        stage_numbers.clearRetainingCapacity();
-        stage_currencies.clearRetainingCapacity();
-        stage_prices.clearRetainingCapacity();
-        stage_price_currencies.clearRetainingCapacity();
-        try stage_numbers.ensureTotalCapacity(self.alloc, n);
-        try stage_currencies.ensureTotalCapacity(self.alloc, n);
-        try stage_prices.ensureTotalCapacity(self.alloc, n);
-        try stage_price_currencies.ensureTotalCapacity(self.alloc, n);
-
-        for (postings.start..postings.end) |i| {
-            stage_numbers.appendAssumeCapacity(self.postings.items(.amount_number)[i].unpack());
-            stage_currencies.appendAssumeCapacity(self.optCurrencyText(self.postings.items(.amount_currency)[i]));
-
-            if (self.postings.items(.price)[i].unwrap()) |pidx| {
-                const pr = self.prices.items[@intFromEnum(pidx)];
-                stage_prices.appendAssumeCapacity(pr.amount);
-                stage_price_currencies.appendAssumeCapacity(self.optCurrencyText(pr.amount_currency));
-            } else {
-                stage_prices.appendAssumeCapacity(null);
-                stage_price_currencies.appendAssumeCapacity(null);
-            }
-        }
-
-        for (postings.start..postings.end, 0..) |i, k| {
-            const has_price = self.postings.items(.price)[i].unwrap() != null;
-            var price_ptr: *?Number = undefined;
-            var currency_ptr: *?[]const u8 = undefined;
-            var rounding_currency: ?[]const u8 = null;
-
-            if (has_price) {
-                if (stage_currencies.items[k] == null) {
-                    try self.addError(self.postings.items(.account)[i], self.uri, .cannot_infer_amount_currency_when_price_set);
-                    tx.dirty = true;
-                    solver.clear();
-                    continue :entries;
-                }
-                currency_ptr = &stage_price_currencies.items[k];
-                price_ptr = &stage_prices.items[k];
-                if (stage_numbers.items[k] == null) {
-                    rounding_currency = stage_currencies.items[k];
-                } else if (stage_prices.items[k] == null) {
-                    rounding_currency = stage_price_currencies.items[k];
-                }
-            } else {
-                currency_ptr = &stage_currencies.items[k];
-                price_ptr = &one;
-            }
-
-            try solver.addTriple(price_ptr, &stage_numbers.items[k], currency_ptr, rounding_currency);
-
-            if (stage_numbers.items[k]) |num| {
-                if (stage_currencies.items[k]) |c| {
-                    try solver.addToleranceInput(num, c);
-                }
-            }
-        }
-
-        _ = solver.solve(&diagnostics) catch |err| {
-            const tag: ErrorDetails.Tag = switch (err) {
-                error.NoCurrency => .tx_balance_no_currency,
-                error.DoesNotBalance => .{ .tx_does_not_balance = diagnostics },
-                error.NoSolution => .tx_no_solution,
-                error.TooManyVariables => .tx_too_many_variables,
-                error.DivisionByZero => .tx_division_by_zero,
-                error.MultipleSolutions => .tx_multiple_solutions,
-                else => return err,
-            };
-            tx.dirty = true;
-            try self.addError(main_tokens[entry_idx], self.uri, tag);
-            continue;
-        };
-
-        // Write solved values back.
-        for (postings.start..postings.end, 0..) |i, k| {
-            self.postings.items(.amount_number)[i] = PackedNumber.pack(stage_numbers.items[k]);
-            self.postings.items(.amount_currency)[i] = try self.internCurrencyOpt(stage_currencies.items[k]);
-            if (self.postings.items(.price)[i].unwrap()) |pidx| {
-                const p_ptr = &self.prices.items[@intFromEnum(pidx)];
-                p_ptr.amount = stage_prices.items[k];
-                p_ptr.amount_currency = try self.internCurrencyOpt(stage_price_currencies.items[k]);
-            }
-        }
-    }
 }
 
 /// Intern a (possibly-null) currency text, returning an `OptionalCurrencyIndex`.
@@ -1193,7 +1218,7 @@ pub fn internCurrencyOpt(self: *Self, text: ?[]const u8) !OptionalCurrencyIndex 
 comptime {
     // Document and guard current sizes. Bump these intentionally if the
     // layout changes; accidental growth should fail here.
-    std.debug.assert(@sizeOf(Entry) == 64);
+    std.debug.assert(@sizeOf(Entry) == 68);
     std.debug.assert(@sizeOf(Entry.Payload) == 36); // sized by Balance (32) + tag byte
     std.debug.assert(@sizeOf(Posting) == 44);
     std.debug.assert(@sizeOf(LotSpec) == 48);

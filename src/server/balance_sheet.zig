@@ -33,7 +33,7 @@ pub fn handler(
 const NetWorth = struct {
     alloc: std.mem.Allocator,
     prices: *Prices,
-    project: *const Project,
+    project: *Project,
     conversion_target: ?Data.CurrencyIndex,
     inv: PlainInventory,
     converted_inv: PlainInventory,
@@ -43,7 +43,7 @@ const NetWorth = struct {
     pub fn init(
         alloc: std.mem.Allocator,
         prices: *Prices,
-        project: *const Project,
+        project: *Project,
         conversion_target: ?Data.CurrencyIndex,
         string_store: *StringStore,
         plot_data: *common.PlotData,
@@ -80,7 +80,7 @@ const NetWorth = struct {
             const balance = kv.value_ptr.*;
             try self.plot_data.points.append(self.alloc, .{
                 .date = try self.string_store.print("{f}", .{date}),
-                .currency = self.project.currencies.get(kv.key),
+                .currency = self.project.data.currencies.get(kv.key),
                 .balance = balance.toFloat(),
                 .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
             });
@@ -103,14 +103,14 @@ const DateState = enum { before, within };
 
 fn render(
     alloc: std.mem.Allocator,
-    project: *const Project,
+    project: *Project,
     display: DisplaySettings,
     out: *std.Io.Writer,
     string_store: *StringStore,
     ctx: void,
 ) !common.PlotData {
     _ = ctx;
-    var tree = try Tree.init(alloc, project.accounts, project.currencies);
+    var tree = try Tree.init(alloc, &project.data.accounts, &project.data.currencies);
     defer tree.deinit();
 
     const operating_currencies = try project.getConfig().getOperatingCurrencies(alloc);
@@ -125,8 +125,8 @@ fn render(
     // `Equity:Earnings:Previous` / `Equity:Earnings:Current` are system
     // accounts used by the earnings clearing step; intern so we have stable
     // indices regardless of whether the file declared them.
-    const previous_idx: Data.AccountIndex = try project.accounts.intern(alloc, "Equity:Earnings:Previous");
-    const current_idx: Data.AccountIndex = try project.accounts.intern(alloc, "Equity:Earnings:Current");
+    const previous_idx: Data.AccountIndex = try project.data.accounts.intern(alloc, "Equity:Earnings:Previous");
+    const current_idx: Data.AccountIndex = try project.data.accounts.intern(alloc, "Equity:Earnings:Current");
 
     const conversion_target: ?Data.CurrencyIndex = switch (display.conversion) {
         .units => null,

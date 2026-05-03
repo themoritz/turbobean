@@ -77,7 +77,7 @@ pub const PlotData = struct {
 const DataTracker = struct {
     alloc: std.mem.Allocator,
     prices: *Prices,
-    project: *const Project,
+    project: *Project,
     /// Resolved operating-currency targets. `null` if the URL param didn't
     /// match any known currency.
     conversion_target: ?Data.CurrencyIndex,
@@ -89,7 +89,7 @@ const DataTracker = struct {
     pub fn init(
         alloc: std.mem.Allocator,
         prices: *Prices,
-        project: *const Project,
+        project: *Project,
         conversion_target: ?Data.CurrencyIndex,
         display: DisplaySettings,
         string_store: *StringStore,
@@ -119,8 +119,8 @@ const DataTracker = struct {
             const pair = kv.key_ptr.*;
             const balance = kv.value_ptr.*;
             try self.plot_data.addDataPoint(.{
-                .currency = self.project.currencies.get(pair.currency),
-                .account = self.project.accounts.get(pair.account),
+                .currency = self.project.data.currencies.get(pair.currency),
+                .account = self.project.data.accounts.get(pair.account),
                 .balance = balance.toFloat(),
                 .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
             });
@@ -145,14 +145,14 @@ const DataTracker = struct {
 
 fn render(
     alloc: std.mem.Allocator,
-    project: *const Project,
+    project: *Project,
     display: DisplaySettings,
     out: *std.Io.Writer,
     string_store: *StringStore,
     ctx: void,
 ) !PlotData {
     _ = ctx;
-    var tree = try Tree.init(alloc, project.accounts, project.currencies);
+    var tree = try Tree.init(alloc, &project.data.accounts, &project.data.currencies);
     defer tree.deinit();
 
     const operating_currencies = try project.getConfig().getOperatingCurrencies(alloc);

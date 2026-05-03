@@ -1,12 +1,13 @@
 //! Converts an AST into Data (semantic analysis).
 //!
-//! Sema owns the construction side: it touches Data's private storage directly
-//! (intern pools, token_interned side-table, SoA lists). Consumers should go
-//! through views/iterators instead.
+//! Sema runs once per file but writes into the project-wide `Data`. Each
+//! record stamped with `file_id` so token references resolve through the
+//! correct `File`.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Ast = @import("Ast.zig");
 const Data = @import("data.zig");
+const File = @import("file.zig");
 const Date = @import("date.zig").Date;
 const Lexer = @import("lexer.zig").Lexer;
 const Number = @import("number.zig").Number;
@@ -18,6 +19,7 @@ const Self = @This();
 
 alloc: Allocator,
 data: *Data,
+file_id: u8,
 is_root: bool,
 
 // Owned
@@ -34,10 +36,11 @@ const StackedKV = struct {
     value_tok: Ast.TokenIndex,
 };
 
-pub fn init(alloc: Allocator, data: *Data, is_root: bool) Self {
+pub fn init(alloc: Allocator, data: *Data, file_id: u8, is_root: bool) Self {
     return .{
         .alloc = alloc,
         .data = data,
+        .file_id = file_id,
         .is_root = is_root,
         .imports = .{},
         .active_tags = .init(alloc),
@@ -51,10 +54,20 @@ pub fn deinit(self: *Self) void {
     self.active_meta.deinit();
 }
 
+// --- file helpers -----------------------------------------------------------
+
+fn file(self: *Self) *File {
+    return &self.data.files.items[self.file_id];
+}
+
+fn ast(self: *Self) *Ast {
+    return &self.data.files.items[self.file_id].ast;
+}
+
 // --- token helpers ----------------------------------------------------------
 
 fn tok(self: *Self, index: Ast.TokenIndex) Lexer.Token {
-    return self.data.ast.tokens.items[@intFromEnum(index)];
+    return self.ast().tokens.items[@intFromEnum(index)];
 }
 
 fn tokSlice(self: *Self, index: Ast.TokenIndex) []const u8 {
@@ -70,13 +83,13 @@ fn optTokSlice(self: *Self, index: Ast.OptionalTokenIndex) ?[]const u8 {
 
 fn internAccount(self: *Self, t: Ast.TokenIndex) !Data.AccountIndex {
     const idx = try self.data.accounts.intern(self.alloc, self.tokSlice(t));
-    self.data.token_interned.items[@intFromEnum(t)] = @intFromEnum(idx);
+    self.file().token_interned.items[@intFromEnum(t)] = @intFromEnum(idx);
     return idx;
 }
 
 fn internCurrency(self: *Self, t: Ast.TokenIndex) !Data.CurrencyIndex {
     const idx = try self.data.currencies.intern(self.alloc, self.tokSlice(t));
-    self.data.token_interned.items[@intFromEnum(t)] = @intFromEnum(idx);
+    self.file().token_interned.items[@intFromEnum(t)] = @intFromEnum(idx);
     return idx;
 }
 
@@ -88,14 +101,18 @@ fn internCurrencyOpt(self: *Self, t: Ast.OptionalTokenIndex) !Data.OptionalCurre
 // --- error reporting --------------------------------------------------------
 
 fn warnAt(self: *Self, token: Ast.TokenIndex, msg: ErrorDetails.Tag) !void {
-    try self.data.addWarning(token, self.data.uri, msg);
+    try self.file().addWarning(self.alloc, token, msg);
+}
+
+fn errAt(self: *Self, token: Ast.TokenIndex, msg: ErrorDetails.Tag) !void {
+    try self.file().addError(self.alloc, token, msg);
 }
 
 // --- top level --------------------------------------------------------------
 
 pub fn run(self: *Self) !Data.Imports {
-    for (self.data.ast.root()) |decl_index| {
-        const n = self.data.ast.node(decl_index);
+    for (self.ast().root()) |decl_index| {
+        const n = self.ast().node(decl_index);
         switch (n) {
             .entry => |extra| try self.convertEntry(extra),
             .pushtag => |tag_tok| try self.handlePushtag(tag_tok),
@@ -154,13 +171,13 @@ fn handlePlugin(self: *Self, plugin_tok: Ast.TokenIndex) !void {
 // --- entries ----------------------------------------------------------------
 
 fn convertEntry(self: *Self, extra: Ast.ExtraIndex) !void {
-    const entry_data = self.data.ast.getExtra(extra, Node.Entry);
+    const entry_data = self.ast().getExtra(extra, Node.Entry);
     const date = Date.fromSlice(self.tokSlice(entry_data.date)) catch return; // skip invalid dates
 
     const tagslinks = try self.convertTagsLinks(entry_data.tagslinks);
     const meta = try self.convertMeta(entry_data.meta, true);
 
-    const payload_node = self.data.ast.node(entry_data.payload);
+    const payload_node = self.ast().node(entry_data.payload);
     const payload: Data.Entry.Payload = switch (payload_node) {
         .transaction => |tx_extra| try self.convertTransaction(tx_extra),
         .open => |open_extra| try self.convertOpen(open_extra),
@@ -209,16 +226,17 @@ fn convertEntry(self: *Self, extra: Ast.ExtraIndex) !void {
         .tagslinks = tagslinks,
         .meta = meta,
         .payload = payload,
+        .file = self.file_id,
     });
 }
 
 fn convertTransaction(self: *Self, tx_extra: Ast.ExtraIndex) !Data.Entry.Payload {
-    const tx = self.data.ast.getExtra(tx_extra, Node.Transaction);
+    const tx = self.ast().getExtra(tx_extra, Node.Transaction);
 
     if (std.mem.eql(u8, self.tokSlice(tx.flag), "!")) try self.warnAt(tx.flag, .flagged);
 
     const postings_top = self.data.postings.len;
-    for (self.data.ast.list(tx.postings)) |posting_index| {
+    for (self.ast().list(tx.postings)) |posting_index| {
         try self.convertPosting(posting_index);
     }
     const postings = Data.Range.from(postings_top, self.data.postings.len);
@@ -232,8 +250,8 @@ fn convertTransaction(self: *Self, tx_extra: Ast.ExtraIndex) !Data.Entry.Payload
 }
 
 fn convertPosting(self: *Self, posting_index: Node.Index) !void {
-    const n = self.data.ast.node(posting_index);
-    const p = self.data.ast.getExtra(n.posting, Node.Posting);
+    const n = self.ast().node(posting_index);
+    const p = self.ast().getExtra(n.posting, Node.Posting);
 
     _ = try self.internAccount(p.account);
     if (p.flag.unwrap()) |flag_tok| {
@@ -294,7 +312,7 @@ const AmountResolved = struct {
 };
 
 fn convertAmount(self: *Self, amount_index: Node.Index) !AmountResolved {
-    const n = self.data.ast.node(amount_index);
+    const n = self.ast().node(amount_index);
     const amt = n.amount;
     const number: ?Number = if (amt.number.unwrap()) |num_tok| self.parseNumber(num_tok) else null;
     const currency = try self.internCurrencyOpt(amt.currency);
@@ -303,15 +321,15 @@ fn convertAmount(self: *Self, amount_index: Node.Index) !AmountResolved {
 
 fn parseNumber(self: *Self, num_tok: Ast.TokenIndex) ?Number {
     const num_i = @intFromEnum(num_tok);
-    const slice = self.data.ast.tokens.items[num_i].slice;
-    const is_negative = num_i > 0 and self.data.ast.tokens.items[num_i - 1].tag == .minus;
+    const slice = self.ast().tokens.items[num_i].slice;
+    const is_negative = num_i > 0 and self.ast().tokens.items[num_i - 1].tag == .minus;
     const number = Number.fromSlice(slice) catch return null;
     return if (is_negative) number.negate() else number;
 }
 
 fn convertLotSpec(self: *Self, ls_index: Node.Index) !Data.LotSpec {
-    const n = self.data.ast.node(ls_index);
-    const ls = self.data.ast.getExtra(n.lot_spec, Node.LotSpec);
+    const n = self.ast().node(ls_index);
+    const ls = self.ast().getExtra(n.lot_spec, Node.LotSpec);
 
     var lot_number: ?Number = null;
     var lot_currency: Data.OptionalCurrencyIndex = .none;
@@ -338,7 +356,7 @@ fn convertLotSpec(self: *Self, ls_index: Node.Index) !Data.LotSpec {
 }
 
 fn convertPriceAnnotation(self: *Self, price_index: Node.Index) !Data.Price {
-    const n = self.data.ast.node(price_index);
+    const n = self.ast().node(price_index);
     const pa = n.price_annotation;
     const total = self.tok(pa.total).tag == .atat;
     const amount = try self.convertAmount(pa.amount);
@@ -350,11 +368,11 @@ fn convertPriceAnnotation(self: *Self, price_index: Node.Index) !Data.Price {
 }
 
 fn convertOpen(self: *Self, open_extra: Ast.ExtraIndex) !Data.Entry.Payload {
-    const open = self.data.ast.getExtra(open_extra, Node.Open);
+    const open = self.ast().getExtra(open_extra, Node.Open);
     _ = try self.internAccount(open.account);
 
     const cur_top = self.data.open_currencies.items.len;
-    for (self.data.ast.tokenList(open.currencies)) |cur_tok| {
+    for (self.ast().tokenList(open.currencies)) |cur_tok| {
         const idx = try self.internCurrency(cur_tok);
         try self.data.open_currencies.append(self.alloc, idx);
     }
@@ -380,7 +398,7 @@ fn convertOpen(self: *Self, open_extra: Ast.ExtraIndex) !Data.Entry.Payload {
 }
 
 fn convertBalance(self: *Self, bal_extra: Ast.ExtraIndex) !Data.Entry.Payload {
-    const bal = self.data.ast.getExtra(bal_extra, Node.Balance);
+    const bal = self.ast().getExtra(bal_extra, Node.Balance);
     _ = try self.internAccount(bal.account);
     const amount = try self.convertAmount(bal.amount);
     const tolerance: ?Number = if (bal.tolerance.unwrap()) |tol_tok| self.parseNumber(tol_tok) else null;
@@ -406,7 +424,7 @@ fn convertTagsLinks(self: *Self, range: Node.Range) !Data.Range {
     const tagslinks_top = self.data.tagslinks.len;
 
     // Explicit tags/links from the AST
-    for (self.data.ast.tokenList(range)) |tag_tok| {
+    for (self.ast().tokenList(range)) |tag_tok| {
         const token = self.tok(tag_tok);
         const kind: Data.TagLink.Kind = switch (token.tag) {
             .tag => .tag,
@@ -436,8 +454,8 @@ fn convertTagsLinks(self: *Self, range: Node.Range) !Data.Range {
 fn convertMeta(self: *Self, range: Node.Range, add_from_stack: bool) !Data.Range {
     const meta_top = self.data.meta.len;
 
-    for (self.data.ast.list(range)) |kv_index| {
-        const n = self.data.ast.node(kv_index);
+    for (self.ast().list(range)) |kv_index| {
+        const n = self.ast().node(kv_index);
         const kv = n.key_value;
         try self.data.meta.append(self.alloc, Data.KeyValue{
             .key = kv.key,

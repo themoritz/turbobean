@@ -161,8 +161,9 @@ const LspState = struct {
         try self.projects.append(self.alloc, project);
 
         // Remove all projects that have a dependency of this project as their root
-        for (project.uris.items[1..]) |dependency| {
-            self.closeProjectByRootUri(dependency.value);
+        const files = project.data.files.items;
+        for (files[1..]) |dependency| {
+            self.closeProjectByRootUri(dependency.uri.value);
         }
     }
 
@@ -180,9 +181,10 @@ const LspState = struct {
     pub fn logOpenProjects(self: *const LspState) void {
         std.log.debug("Currently open projects:", .{});
         for (self.projects.items) |*project| {
-            std.log.debug("- {s}", .{project.uris.items[0].value});
-            for (project.uris.items[1..]) |uri| {
-                std.log.debug("  > {s}", .{uri.value});
+            const files = project.data.files.items;
+            std.log.debug("- {s}", .{files[0].uri.value});
+            for (files[1..]) |f| {
+                std.log.debug("  > {s}", .{f.uri.value});
             }
         }
     }
@@ -343,11 +345,11 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         const writer = &value.writer;
                         {
                             try writer.writeAll("Before:\n");
-                            try inv.before.hoverDisplay(project.currencies, writer);
+                            try inv.before.hoverDisplay(&project.data.currencies, writer);
                         }
                         {
                             try writer.writeAll("\nAfter:\n");
-                            try inv.after.hoverDisplay(project.currencies, writer);
+                            try inv.after.hoverDisplay(&project.data.currencies, writer);
                         }
 
                         const result = lsp.types.Hover{
@@ -383,8 +385,8 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                     var end: u32 = params.position.character;
 
                     blk: {
-                        const file = project.files_by_uri.get(params.textDocument.uri) orelse break :blk;
-                        const src = project.files.items[file].source;
+                        const file = project.data.files_by_uri.get(params.textDocument.uri) orelse break :blk;
+                        const src = project.data.files.items[file].source;
                         const line = completion.getLine(src, params.position.line) orelse break :blk;
                         const before = completion.getTextBefore(line, params.position.character);
 
@@ -620,7 +622,7 @@ pub fn loop(alloc: std.mem.Allocator) !void {
 
                     var map_iter = map.iterator();
                     while (map_iter.next()) |kv| {
-                        const file_uri = project.uris.items[kv.key_ptr.*];
+                        const file_uri = project.data.files.items[kv.key_ptr.*].uri;
                         try changes.map.put(alloc, file_uri.value, kv.value_ptr.items);
                     }
 
@@ -632,11 +634,11 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
-                    const file = project.files_by_uri.get(uri) orelse {
+                    const file = project.data.files_by_uri.get(uri) orelse {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
-                    const tokens = project.files.items[file].ast.tokens;
+                    const tokens = project.data.files.items[file].ast.tokens;
                     var data = try semantic_tokens.tokensToData(alloc, tokens.items);
                     defer data.deinit(alloc);
                     try transport.writeResponse(alloc, request.id, lsp.types.SemanticTokens, .{ .data = data.items }, .{});
@@ -647,11 +649,11 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
-                    const file_idx = project.files_by_uri.get(uri) orelse {
+                    const file_idx = project.data.files_by_uri.get(uri) orelse {
                         try transport.writeResponse(alloc, request.id, void, {}, .{});
                         continue :loop;
                     };
-                    const file_data = &project.files.items[file_idx];
+                    const file_data = &project.data.files.items[file_idx];
 
                     var hints = std.ArrayList(lsp.types.InlayHint){};
                     defer {
@@ -664,8 +666,9 @@ pub fn loop(alloc: std.mem.Allocator) !void {
                         hints.deinit(alloc);
                     }
 
-                    var entry_iter = file_data.iterEntriesOfKind(.transaction);
+                    var entry_iter = project.data.iterEntriesOfKind(.transaction);
                     while (entry_iter.next()) |entry| {
+                        if (entry.file() != file_idx) continue;
                         const tx = entry.payload().transaction;
                         if (tx.dirty()) continue;
                         var postings = tx.postings();

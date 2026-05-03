@@ -12,9 +12,8 @@ pub fn handler(alloc: Allocator, req: *std.http.Server.Request, state: *State) !
     state.acquireProject();
     defer state.releaseProject();
 
-    for (state.project.sorted_entries.items) |sorted_entry| {
-        const data = &state.project.files.items[sorted_entry.file];
-        const entry = data.entryAt(sorted_entry.entry);
+    var entry_iter = state.project.data.iterEntries();
+    while (entry_iter.next()) |entry| {
         switch (entry.payload()) {
             .open => |open| {
                 try zts.print(t, "nav_account", .{

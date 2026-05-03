@@ -38,7 +38,7 @@ pub fn SseHandler(comptime T: type, comptime Ctx: type) type {
             ctx: Ctx,
             render: *const fn (
                 Allocator,
-                *const Project,
+                *Project,
                 DisplaySettings,
                 *std.Io.Writer,
                 *StringStore,
@@ -112,7 +112,7 @@ pub const TreeRenderer = struct {
     alloc: std.mem.Allocator,
     out: *std.Io.Writer,
     tree: *const Tree,
-    project: *const Project,
+    project: *Project,
     operating_currencies: []const []const u8,
     conversion_target: ?Data.CurrencyIndex,
     prices: *const Prices,
@@ -250,7 +250,7 @@ pub const TreeRenderer = struct {
         }, self.out);
         var iter = inv.by_currency.iterator();
         currency: while (iter.next()) |kv| {
-            const cur_text = self.project.currencies.get(kv.key);
+            const cur_text = self.project.data.currencies.get(kv.key);
             for (self.operating_currencies) |cur| {
                 if (std.mem.eql(u8, cur, cur_text)) continue :currency;
             }
@@ -307,17 +307,17 @@ pub const TreeRenderer = struct {
 };
 
 pub const IntervalIterator = struct {
-    project: *const Project,
+    project: *Project,
     interval: DisplaySettings.Interval,
     next_cutoff: ?Date = null,
-    current_index: usize = 0,
+    current_index: u32 = 0,
 
     pub const Elem = union(enum) {
         cutoff: Date,
         entry: Data.EntryView,
     };
 
-    pub fn init(project: *const Project, interval: DisplaySettings.Interval) IntervalIterator {
+    pub fn init(project: *Project, interval: DisplaySettings.Interval) IntervalIterator {
         return .{
             .project = project,
             .interval = interval,
@@ -325,8 +325,9 @@ pub const IntervalIterator = struct {
     }
 
     pub fn next(it: *IntervalIterator) ?Elem {
+        const data = &it.project.data;
         // No more entries - emit remaining cutoff if any
-        if (it.current_index >= it.project.sorted_entries.items.len) {
+        if (it.current_index >= data.entries.len) {
             if (it.next_cutoff) |cutoff| {
                 it.next_cutoff = null; // Clear it so we don't emit it again
                 return .{ .cutoff = cutoff };
@@ -334,9 +335,7 @@ pub const IntervalIterator = struct {
             return null;
         }
 
-        const sorted_entry = it.project.sorted_entries.items[it.current_index];
-        const data = &it.project.files.items[sorted_entry.file];
-        const entry = data.entryAt(sorted_entry.entry);
+        const entry = data.entryAt(it.current_index);
 
         if (it.next_cutoff == null) {
             it.next_cutoff = it.interval.advanceDate(entry.date());

@@ -24,8 +24,8 @@ pub fn init(alloc: std.mem.Allocator, project: *Project) !*Self {
         .project = project,
     };
 
-    for (project.uris.items) |uri| {
-        try self.watcher.addFile(uri.absolute());
+    for (project.data.files.items) |f| {
+        try self.watcher.addFile(f.uri.absolute());
     }
     try self.watcher.start();
 

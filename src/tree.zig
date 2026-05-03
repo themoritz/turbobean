@@ -19,8 +19,8 @@ const Stack = @import("StackStack.zig").Stack(usize, 64);
 alloc: Allocator,
 /// Borrowed project intern pools — used for account/currency lookups and
 /// when rendering text.
-accounts_pool: *AccountPool,
-currencies_pool: *CurrencyPool,
+accounts_pool: *const AccountPool,
+currencies_pool: *const CurrencyPool,
 /// Dense lookup: `AccountIndex` → node index. Entries are `null` when the
 /// account hasn't been opened in this tree (or isn't a leaf directly).
 nodes_by_account: AccountMap(u32),
@@ -47,7 +47,7 @@ pub const Node = struct {
     }
 };
 
-pub fn init(alloc: Allocator, accounts_pool: *AccountPool, currencies_pool: *CurrencyPool) !Self {
+pub fn init(alloc: Allocator, accounts_pool: *const AccountPool, currencies_pool: *const CurrencyPool) !Self {
     var nodes = std.ArrayList(Node){};
     try nodes.append(alloc, Node.init(
         "",
