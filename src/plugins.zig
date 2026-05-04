@@ -87,8 +87,16 @@ fn runOne(project: *Project, ref: Data.Config.PluginRef) !void {
         return;
     }
 
+    var origin = Origin{
+        .project = project,
+        .plugin = name,
+        .plugin_loc = loc,
+        .arena = std.heap.ArenaAllocator.init(project.alloc),
+    };
+    defer origin.deinit();
+
     // Push entries arg.
-    try pushEntries(lua, project);
+    try pushEntries(lua, &origin);
 
     // Call: plugin(entries) -> (new_entries, errors). Ask for 2 results so the
     // stack has both slots (nil-padded if the plugin returned fewer).
@@ -98,8 +106,8 @@ fn runOne(project: *Project, ref: Data.Config.PluginRef) !void {
     };
 
     // Stack: [-2] new_entries, [-1] errors.
-    try readErrors(project, loc, name, lua, -1);
-    try applyEntries(project, loc, name, lua, -2);
+    try readErrors(&origin, lua, -1);
+    try applyEntries(&origin, lua, -2);
 
     lua.pop(2);
 }
@@ -107,6 +115,104 @@ fn runOne(project: *Project, ref: Data.Config.PluginRef) !void {
 fn stripQuotes(s: []const u8) []const u8 {
     if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') return s[1 .. s.len - 1];
     return s;
+}
+
+// --- origin side-table ------------------------------------------------------
+//
+// Every entry/posting we hand to the plugin gets a `_origin` integer ID that
+// indexes into `Origin.entries` / `Origin.postings`. All source-loc info we
+// need on the way back lives in those Zig-side arrays, so the Lua tables
+// stay clean (one hidden int per entity) and the plugin author never sees
+// `_loc` / `_account_loc` / parallel `_tag_locs` clutter.
+//
+// Entries the plugin builds from scratch have no `_origin`; reads fall back
+// to the plugin directive's loc.
+
+const Origin = struct {
+    project: *Project,
+    plugin: []const u8,
+    /// Fallback loc for entries/postings that have no recorded origin
+    /// (typically: plugin-built from scratch). Points at the `plugin "..."`
+    /// directive.
+    plugin_loc: Data.TokenLoc,
+    /// Owns slices stored in `EntryOrigin.tag_locs` / `link_locs`.
+    arena: std.heap.ArenaAllocator,
+
+    entries: std.ArrayList(EntryOrigin) = .empty,
+    postings: std.ArrayList(PostingOrigin) = .empty,
+
+    const EntryOrigin = struct {
+        /// The entry-level token (date / main token of the source entry).
+        entry: Data.TokenLoc,
+        /// Account token for entries that have one (open/close/balance/pad/
+        /// pnl/note/document). Falls back to `entry` when null.
+        account: ?Data.TokenLoc = null,
+        /// Second account token for `pad.pad_to` and `pnl.income_account`.
+        account2: ?Data.TokenLoc = null,
+        /// Per-tag origin loc, parallel to source `entry.tags` order. If the
+        /// plugin reorders/inserts tags, indices past the original count
+        /// fall back to `entry`.
+        tag_locs: []const Data.TokenLoc = &.{},
+        link_locs: []const Data.TokenLoc = &.{},
+    };
+
+    const PostingOrigin = struct {
+        /// The posting's account token in the source file.
+        account: Data.TokenLoc,
+    };
+
+    fn deinit(self: *Origin) void {
+        self.entries.deinit(self.project.alloc);
+        self.postings.deinit(self.project.alloc);
+        self.arena.deinit();
+    }
+
+    /// Reserve an entry-origin slot up front so we can stamp `_origin = id`
+    /// on the Lua table before populating the loc fields. Returns the new
+    /// slot index. Caller fills `entries.items[id]` while pushing children.
+    fn reserveEntry(self: *Origin) !u32 {
+        const id: u32 = @intCast(self.entries.items.len);
+        try self.entries.append(self.project.alloc, .{ .entry = self.plugin_loc });
+        return id;
+    }
+
+    fn reservePosting(self: *Origin, account_loc: Data.TokenLoc) !u32 {
+        const id: u32 = @intCast(self.postings.items.len);
+        try self.postings.append(self.project.alloc, .{ .account = account_loc });
+        return id;
+    }
+
+    /// Look up an entry origin by `_origin` field on the Lua table. Returns
+    /// null if the field is missing or invalid.
+    fn entryOf(self: *const Origin, lua: *Lua, table_idx: i32) ?EntryOrigin {
+        const id = readOriginId(lua, table_idx) orelse return null;
+        if (id >= self.entries.items.len) return null;
+        return self.entries.items[id];
+    }
+
+    fn postingOf(self: *const Origin, lua: *Lua, table_idx: i32) ?PostingOrigin {
+        const id = readOriginId(lua, table_idx) orelse return null;
+        if (id >= self.postings.items.len) return null;
+        return self.postings.items[id];
+    }
+};
+
+/// Stamp `_origin = id` on the table at the top of the Lua stack.
+fn pushOriginId(lua: *Lua, id: u32) void {
+    lua.pushInteger(@intCast(id));
+    lua.setField(-2, "_origin");
+}
+
+/// Read `_origin` from the table at `idx`. Returns null if missing or out of
+/// range for u32.
+fn readOriginId(lua: *Lua, idx: i32) ?u32 {
+    if (!lua.isTable(idx)) return null;
+    _ = lua.getField(idx, "_origin");
+    defer lua.pop(1);
+    if (lua.isNil(-1)) return null;
+    const n = lua.toInteger(-1) catch return null;
+    if (n < 0 or n > std.math.maxInt(u32)) return null;
+    return @intCast(n);
 }
 
 // --- error reporting --------------------------------------------------------
@@ -165,7 +271,10 @@ fn parseSeverity(s: []const u8) ?ErrorDetails.Severity {
     return null;
 }
 
-fn readErrors(project: *Project, loc: Data.TokenLoc, name: []const u8, lua: *Lua, idx: i32) !void {
+fn readErrors(origin: *Origin, lua: *Lua, idx: i32) !void {
+    const project = origin.project;
+    const name = origin.plugin;
+    const loc = origin.plugin_loc;
     if (lua.isNil(idx)) return;
     if (!lua.isTable(idx)) {
         try addRuntimeError(project, loc, name, lua, error.PluginErrorsReturnIsNotTable);
@@ -201,12 +310,12 @@ fn readErrors(project: *Project, loc: Data.TokenLoc, name: []const u8, lua: *Lua
 
             // posting takes precedence over entry — more specific.
             _ = lua.getField(-1, "posting");
-            if (lua.isTable(-1)) attached = readLoc(project, lua, -1);
+            if (origin.postingOf(lua, -1)) |po| attached = po.account;
             lua.pop(1);
 
             if (attached == null) {
                 _ = lua.getField(-1, "entry");
-                if (lua.isTable(-1)) attached = readLoc(project, lua, -1);
+                if (origin.entryOf(lua, -1)) |eo| attached = eo.entry;
                 lua.pop(1);
             }
         } else if (lua.isString(-1)) {
@@ -222,20 +331,26 @@ fn readErrors(project: *Project, loc: Data.TokenLoc, name: []const u8, lua: *Lua
 
 // --- Data -> Lua serialization ---------------------------------------------
 
-fn pushEntries(lua: *Lua, project: *Project) !void {
-    const data = &project.data;
+fn pushEntries(lua: *Lua, origin: *Origin) !void {
+    const data = &origin.project.data;
     lua.createTable(@intCast(data.entries.len), 0);
 
     var iter = data.iterEntries();
     var i: i32 = 1;
     while (iter.next()) |entry| : (i += 1) {
-        try pushEntry(lua, project, entry);
+        try pushEntry(lua, origin, entry);
         lua.rawSetIndex(-2, i);
     }
 }
 
-fn pushEntry(lua: *Lua, project: *Project, entry: Data.EntryView) !void {
-    lua.createTable(0, 9);
+fn pushEntry(lua: *Lua, origin: *Origin, entry: Data.EntryView) !void {
+    const project = origin.project;
+
+    const id = try origin.reserveEntry();
+    origin.entries.items[id].entry = .{ .file_id = entry.file(), .index = entry.mainToken() };
+
+    lua.createTable(0, 8);
+    pushOriginId(lua, id);
 
     pushTypeStr(lua, entry.tag());
     lua.setField(-2, "type");
@@ -243,25 +358,45 @@ fn pushEntry(lua: *Lua, project: *Project, entry: Data.EntryView) !void {
     pushDate(lua, entry.date());
     lua.setField(-2, "date");
 
-    pushLoc(lua, entry.file(), entry.mainToken());
-    lua.setField(-2, "_loc");
-
-    try pushTagsLinks(lua, entry);
+    try pushTagsLinks(lua, origin, id, entry);
     try pushEntryMeta(lua, entry);
 
     switch (entry.payload()) {
-        .transaction => |tx| try pushTransaction(lua, project, tx),
-        .open => |o| try pushOpen(lua, project, o),
-        .close => |c| try pushAccount(lua, project, c.accountText()),
-        .balance => |b| try pushBalance(lua, b),
-        .pad => |p| try pushPad(lua, project, p),
-        .pnl => |pnl| try pushPnl(lua, project, entry, pnl),
+        .transaction => |tx| try pushTransaction(lua, origin, tx),
+        .open => |o| {
+            origin.entries.items[id].account = o.accountLoc();
+            try pushOpen(lua, project, o);
+        },
+        .close => |c| {
+            origin.entries.items[id].account = c.accountLoc();
+            try pushAccount(lua, c.accountText());
+        },
+        .balance => |b| {
+            origin.entries.items[id].account = b.accountLoc();
+            try pushBalance(lua, b);
+        },
+        .pad => |p| {
+            origin.entries.items[id].account = p.accountLoc();
+            origin.entries.items[id].account2 = p.padToAccountLoc();
+            try pushPad(lua, project, p);
+        },
+        .pnl => |pnl| {
+            origin.entries.items[id].account = .{ .file_id = entry.file(), .index = pnl.account };
+            origin.entries.items[id].account2 = .{ .file_id = entry.file(), .index = pnl.income_account };
+            try pushPnl(lua, project, entry, pnl);
+        },
         .commodity => |c| try pushCommodity(lua, project, c),
         .price => |p| try pushPriceDecl(lua, p),
         .event => |e| try pushEvent(lua, project, entry, e),
         .query => |q| try pushQuery(lua, project, entry, q),
-        .note => |n| try pushNote(lua, project, entry, n),
-        .document => |d| try pushDocument(lua, project, entry, d),
+        .note => |n| {
+            origin.entries.items[id].account = .{ .file_id = entry.file(), .index = n.account };
+            try pushNote(lua, project, entry, n);
+        },
+        .document => |d| {
+            origin.entries.items[id].account = .{ .file_id = entry.file(), .index = d.account };
+            try pushDocument(lua, project, entry, d);
+        },
     }
 }
 
@@ -276,13 +411,12 @@ fn pushDate(lua: *Lua, date: anytype) void {
     _ = lua.pushString(w.buffered());
 }
 
-fn pushAccount(lua: *Lua, project: *Project, account_text: []const u8) !void {
-    _ = project;
+fn pushAccount(lua: *Lua, account_text: []const u8) !void {
     _ = lua.pushString(account_text);
     lua.setField(-2, "account");
 }
 
-fn pushTransaction(lua: *Lua, project: *Project, tx: Data.TransactionView) !void {
+fn pushTransaction(lua: *Lua, origin: *Origin, tx: Data.TransactionView) !void {
     _ = lua.pushString(tx.flagSlice());
     lua.setField(-2, "flag");
     if (tx.payeeText()) |p| {
@@ -298,17 +432,18 @@ fn pushTransaction(lua: *Lua, project: *Project, tx: Data.TransactionView) !void
     lua.createTable(@intCast(it.remaining()), 0);
     var i: i32 = 1;
     while (it.next()) |p| : (i += 1) {
-        try pushPosting(lua, project, p);
+        try pushPosting(lua, origin, p);
         lua.rawSetIndex(-2, i);
     }
     lua.setField(-2, "postings");
 }
 
-fn pushPosting(lua: *Lua, project: *Project, p: Data.PostingView) !void {
-    lua.createTable(0, 8);
+fn pushPosting(lua: *Lua, origin: *Origin, p: Data.PostingView) !void {
+    const project = origin.project;
+    const id = try origin.reservePosting(.{ .file_id = p.file, .index = p.accountToken() });
 
-    pushLoc(lua, p.file, p.accountToken());
-    lua.setField(-2, "_loc");
+    lua.createTable(0, 7);
+    pushOriginId(lua, id);
 
     _ = lua.pushString(p.accountText());
     lua.setField(-2, "account");
@@ -474,7 +609,7 @@ fn pushNumberStr(lua: *Lua, n: Number) !void {
     _ = lua.pushString(w.buffered());
 }
 
-fn pushTagsLinks(lua: *Lua, entry: Data.EntryView) !void {
+fn pushTagsLinks(lua: *Lua, origin: *Origin, entry_id: u32, entry: Data.EntryView) !void {
     var tags_count: u32 = 0;
     var links_count: u32 = 0;
     {
@@ -490,6 +625,11 @@ fn pushTagsLinks(lua: *Lua, entry: Data.EntryView) !void {
     lua.createTable(@intCast(tags_count), 0);
     lua.createTable(@intCast(links_count), 0);
 
+    const arena = origin.arena.allocator();
+    var tag_locs = try arena.alloc(Data.TokenLoc, tags_count);
+    var link_locs = try arena.alloc(Data.TokenLoc, links_count);
+    const file_id = entry.file();
+
     var ti: i32 = 1;
     var li: i32 = 1;
     var it = entry.tagslinks();
@@ -502,16 +642,21 @@ fn pushTagsLinks(lua: *Lua, entry: Data.EntryView) !void {
         switch (tl.kind) {
             .tag => {
                 lua.rawSetIndex(-3, ti);
+                tag_locs[@intCast(ti - 1)] = .{ .file_id = file_id, .index = tl.token };
                 ti += 1;
             },
             .link => {
                 lua.rawSetIndex(-2, li);
+                link_locs[@intCast(li - 1)] = .{ .file_id = file_id, .index = tl.token };
                 li += 1;
             },
         }
     }
     lua.setField(-3, "links");
     lua.setField(-2, "tags");
+
+    origin.entries.items[entry_id].tag_locs = tag_locs;
+    origin.entries.items[entry_id].link_locs = link_locs;
 }
 
 fn pushEntryMeta(lua: *Lua, entry: Data.EntryView) !void {
@@ -532,51 +677,6 @@ fn pushPostingMeta(lua: *Lua, project: *Project, p: Data.PostingView) !void {
         pushMetaKV(lua, fdata, kv);
     }
     lua.setField(-2, "meta");
-}
-
-/// Encode a source-token reference as a small Lua table `{ file, token }`.
-/// Plugins receive this as a hidden `_loc` field on every entry and posting;
-/// they don't need to read it directly — passing the entry/posting table
-/// back via `error.entry` / `error.posting` is enough for the runner to
-/// recover the original source location.
-fn pushLoc(lua: *Lua, file_id: u8, tok: Ast.TokenIndex) void {
-    lua.createTable(0, 2);
-    lua.pushInteger(@intCast(file_id));
-    lua.setField(-2, "file");
-    lua.pushInteger(@intCast(@intFromEnum(tok)));
-    lua.setField(-2, "token");
-}
-
-/// Inverse of `pushLoc`. Reads `_loc` off the table at `table_idx` and
-/// validates that file_id/token_index are in range — plugins are not
-/// trusted to keep `_loc` well-formed.
-fn readLoc(project: *const Project, lua: *Lua, table_idx: i32) ?Data.TokenLoc {
-    if (!lua.isTable(table_idx)) return null;
-
-    _ = lua.getField(table_idx, "_loc");
-    defer lua.pop(1);
-    if (!lua.isTable(-1)) return null;
-
-    _ = lua.getField(-1, "file");
-    const file_n = lua.toInteger(-1) catch {
-        lua.pop(1);
-        return null;
-    };
-    lua.pop(1);
-
-    _ = lua.getField(-1, "token");
-    const token_n = lua.toInteger(-1) catch {
-        lua.pop(1);
-        return null;
-    };
-    lua.pop(1);
-
-    if (file_n < 0 or token_n < 0) return null;
-    if (file_n >= project.data.files.items.len) return null;
-    const file_id: u8 = @intCast(file_n);
-    const f = &project.data.files.items[file_id];
-    if (token_n >= f.ast.tokens.items.len) return null;
-    return .{ .file_id = file_id, .index = @enumFromInt(@as(u32, @intCast(token_n))) };
 }
 
 fn pushMetaKV(lua: *Lua, fdata: *const File, kv: Data.KeyValueView) void {
@@ -603,15 +703,12 @@ const PendingToken = struct {
 /// list returned by the plugin. Commits atomically at the end so a partial
 /// failure leaves the original Data intact (caller signals via plugin error).
 const Rebuild = struct {
-    project: *Project,
-    plugin: []const u8,
+    origin: *Origin,
     /// Slot in `data.files` where the synth file is being constructed.
     synth_id: u8,
-    /// Fallback display location for synth tokens that don't have a more
-    /// specific origin (plugin-created entries with no `_loc`).
-    plugin_loc: Data.TokenLoc,
     /// Display location applied to tokens emitted right now. The reader
-    /// updates this when entering an entry / posting and restores on exit.
+    /// updates this when entering an entry / posting / payload field and
+    /// restores on exit.
     current_loc: Data.TokenLoc,
 
     source_buf: std.ArrayList(u8) = .empty,
@@ -629,7 +726,7 @@ const Rebuild = struct {
     meta: Data.Meta = .{},
 
     fn alloc(self: *Rebuild) Allocator {
-        return self.project.alloc;
+        return self.origin.project.alloc;
     }
 
     fn deinit(self: *Rebuild) void {
@@ -666,14 +763,14 @@ const Rebuild = struct {
 
     fn emitAccount(self: *Rebuild, text: []const u8) !Ast.TokenIndex {
         const tok_idx = try self.emitTok(text, .account);
-        const acc_idx = try self.project.data.accounts.intern(self.alloc(), text);
+        const acc_idx = try self.origin.project.data.accounts.intern(self.alloc(), text);
         self.pending.items[@intFromEnum(tok_idx)].interned = @intFromEnum(acc_idx);
         return tok_idx;
     }
 
     fn emitCurrency(self: *Rebuild, text: []const u8) !Ast.TokenIndex {
         const tok_idx = try self.emitTok(text, .currency);
-        const cur_idx = try self.project.data.currencies.intern(self.alloc(), text);
+        const cur_idx = try self.origin.project.data.currencies.intern(self.alloc(), text);
         self.pending.items[@intFromEnum(tok_idx)].interned = @intFromEnum(cur_idx);
         return tok_idx;
     }
@@ -731,7 +828,7 @@ const Rebuild = struct {
     /// Finalize the synth file and replace project.data with new tables.
     fn commit(self: *Rebuild) !void {
         const a = self.alloc();
-        const data = &self.project.data;
+        const data = &self.origin.project.data;
 
         // Take ownership of the source buffer as a sentinel-terminated slice.
         const owned_source = try self.source_buf.toOwnedSliceSentinel(a, 0);
@@ -799,19 +896,19 @@ const Rebuild = struct {
     }
 };
 
-fn applyEntries(project: *Project, loc: Data.TokenLoc, plugin_name: []const u8, lua: *Lua, idx: i32) !void {
+fn applyEntries(origin: *Origin, lua: *Lua, idx: i32) !void {
+    const project = origin.project;
+    const loc = origin.plugin_loc;
     if (lua.isNil(idx)) return;
     if (!lua.isTable(idx)) {
-        try addRuntimeError(project, loc, plugin_name, lua, error.PluginEntriesReturnIsNotTable);
+        try addRuntimeError(project, loc, origin.plugin, lua, error.PluginEntriesReturnIsNotTable);
         return;
     }
 
     const synth_id = try project.data.ensureSynthFile();
     var rb = Rebuild{
-        .project = project,
-        .plugin = plugin_name,
+        .origin = origin,
         .synth_id = synth_id,
-        .plugin_loc = loc,
         .current_loc = loc,
     };
     defer rb.deinit();
@@ -828,7 +925,7 @@ fn applyEntries(project: *Project, loc: Data.TokenLoc, plugin_name: []const u8, 
                 .{ i, @errorName(err) },
             );
             try appendPluginError(project, loc, .{ .plugin_error = .{
-                .plugin = try project.plugin_arena.allocator().dupe(u8, plugin_name),
+                .plugin = try project.plugin_arena.allocator().dupe(u8, origin.plugin),
                 .message = msg,
             } });
         };
@@ -853,17 +950,20 @@ fn readEntry(rb: *Rebuild, lua: *Lua, ord: u32) ReadEntryError!void {
     _ = ord;
     if (!lua.isTable(-1)) return error.PluginEntryNotTable;
 
-    // Inherit the entry's source loc for every token we emit while
-    // processing it (postings further override on a per-posting basis).
+    // Look up the origin side-table entry for this Lua entry. Plugin-built
+    // entries with no `_origin` get a synthetic record pointing at the
+    // plugin directive.
+    const eo: Origin.EntryOrigin = rb.origin.entryOf(lua, -1) orelse .{ .entry = rb.origin.plugin_loc };
+
     const saved_loc = rb.current_loc;
-    rb.current_loc = readLoc(rb.project, lua, -1) orelse rb.plugin_loc;
+    rb.current_loc = eo.entry;
     defer rb.current_loc = saved_loc;
 
     const type_str = (try getStringField(lua, -1, "type")) orelse return error.PluginEntryMissingType;
     const date_str = (try getStringField(lua, -1, "date")) orelse return error.PluginEntryMissingDate;
     const date = Date.fromSlice(date_str) catch return error.PluginEntryInvalidDate;
 
-    const tagslinks_range = try readTagsLinks(rb, lua, -1);
+    const tagslinks_range = try readTagsLinks(rb, lua, -1, eo);
     const meta_range = try readEntryMeta(rb, lua, -1);
 
     const tag = parseEntryTag(type_str) orelse return error.PluginEntryUnknownType;
@@ -871,18 +971,18 @@ fn readEntry(rb: *Rebuild, lua: *Lua, ord: u32) ReadEntryError!void {
 
     const payload: Data.Entry.Payload = switch (tag) {
         .transaction => .{ .transaction = try readTransaction(rb, lua, -1) },
-        .open => .{ .open = try readOpen(rb, lua, -1) },
-        .close => .{ .close = .{ .account = try readAccountField(rb, lua, -1, "account") } },
+        .open => .{ .open = try readOpen(rb, lua, -1, eo) },
+        .close => .{ .close = .{ .account = try readAccountField(rb, lua, -1, "account", eo.account) } },
         .commodity => .{ .commodity = .{ .currency = try readCurrencyField(rb, lua, -1, "currency") } },
         .pad => .{ .pad = .{
-            .account = try readAccountField(rb, lua, -1, "account"),
-            .pad_to = try readAccountField(rb, lua, -1, "pad_to"),
+            .account = try readAccountField(rb, lua, -1, "account", eo.account),
+            .pad_to = try readAccountField(rb, lua, -1, "pad_to", eo.account2),
         } },
         .pnl => .{ .pnl = .{
-            .account = try readAccountField(rb, lua, -1, "account"),
-            .income_account = try readAccountField(rb, lua, -1, "income_account"),
+            .account = try readAccountField(rb, lua, -1, "account", eo.account),
+            .income_account = try readAccountField(rb, lua, -1, "income_account", eo.account2),
         } },
-        .balance => .{ .balance = try readBalance(rb, lua, -1) },
+        .balance => .{ .balance = try readBalance(rb, lua, -1, eo) },
         .price => .{ .price = try readPriceDecl(rb, lua, -1) },
         .event => .{ .event = .{
             .variable = try readStringField(rb, lua, -1, "variable"),
@@ -893,11 +993,11 @@ fn readEntry(rb: *Rebuild, lua: *Lua, ord: u32) ReadEntryError!void {
             .sql = try readStringField(rb, lua, -1, "sql"),
         } },
         .note => .{ .note = .{
-            .account = try readAccountField(rb, lua, -1, "account"),
+            .account = try readAccountField(rb, lua, -1, "account", eo.account),
             .note = try readStringField(rb, lua, -1, "note"),
         } },
         .document => .{ .document = .{
-            .account = try readAccountField(rb, lua, -1, "account"),
+            .account = try readAccountField(rb, lua, -1, "account", eo.account),
             .filename = try readStringField(rb, lua, -1, "filename"),
         } },
     };
@@ -960,10 +1060,10 @@ fn readTransaction(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Transa
 fn readPosting(rb: *Rebuild, lua: *Lua) ReadEntryError!void {
     if (!lua.isTable(-1)) return error.PluginEntryFieldWrongType;
 
-    // Posting `_loc` (account token) overrides the entry-level loc for any
-    // tokens we emit while building this posting.
+    // The posting's own origin (account token of the source posting)
+    // overrides the entry-level loc for any tokens we emit here.
     const saved_loc = rb.current_loc;
-    rb.current_loc = readLoc(rb.project, lua, -1) orelse rb.current_loc;
+    if (rb.origin.postingOf(lua, -1)) |po| rb.current_loc = po.account;
     defer rb.current_loc = saved_loc;
 
     const account_text = (try getStringField(lua, -1, "account")) orelse return error.PluginEntryMissingField;
@@ -976,7 +1076,7 @@ fn readPosting(rb: *Rebuild, lua: *Lua) ReadEntryError!void {
     }
     var amount_currency: Data.OptionalCurrencyIndex = .none;
     if (try getStringField(lua, -1, "currency")) |s| {
-        const cur_idx = try rb.project.data.currencies.intern(rb.alloc(), s);
+        const cur_idx = try rb.origin.project.data.currencies.intern(rb.alloc(), s);
         // Also emit a synth token so source rendering works.
         _ = try rb.emitCurrency(s);
         amount_currency = cur_idx.toOptional();
@@ -1033,7 +1133,7 @@ fn readPostingPrice(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Price
     }
     var amount_currency: Data.OptionalCurrencyIndex = .none;
     if (try getStringField(lua, idx, "currency")) |s| {
-        const cur_idx = try rb.project.data.currencies.intern(rb.alloc(), s);
+        const cur_idx = try rb.origin.project.data.currencies.intern(rb.alloc(), s);
         amount_currency = cur_idx.toOptional();
     }
     const total = (try getBoolField(lua, idx, "total")) orelse false;
@@ -1047,7 +1147,7 @@ fn readPostingLotSpec(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Lot
     }
     var price_currency: Data.OptionalCurrencyIndex = .none;
     if (try getStringField(lua, idx, "currency")) |s| {
-        const cur_idx = try rb.project.data.currencies.intern(rb.alloc(), s);
+        const cur_idx = try rb.origin.project.data.currencies.intern(rb.alloc(), s);
         price_currency = cur_idx.toOptional();
     }
     var date: ?Date = null;
@@ -1061,8 +1161,8 @@ fn readPostingLotSpec(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Lot
     return .{ .price = price, .price_currency = price_currency, .date = date, .label = label };
 }
 
-fn readOpen(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Open {
-    const account_tok = try readAccountField(rb, lua, idx, "account");
+fn readOpen(rb: *Rebuild, lua: *Lua, idx: i32, eo: Origin.EntryOrigin) ReadEntryError!Data.Open {
+    const account_tok = try readAccountField(rb, lua, idx, "account", eo.account);
 
     const cur_start: u32 = @intCast(rb.open_currencies.items.len);
     _ = lua.getField(idx, "currencies");
@@ -1073,7 +1173,7 @@ fn readOpen(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Open {
             _ = lua.rawGetIndex(-1, @intCast(i));
             defer lua.pop(1);
             if (lua.toString(-1) catch null) |s| {
-                const cur_idx = try rb.project.data.currencies.intern(rb.alloc(), s);
+                const cur_idx = try rb.origin.project.data.currencies.intern(rb.alloc(), s);
                 _ = try rb.emitCurrency(s);
                 try rb.open_currencies.append(rb.alloc(), cur_idx);
             }
@@ -1104,12 +1204,12 @@ fn parseBookingMethod(s: []const u8) ?Inventory.BookingMethod {
     return null;
 }
 
-fn readBalance(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Balance {
-    const account_tok = try readAccountField(rb, lua, idx, "account");
+fn readBalance(rb: *Rebuild, lua: *Lua, idx: i32, eo: Origin.EntryOrigin) ReadEntryError!Data.Balance {
+    const account_tok = try readAccountField(rb, lua, idx, "account", eo.account);
     const amount_str = (try getStringField(lua, idx, "amount")) orelse return error.PluginEntryMissingField;
     const amount_num = Number.fromSlice(amount_str) catch return error.PluginEntryInvalidNumber;
     const cur_str = (try getStringField(lua, idx, "currency")) orelse return error.PluginEntryMissingField;
-    const cur_idx = try rb.project.data.currencies.intern(rb.alloc(), cur_str);
+    const cur_idx = try rb.origin.project.data.currencies.intern(rb.alloc(), cur_str);
     _ = try rb.emitCurrency(cur_str);
 
     var tolerance = Data.PackedNumber.none;
@@ -1128,11 +1228,11 @@ fn readBalance(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Balance {
 
 fn readPriceDecl(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.PriceDecl {
     const cur_str = (try getStringField(lua, idx, "currency")) orelse return error.PluginEntryMissingField;
-    const cur_idx = try rb.project.data.currencies.intern(rb.alloc(), cur_str);
+    const cur_idx = try rb.origin.project.data.currencies.intern(rb.alloc(), cur_str);
     _ = try rb.emitCurrency(cur_str);
 
     const amount_cur_str = (try getStringField(lua, idx, "amount_currency")) orelse return error.PluginEntryMissingField;
-    const amount_cur_idx = try rb.project.data.currencies.intern(rb.alloc(), amount_cur_str);
+    const amount_cur_idx = try rb.origin.project.data.currencies.intern(rb.alloc(), amount_cur_str);
     _ = try rb.emitCurrency(amount_cur_str);
 
     const amount_str = (try getStringField(lua, idx, "amount")) orelse return error.PluginEntryMissingField;
@@ -1145,14 +1245,17 @@ fn readPriceDecl(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.PriceDec
     };
 }
 
-fn readAccountField(rb: *Rebuild, lua: *Lua, idx: i32, field: [:0]const u8) ReadEntryError!Ast.TokenIndex {
+fn readAccountField(rb: *Rebuild, lua: *Lua, idx: i32, field: [:0]const u8, loc: ?Data.TokenLoc) ReadEntryError!Ast.TokenIndex {
     const s = (try getStringField(lua, idx, field)) orelse return error.PluginEntryMissingField;
+    const saved = rb.current_loc;
+    if (loc) |l| rb.current_loc = l;
+    defer rb.current_loc = saved;
     return try rb.emitAccount(s);
 }
 
 fn readCurrencyField(rb: *Rebuild, lua: *Lua, idx: i32, field: [:0]const u8) ReadEntryError!Data.CurrencyIndex {
     const s = (try getStringField(lua, idx, field)) orelse return error.PluginEntryMissingField;
-    const cur_idx = try rb.project.data.currencies.intern(rb.alloc(), s);
+    const cur_idx = try rb.origin.project.data.currencies.intern(rb.alloc(), s);
     _ = try rb.emitCurrency(s);
     return cur_idx;
 }
@@ -1162,17 +1265,20 @@ fn readStringField(rb: *Rebuild, lua: *Lua, idx: i32, field: [:0]const u8) ReadE
     return try rb.emitString(s);
 }
 
-fn readTagsLinks(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Range {
+fn readTagsLinks(rb: *Rebuild, lua: *Lua, idx: i32, eo: Origin.EntryOrigin) ReadEntryError!Data.Range {
     const start: u32 = @intCast(rb.tagslinks.len);
 
     _ = lua.getField(idx, "tags");
     if (lua.isTable(-1)) {
         const len = lua.rawLen(-1);
-        var i: u32 = 1;
-        while (i <= len) : (i += 1) {
-            _ = lua.rawGetIndex(-1, @intCast(i));
+        var i: u32 = 0;
+        while (i < len) : (i += 1) {
+            _ = lua.rawGetIndex(-1, @intCast(i + 1));
             defer lua.pop(1);
             if (lua.toString(-1) catch null) |s| {
+                const saved = rb.current_loc;
+                if (i < eo.tag_locs.len) rb.current_loc = eo.tag_locs[i];
+                defer rb.current_loc = saved;
                 const tok = try rb.emitTag(s);
                 try rb.tagslinks.append(rb.alloc(), .{ .kind = .tag, .token = tok, .explicit = true });
             }
@@ -1183,11 +1289,14 @@ fn readTagsLinks(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Range {
     _ = lua.getField(idx, "links");
     if (lua.isTable(-1)) {
         const len = lua.rawLen(-1);
-        var i: u32 = 1;
-        while (i <= len) : (i += 1) {
-            _ = lua.rawGetIndex(-1, @intCast(i));
+        var i: u32 = 0;
+        while (i < len) : (i += 1) {
+            _ = lua.rawGetIndex(-1, @intCast(i + 1));
             defer lua.pop(1);
             if (lua.toString(-1) catch null) |s| {
+                const saved = rb.current_loc;
+                if (i < eo.link_locs.len) rb.current_loc = eo.link_locs[i];
+                defer rb.current_loc = saved;
                 const tok = try rb.emitLink(s);
                 try rb.tagslinks.append(rb.alloc(), .{ .kind = .link, .token = tok, .explicit = true });
             }
