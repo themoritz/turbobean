@@ -607,9 +607,18 @@ const Rebuild = struct {
     plugin: []const u8,
     /// Slot in `data.files` where the synth file is being constructed.
     synth_id: u8,
+    /// Fallback display location for synth tokens that don't have a more
+    /// specific origin (plugin-created entries with no `_loc`).
+    plugin_loc: Data.TokenLoc,
+    /// Display location applied to tokens emitted right now. The reader
+    /// updates this when entering an entry / posting and restores on exit.
+    current_loc: Data.TokenLoc,
 
     source_buf: std.ArrayList(u8) = .empty,
     pending: std.ArrayList(PendingToken) = .empty,
+    /// Parallel to `pending`. Captured at emit time so each synth token
+    /// remembers the original source location to surface in diagnostics.
+    display_locs: std.ArrayList(Data.TokenLoc) = .empty,
 
     entries: Data.Entries = .{},
     postings: Data.Postings = .{},
@@ -626,6 +635,7 @@ const Rebuild = struct {
     fn deinit(self: *Rebuild) void {
         self.source_buf.deinit(self.alloc());
         self.pending.deinit(self.alloc());
+        self.display_locs.deinit(self.alloc());
         self.entries.deinit(self.alloc());
         self.postings.deinit(self.alloc());
         self.prices.deinit(self.alloc());
@@ -650,6 +660,7 @@ const Rebuild = struct {
             .start = @intCast(start),
             .len = @intCast(text.len),
         });
+        try self.display_locs.append(self.alloc(), self.current_loc);
         return idx;
     }
 
@@ -766,10 +777,16 @@ const Rebuild = struct {
             .errors = .{},
         };
 
+        // Hand off ownership of display_locs in lockstep with the new synth
+        // file. Detach from `self` so Rebuild.deinit doesn't double-free.
+        var locs_handle = self.display_locs;
+        self.display_locs = .empty;
+        errdefer locs_handle.deinit(a);
+
         // Install the new synth file. After this, `owned_source`/tokens/etc.
         // are owned by `data.files`; clear our handles to avoid double-free
         // via Rebuild.deinit.
-        try data.replaceSynthFile(new_file);
+        try data.replaceSynthFile(new_file, locs_handle);
 
         // Swap data tables. Old contents get freed.
         std.mem.swap(Data.Entries, &data.entries, &self.entries);
@@ -794,6 +811,8 @@ fn applyEntries(project: *Project, loc: Data.TokenLoc, plugin_name: []const u8, 
         .project = project,
         .plugin = plugin_name,
         .synth_id = synth_id,
+        .plugin_loc = loc,
+        .current_loc = loc,
     };
     defer rb.deinit();
 
@@ -833,6 +852,12 @@ const ReadEntryError = error{
 fn readEntry(rb: *Rebuild, lua: *Lua, ord: u32) ReadEntryError!void {
     _ = ord;
     if (!lua.isTable(-1)) return error.PluginEntryNotTable;
+
+    // Inherit the entry's source loc for every token we emit while
+    // processing it (postings further override on a per-posting basis).
+    const saved_loc = rb.current_loc;
+    rb.current_loc = readLoc(rb.project, lua, -1) orelse rb.plugin_loc;
+    defer rb.current_loc = saved_loc;
 
     const type_str = (try getStringField(lua, -1, "type")) orelse return error.PluginEntryMissingType;
     const date_str = (try getStringField(lua, -1, "date")) orelse return error.PluginEntryMissingDate;
@@ -934,6 +959,12 @@ fn readTransaction(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Transa
 
 fn readPosting(rb: *Rebuild, lua: *Lua) ReadEntryError!void {
     if (!lua.isTable(-1)) return error.PluginEntryFieldWrongType;
+
+    // Posting `_loc` (account token) overrides the entry-level loc for any
+    // tokens we emit while building this posting.
+    const saved_loc = rb.current_loc;
+    rb.current_loc = readLoc(rb.project, lua, -1) orelse rb.current_loc;
+    defer rb.current_loc = saved_loc;
 
     const account_text = (try getStringField(lua, -1, "account")) orelse return error.PluginEntryMissingField;
     const account_tok = try rb.emitAccount(account_text);

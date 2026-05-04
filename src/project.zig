@@ -975,11 +975,12 @@ pub fn printTree(self: *Self) !void {
 }
 
 fn addErrorDetails(self: *Self, loc: Data.TokenLoc, tag: ErrorDetails.Tag, severity: ErrorDetails.Severity) !void {
-    const f = &self.data.files.items[loc.file_id];
+    const display = self.data.displayLoc(loc);
+    const f = &self.data.files.items[display.file_id];
     try self.errors.append(self.alloc, ErrorDetails{
         .tag = tag,
         .severity = severity,
-        .token = f.token(loc.index),
+        .token = f.token(display.index),
         .uri = f.uri,
         .source = f.source,
     });

@@ -34,6 +34,13 @@ files_by_uri: std.StringHashMap(usize),
 /// Slot in `files` reserved for plugin-emitted synthetic source. Allocated
 /// lazily by `ensureSynthFile`.
 synth_file_id: ?u8 = null,
+/// Per-synth-token display location. `synth_display_locs.items[i]` is the
+/// source location to surface in diagnostics when an error references synth
+/// token index `i`. For tokens emitted from plugin-pass-through entries this
+/// points at the original `.bean` token; for plugin-created tokens it points
+/// at the `plugin "..."` directive. Length tracks the synth file's token
+/// list; replaced wholesale by `replaceSynthFile`.
+synth_display_locs: std.ArrayList(TokenLoc) = .empty,
 
 entries: Entries,
 postings: Postings,
@@ -200,12 +207,6 @@ pub const Entry = struct {
     file: u8,
     date: Date,
     main_token: Ast.TokenIndex,
-    /// Source location for error display. Tokens within the entry (account,
-    /// payee, etc.) are looked up via `file`+token-index, but errors prefer
-    /// `display_loc` when set so plugin-passed-through entries surface
-    /// diagnostics on the original source even though their content tokens
-    /// live in the synth file.
-    display_loc: OptionalTokenLoc = .{ .file_id = 0, .index = .none },
     tagslinks: Range,
     meta: Range,
     payload: Payload,
@@ -486,6 +487,7 @@ pub fn deinit(self: *Self) void {
     self.open_currencies.deinit(self.alloc);
     self.tagslinks.deinit(self.alloc);
     self.meta.deinit(self.alloc);
+    self.synth_display_locs.deinit(self.alloc);
     self.config.deinit();
 
     self.accounts.deinit(self.alloc);
@@ -1262,12 +1264,27 @@ pub fn ensureSynthFile(self: *Self) !u8 {
 }
 
 /// Replace the contents of the synth file in place. Frees the previous
-/// contents. The slot id is preserved.
-pub fn replaceSynthFile(self: *Self, new_file: File) !void {
+/// contents. The slot id is preserved. `new_display_locs` must have one
+/// entry per token in `new_file.ast.tokens` and is taken by ownership.
+pub fn replaceSynthFile(self: *Self, new_file: File, new_display_locs: std.ArrayList(TokenLoc)) !void {
     const id = self.synth_file_id orelse return error.NoSynthFile;
+    std.debug.assert(new_display_locs.items.len == new_file.ast.tokens.items.len);
     var old = self.files.items[id];
     old.deinit(self.alloc);
     self.files.items[id] = new_file;
+    self.synth_display_locs.deinit(self.alloc);
+    self.synth_display_locs = new_display_locs;
+}
+
+/// Translate a `TokenLoc` for diagnostic display: synth-file references are
+/// remapped to the original source via `synth_display_locs`. Non-synth locs
+/// pass through unchanged.
+pub fn displayLoc(self: *const Self, loc: TokenLoc) TokenLoc {
+    const synth_id = self.synth_file_id orelse return loc;
+    if (loc.file_id != synth_id) return loc;
+    const idx = @intFromEnum(loc.index);
+    if (idx >= self.synth_display_locs.items.len) return loc;
+    return self.synth_display_locs.items[idx];
 }
 
 /// Append a synthetic posting (pad, pnl). Returns the new index.
