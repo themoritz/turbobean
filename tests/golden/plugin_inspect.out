@@ -1,0 +1,58 @@
+tests/golden/plugin_inspect.bean: [[31mError[0m] [plugin plugin_inspect] open 2024-01-01 account=Assets:Cash currencies=USD booking=nil meta=
+
+    5 | 2024-01-01 open Assets:Cash USD
+        [31m^^^^^^^^^^[0m
+
+tests/golden/plugin_inspect.bean: [[31mError[0m] [plugin plugin_inspect] open 2024-01-01 account=Assets:Stocks currencies= booking=STRICT meta=description
+
+    6 | 2024-01-01 open Assets:Stocks "STRICT"
+        [31m^^^^^^^^^^[0m
+
+tests/golden/plugin_inspect.bean: [[31mError[0m] [plugin plugin_inspect] open 2024-01-01 account=Income:Dividends currencies= booking=nil meta=
+
+    8 | 2024-01-01 open Income:Dividends
+        [31m^^^^^^^^^^[0m
+
+tests/golden/plugin_inspect.bean: [[31mError[0m] [plugin plugin_inspect] open 2024-01-01 account=Expenses:Food currencies= booking=nil meta=
+
+    9 | 2024-01-01 open Expenses:Food
+        [31m^^^^^^^^^^[0m
+
+tests/golden/plugin_inspect.bean: [[31mError[0m] [plugin plugin_inspect] commodity 2024-01-02 currency=HOOL meta=name
+
+   11 | 2024-01-02 commodity HOOL
+        [31m^^^^^^^^^^[0m
+
+tests/golden/plugin_inspect.bean: [[31mError[0m] [plugin plugin_inspect] tx 2024-01-03 flag=* payee=Acme narration=groceries postings=2 tags=shopping links=trip p1.account=Assets:Cash p1.amount=-50.00 p1.currency=USD
+
+   14 | 2024-01-03 * "Acme" "groceries" #shopping ^trip
+        [31m^^^^^^^^^^[0m
+
+tests/golden/plugin_inspect.bean: [[31mError[0m] [plugin plugin_inspect] price 2024-01-04 currency=HOOL amount=120.00 amount_currency=USD
+
+   18 | 2024-01-04 price HOOL  120.00 USD
+        [31m^^^^^^^^^^[0m
+
+tests/golden/plugin_inspect.bean: [[31mError[0m] [plugin plugin_inspect] balance 2024-01-05 account=Assets:Cash amount=-50.00 currency=USD
+
+   20 | 2024-01-05 balance Assets:Cash  -50.00 USD
+        [31m^^^^^^^^^^[0m
+
+tests/golden/plugin_inspect.bean: [[31mError[0m] [plugin plugin_inspect] event 2024-01-06 variable=location value=SFO
+
+   22 | 2024-01-06 event "location" "SFO"
+        [31m^^^^^^^^^^[0m
+
+tests/golden/plugin_inspect.bean: [[31mError[0m] [plugin plugin_inspect] note 2024-01-07 account=Assets:Cash note=remember to deposit
+
+   24 | 2024-01-07 note Assets:Cash "remember to deposit"
+        [31m^^^^^^^^^^[0m
+
+... and 1 errors and 0 warnings more
+Assets        -50.00 USD
+├ Cash        -50.00 USD
+└ Stocks
+Income
+└ Dividends
+Expenses      50 USD
+└ Food        50 USD

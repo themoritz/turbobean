@@ -1,0 +1,26 @@
+plugin "plugin_identity"
+
+option "operating_currency" "USD"
+
+2024-01-01 open Assets:Cash USD
+2024-01-01 open Assets:Stocks "STRICT"
+  description: "Brokerage"
+2024-01-01 open Income:Dividends
+2024-01-01 open Expenses:Food
+
+2024-01-02 commodity HOOL
+  name: "Hooli Inc."
+
+2024-01-03 * "Acme" "groceries" #shopping ^trip
+  Assets:Cash         -50.00 USD
+  Expenses:Food
+
+2024-01-04 price HOOL  120.00 USD
+
+2024-01-05 balance Assets:Cash  -50.00 USD
+
+2024-01-06 event "location" "SFO"
+
+2024-01-07 note Assets:Cash "remember to deposit"
+
+2024-01-08 close Expenses:Food

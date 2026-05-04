@@ -164,7 +164,11 @@ fn handleInclude(self: *Self, file_tok: Ast.TokenIndex) !void {
 
 fn handlePlugin(self: *Self, plugin_tok: Ast.TokenIndex) !void {
     if (self.is_root) {
-        try self.data.config.addPlugin(self.tokSlice(plugin_tok));
+        try self.data.config.addPlugin(.{
+            .name = self.tokSlice(plugin_tok),
+            .file_id = self.file_id,
+            .token = plugin_tok,
+        });
     }
 }
 

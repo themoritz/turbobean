@@ -1,0 +1,7 @@
+tests/golden/plugin_chunk_error.bean: [[31mError[0m] Failed to load plugin plugin_chunk_error: [string "[plugin: plugin_chunk_error]"]:3: boom at top level (LuaRuntime)
+
+    1 | plugin "plugin_chunk_error"
+               [31m^^^^^^^^^^^^^^^^^^^^[0m
+
+Assets
+└ Cash

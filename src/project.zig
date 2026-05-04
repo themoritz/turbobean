@@ -12,6 +12,7 @@ const InvSummary = @import("inventory.zig").Summary;
 const Date = @import("date.zig").Date;
 const Number = @import("number.zig").Number;
 const Solver = @import("solver.zig").Solver;
+const plugins = @import("plugins.zig");
 const string_pool = @import("string_pool.zig");
 const AccountPool = string_pool.AccountPool;
 const CurrencyPool = string_pool.CurrencyPool;
@@ -30,6 +31,10 @@ data: Data,
 /// Project-level errors (cross-file analysis: balance, check). Per-file parse
 /// errors live on each `File.errors`.
 errors: std.ArrayList(ErrorDetails),
+
+/// Backing memory for plugin-emitted error messages and intermediate strings.
+/// Reset at the start of each pipeline run so re-runs don't accumulate.
+plugin_arena: std.heap.ArenaAllocator,
 
 // LSP specific caches
 account_open_pos: AccountMap(FileLine),
@@ -53,6 +58,7 @@ pub fn load(alloc: Allocator, uri: Uri, source: ?[:0]const u8) !Self {
         .alloc = alloc,
         .data = try Data.init(alloc),
         .errors = .{},
+        .plugin_arena = std.heap.ArenaAllocator.init(alloc),
         .account_open_pos = .{},
         .tags = std.StringHashMap(void).init(alloc),
         .links = std.StringHashMap(void).init(alloc),
@@ -67,6 +73,7 @@ pub fn load(alloc: Allocator, uri: Uri, source: ?[:0]const u8) !Self {
 pub fn deinit(self: *Self) void {
     self.data.deinit();
     self.errors.deinit(self.alloc);
+    self.plugin_arena.deinit();
 
     self.account_open_pos.deinit(self.alloc);
     self.tags.deinit();
@@ -254,6 +261,8 @@ pub fn printErrors(self: *Self) !void {
 
 pub fn pipeline(self: *Self) !void {
     self.errors.clearRetainingCapacity();
+    _ = self.plugin_arena.reset(.retain_capacity);
+    try plugins.run(self);
     try self.balanceTransactions();
     self.sortEntries();
     try self.refreshLspCache();
@@ -979,3 +988,24 @@ fn addErrorDetails(self: *Self, loc: Data.TokenLoc, tag: ErrorDetails.Tag, sever
 fn addError(self: *Self, loc: Data.TokenLoc, tag: ErrorDetails.Tag) !void {
     try self.addErrorDetails(loc, tag, .err);
 }
+
+test "update_file does not Sema the synth plugin file" {
+    // Regression: the synth file appended by plugin write-back has no AST
+    // nodes, so iterating it in `rebuildFromFiles` used to crash on the
+    // first edit after a plugin had run.
+    const alloc = std.testing.allocator;
+    var uri = try Uri.from_relative_to_cwd(alloc, "tests/golden/plugin_basic.bean");
+    defer uri.deinit(alloc);
+
+    var project = try Self.load(alloc, uri, null);
+    defer project.deinit();
+
+    const new_source = try alloc.dupeZ(u8,
+        \\plugin "plugin_basic"
+        \\
+        \\2024-01-01 open Assets:Cash USD
+        \\
+    );
+    try project.update_file(uri.value, new_source);
+}
+

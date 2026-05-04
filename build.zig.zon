@@ -16,6 +16,10 @@
             .url = "git+https://github.com/zig-gamedev/ztracy.git#3cc6a4a1502fdea2e4d3869099e39d9c5e8b98a5",
             .hash = "ztracy-0.14.0-dev-zHJSq8SJGADr475eGiGJzmX_-P5sDoU564IQSVfZxmYC",
         },
+        .zlua = .{
+            .url = "git+https://github.com/natecraddock/ziglua?ref=zig-0.15.2#b6e895f73e55d793e61844a8bab17a036631f6be",
+            .hash = "zlua-0.1.0-hGRpCxFDBQBTLH7HYIvzCfvr_8xFE6kqLzLFxkcgdWNl",
+        },
     },
     .paths = .{
         "build.zig",

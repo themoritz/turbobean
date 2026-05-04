@@ -1,0 +1,7 @@
+tests/golden/plugin_runtime_error.bean: [[31mError[0m] [plugin plugin_runtime_error] [string "[plugin: plugin_runtime_error]"]:2: intentional plugin failure (LuaRuntime)
+
+    1 | plugin "plugin_runtime_error"
+               [31m^^^^^^^^^^^^^^^^^^^^^^[0m
+
+Assets
+└ Cash

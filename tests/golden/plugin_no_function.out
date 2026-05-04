@@ -1,0 +1,7 @@
+tests/golden/plugin_no_function.bean: [[31mError[0m] Failed to load plugin plugin_no_function: PluginScriptDidNotReturnFunction
+
+    1 | plugin "plugin_no_function"
+               [31m^^^^^^^^^^^^^^^^^^^^[0m
+
+Assets
+└ Cash
