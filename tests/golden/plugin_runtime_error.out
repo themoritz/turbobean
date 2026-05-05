@@ -1,4 +1,4 @@
-tests/golden/plugin_runtime_error.bean: [[31mError[0m] [plugin plugin_runtime_error] [string "[plugin: plugin_runtime_error]"]:2: intentional plugin failure (LuaRuntime)
+tests/golden/plugin_runtime_error.bean: [[31mError[0m] [plugin plugin_runtime_error] plugin_runtime_error.lua:2: intentional plugin failure
 
     1 | plugin "plugin_runtime_error"
                [31m^^^^^^^^^^^^^^^^^^^^^^[0m

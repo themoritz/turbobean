@@ -67,7 +67,10 @@ fn runOne(project: *Project, ref: Data.Config.PluginRef) !void {
             return;
         },
     };
-    const chunkname = try std.fmt.allocPrintSentinel(arena, "[plugin: {s}]", .{name}, 0);
+    // The leading `=` tells Lua to use the rest verbatim in error messages;
+    // without it Lua wraps the chunk name as `[string "..."]`. We use
+    // `<name>.lua` so errors read like `foo.lua:2: <msg>`.
+    const chunkname = try std.fmt.allocPrintSentinel(arena, "={s}.lua", .{name}, 0);
 
     var lua = try Lua.init(project.alloc);
     defer lua.deinit();
@@ -238,7 +241,9 @@ fn formatLuaError(project: *Project, lua: ?*Lua, err: anyerror) ![]const u8 {
     if (lua) |l| {
         if (l.getTop() > 0 and l.isString(-1)) {
             const s = l.toString(-1) catch null;
-            if (s) |slice| return try std.fmt.allocPrint(arena, "{s} ({s})", .{ slice, @errorName(err) });
+            // The Lua message already includes `<chunk>:<line>: <reason>`.
+            // The Zig error name (e.g. `LuaRuntime`) adds no signal — drop it.
+            if (s) |slice| return try arena.dupe(u8, slice);
         }
     }
     return try std.fmt.allocPrint(arena, "{s}", .{@errorName(err)});
