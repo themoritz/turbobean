@@ -36,19 +36,51 @@ pub fn run(project: *Project) !void {
     if (plugins.len == 0) return;
     if (project.data.files.items.len == 0) return;
 
+    // One Lua state and one Origin for the whole pipeline. Entries flow in
+    // Lua space across plugin calls; we only do Data <-> Lua at the ends,
+    // regardless of how many plugins run.
+    const lua = try Lua.init(project.alloc);
+    defer lua.deinit();
+    lua.openLibs();
+
+    var origin = Origin{
+        .project = project,
+        .plugin = "",
+        .plugin_loc = .{ .file_id = plugins[0].file_id, .index = plugins[0].token },
+        .arena = std.heap.ArenaAllocator.init(project.alloc),
+    };
+    defer origin.deinit();
+
+    // Data -> Lua (once).
+    try pushEntries(lua, &origin);
+    // Stack: [entries]
+
+    var any_ran = false;
     for (plugins) |ref| {
-        try runOne(project, ref);
+        if (try invokePlugin(lua, &origin, ref)) any_ran = true;
     }
+
+    // Stack: [final_entries]. Apply once if at least one plugin ran; if none
+    // did (e.g. all failed to load), the original Data is left untouched.
+    if (any_ran) try applyEntries(&origin, lua, -1);
+    lua.pop(1);
 }
 
-fn runOne(project: *Project, ref: Data.Config.PluginRef) !void {
+/// Invoke one plugin. Expects [entries] on top of the Lua stack on entry and
+/// leaves [entries] on top on exit (possibly replaced by the plugin's
+/// returned table). Returns true if the plugin function ran (even if it
+/// raised a Lua error); false on load failures.
+fn invokePlugin(lua: *Lua, origin: *Origin, ref: Data.Config.PluginRef) !bool {
+    const project = origin.project;
     const arena = project.plugin_arena.allocator();
 
     const name = stripQuotes(ref.name);
+    const loc: Data.TokenLoc = .{ .file_id = ref.file_id, .index = ref.token };
+    origin.plugin = name;
+    origin.plugin_loc = loc;
+
     const root_dir = std.fs.path.dirname(project.rootUri().absolute()) orelse ".";
     const abs_path = try std.fmt.allocPrint(arena, "{s}/{s}.lua", .{ root_dir, name });
-
-    const loc: Data.TokenLoc = .{ .file_id = ref.file_id, .index = ref.token };
 
     // Read the source ourselves so error messages don't leak the absolute path.
     const source = std.fs.cwd().readFileAlloc(arena, abs_path, 1 << 24) catch |err| switch (err) {
@@ -57,14 +89,14 @@ fn runOne(project: *Project, ref: Data.Config.PluginRef) !void {
                 .plugin = try arena.dupe(u8, name),
                 .message = try std.fmt.allocPrint(arena, "{s}.lua not found", .{name}),
             } });
-            return;
+            return false;
         },
         else => |e| {
             try appendPluginError(project, loc, .{ .plugin_load_failed = .{
                 .plugin = try arena.dupe(u8, name),
                 .message = try std.fmt.allocPrint(arena, "could not read {s}.lua: {s}", .{ name, @errorName(e) }),
             } });
-            return;
+            return false;
         },
     };
     // The leading `=` tells Lua to use the rest verbatim in error messages;
@@ -72,47 +104,47 @@ fn runOne(project: *Project, ref: Data.Config.PluginRef) !void {
     // `<name>.lua` so errors read like `foo.lua:2: <msg>`.
     const chunkname = try std.fmt.allocPrintSentinel(arena, "={s}.lua", .{name}, 0);
 
-    var lua = try Lua.init(project.alloc);
-    defer lua.deinit();
-    lua.openLibs();
-
-    // Load + run the chunk; expect it to return the plugin function.
+    // Stack: [entries]. Load the chunk and evaluate it to obtain the plugin
+    // function — pushed on top of `entries`. On failure Lua leaves the error
+    // message on top, which we drop after capturing.
     lua.loadBuffer(source, chunkname, .text) catch |err| {
         try addLoadError(project, loc, name, lua, err);
-        return;
+        lua.pop(1);
+        return false;
     };
     lua.protectedCall(.{ .results = 1 }) catch |err| {
         try addLoadError(project, loc, name, lua, err);
-        return;
+        lua.pop(1);
+        return false;
     };
     if (!lua.isFunction(-1)) {
         try addLoadError(project, loc, name, null, error.PluginScriptDidNotReturnFunction);
-        return;
+        lua.pop(1);
+        return false;
     }
-
-    var origin = Origin{
-        .project = project,
-        .plugin = name,
-        .plugin_loc = loc,
-        .arena = std.heap.ArenaAllocator.init(project.alloc),
-    };
-    defer origin.deinit();
-
-    // Push entries arg.
-    try pushEntries(lua, &origin);
-
-    // Call: plugin(entries) -> (new_entries, errors). Ask for 2 results so the
-    // stack has both slots (nil-padded if the plugin returned fewer).
+    // Stack: [entries, plugin_fn]. Duplicate `entries` as the call argument
+    // so we can fall back to it if the plugin returns nil.
+    lua.pushValue(-2);
+    // Stack: [entries, plugin_fn, entries_arg].
     lua.protectedCall(.{ .args = 1, .results = 2 }) catch |err| {
         try addRuntimeError(project, loc, name, lua, err);
-        return;
+        lua.pop(1);
+        // Stack: [entries] — entries unchanged for the next plugin.
+        return true;
     };
-
-    // Stack: [-2] new_entries, [-1] errors.
-    try readErrors(&origin, lua, -1);
-    try applyEntries(&origin, lua, -2);
-
-    lua.pop(2);
+    // Stack: [entries, new_entries, errors].
+    try readErrors(origin, lua, -1);
+    lua.pop(1);
+    // Stack: [entries, new_entries].
+    if (lua.isNil(-1)) {
+        // Plugin returned nothing — keep the input table (which the plugin
+        // may have mutated in place).
+        lua.pop(1);
+    } else {
+        // Replace `entries` with `new_entries`.
+        lua.remove(-2);
+    }
+    return true;
 }
 
 fn stripQuotes(s: []const u8) []const u8 {

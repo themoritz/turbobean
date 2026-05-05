@@ -1,0 +1,13 @@
+; Same mutating plugin invoked twice in a single pipeline. Each pass
+; doubles amounts, so postings end up at 4x the source value. Verifies
+; that chained plugin runs compose correctly (and that the runner
+; performs a single Data <-> Lua roundtrip across the whole chain).
+plugin "plugin_pipeline_double"
+plugin "plugin_pipeline_double"
+
+2024-01-01 open Assets:Cash USD
+2024-01-01 open Expenses:Food
+
+2024-01-02 * "groceries"
+  Assets:Cash    -10.00 USD
+  Expenses:Food
