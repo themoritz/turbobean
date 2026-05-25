@@ -7,7 +7,7 @@ fn GenericMap(K: type, V: type) type {
     return struct {
         const Self = @This();
 
-        array: std.ArrayList(?V) = .{},
+        array: std.ArrayList(?V) = .empty,
 
         pub fn initWithCapacity(capacity: usize) Self {
             const self = .{};

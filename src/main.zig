@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const Io = std.Io;
 
 const lex = @import("lexer.zig");
 const number = @import("number.zig");
@@ -22,7 +23,7 @@ pub const std_options: std.Options = .{
 
 pub fn myLogFn(
     comptime level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
+    comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
 ) void {
@@ -38,45 +39,36 @@ pub fn myLogFn(
     const prefix = "[" ++ comptime level.asText() ++ "]" ++ scope_prefix ++ ": ";
 
     // Print the message to stderr, silently ignoring any errors
-    std.debug.lockStdErr();
-    defer std.debug.unlockStdErr();
-    const stderr = std.fs.File.stderr().deprecatedWriter();
-    nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
+    var buffer: [256]u8 = undefined;
+    const stderr = std.debug.lockStderr(&buffer);
+    defer std.debug.unlockStderr();
+    nosuspend stderr.file_writer.interface.print(prefix ++ format ++ "\n", args) catch return;
 }
 
-var debug_allocator: std.heap.DebugAllocator(.{
-    .stack_trace_frames = 24,
-}) = .init;
+pub fn main(init: std.process.Init) !void {
+    const alloc = init.gpa;
+    const io = init.io;
 
-pub fn main() !void {
-    const alloc, const is_debug = switch (builtin.mode) {
-        .Debug, .ReleaseSafe => .{ debug_allocator.allocator(), true },
-        .ReleaseFast, .ReleaseSmall => .{ std.heap.smp_allocator, false },
-    };
-    defer if (is_debug) {
-        _ = debug_allocator.deinit();
-    };
-
-    var iter = try std.process.ArgIterator.initWithAllocator(alloc);
+    var iter = try std.process.Args.Iterator.initAllocator(init.minimal.args, alloc);
     defer iter.deinit();
     _ = iter.next();
 
     if (iter.next()) |command| {
         if (std.mem.eql(u8, command, "lsp")) {
-            try lsp.loop(alloc);
+            try lsp.loop(alloc, io);
             return;
         }
         if (std.mem.eql(u8, command, "serve")) {
             if (iter.next()) |file| {
-                var uri = try Uri.from_relative_to_cwd(alloc, file);
+                var uri = try Uri.from_relative_to_cwd(alloc, io, file);
                 defer uri.deinit(alloc);
 
-                var project = try Project.load(alloc, uri, null);
+                var project = try Project.load(alloc, io, uri, null);
                 defer project.deinit();
 
                 if (project.hasErrors()) try project.printErrors();
 
-                try server.loop(alloc, &project);
+                try server.loop(alloc, io, &project);
                 return;
             } else {
                 cli.printMissingFileArgument();
@@ -85,10 +77,10 @@ pub fn main() !void {
         }
         if (std.mem.eql(u8, command, "tree")) {
             if (iter.next()) |file| {
-                var uri = try Uri.from_relative_to_cwd(alloc, file);
+                var uri = try Uri.from_relative_to_cwd(alloc, io, file);
                 defer uri.deinit(alloc);
 
-                var project = try Project.load(alloc, uri, null);
+                var project = try Project.load(alloc, io, uri, null);
                 defer project.deinit();
 
                 if (project.hasErrors()) try project.printErrors();
@@ -117,11 +109,16 @@ pub fn main() !void {
             }
 
             const source = if (file_arg) |file| blk: {
-                const f = try std.fs.cwd().openFile(file, .{});
-                defer f.close();
-                break :blk try f.readToEndAllocOptions(alloc, std.math.maxInt(usize), null, .@"1", 0);
+                var f = try Io.Dir.cwd().openFile(io, file, .{});
+                defer f.close(io);
+                var rbuf: [4096]u8 = undefined;
+                var r = f.reader(io, &rbuf);
+                break :blk try r.interface.allocRemainingAlignedSentinel(alloc, .unlimited, .@"1", 0);
             } else blk: {
-                break :blk try std.fs.File.stdin().readToEndAllocOptions(alloc, std.math.maxInt(usize), null, .@"1", 0);
+                const stdin = Io.File.stdin();
+                var rbuf: [4096]u8 = undefined;
+                var r = stdin.reader(io, &rbuf);
+                break :blk try r.interface.allocRemainingAlignedSentinel(alloc, .unlimited, .@"1", 0);
             };
             defer alloc.free(source);
 
@@ -131,23 +128,25 @@ pub fn main() !void {
 
             if (ast.errors.items.len > 0) {
                 var stderr_buf: [4096]u8 = undefined;
-                var stderr_w = std.fs.File.stderr().writer(&stderr_buf);
+                var stderr_w = Io.File.stderr().writer(io, &stderr_buf);
                 for (ast.errors.items) |err| {
-                    try err.format(&stderr_w.interface, alloc, true);
+                    try err.format(&stderr_w.interface, alloc, io, true);
                 }
                 try stderr_w.interface.flush();
                 std.process.exit(1);
             }
 
             if (in_place) {
+                var atomic = try Io.Dir.cwd().createFileAtomic(io, file_arg.?, .{ .replace = true });
+                defer atomic.deinit(io);
                 var write_buf: [4096]u8 = undefined;
-                var atomic = try std.fs.cwd().atomicFile(file_arg.?, .{ .write_buffer = &write_buf });
-                defer atomic.deinit();
-                try Renderer.render(alloc, &atomic.file_writer.interface, &ast);
-                try atomic.finish();
+                var fw = atomic.file.writer(io, &write_buf);
+                try Renderer.render(alloc, &fw.interface, &ast);
+                try fw.interface.flush();
+                try atomic.replace(io);
             } else {
                 var stdout_buf: [4096]u8 = undefined;
-                var stdout_w = std.fs.File.stdout().writer(&stdout_buf);
+                var stdout_w = Io.File.stdout().writer(io, &stdout_buf);
                 try Renderer.render(alloc, &stdout_w.interface, &ast);
                 try stdout_w.interface.flush();
             }

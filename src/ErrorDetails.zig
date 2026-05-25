@@ -75,18 +75,18 @@ pub const PluginError = struct {
     message: []const u8,
 };
 
-pub fn print(e: Self, alloc: Allocator) !void {
-    const rendered = try dump(e, alloc, true);
+pub fn print(e: Self, alloc: Allocator, io: std.Io) !void {
+    const rendered = try dump(e, alloc, io, true);
     defer alloc.free(rendered);
     std.debug.print("{s}\n", .{rendered});
 }
 
-pub fn dump(e: Self, alloc: Allocator, color: bool) ![]const u8 {
+pub fn dump(e: Self, alloc: Allocator, io: std.Io, color: bool) ![]const u8 {
     var allocating = std.Io.Writer.Allocating.init(alloc);
     defer allocating.deinit();
     const writer = &allocating.writer;
 
-    try e.format(writer, alloc, color);
+    try e.format(writer, alloc, io, color);
     return allocating.toOwnedSlice();
 }
 
@@ -159,7 +159,7 @@ pub fn formatMessage(self: Self, writer: *std.Io.Writer) !void {
     }
 }
 
-pub fn format(e: Self, writer: *std.Io.Writer, alloc: Allocator, color: bool) !void {
+pub fn format(e: Self, writer: *std.Io.Writer, alloc: Allocator, io: std.Io, color: bool) !void {
     const color_on = if (color) switch (e.severity) {
         .err => "\x1b[31m",
         .warn => "\x1b[33m",
@@ -216,7 +216,7 @@ pub fn format(e: Self, writer: *std.Io.Writer, alloc: Allocator, color: bool) !v
         .warn => "Warning",
     };
 
-    const relative = try e.uri.relative(alloc);
+    const relative = try e.uri.relative(alloc, io);
     defer alloc.free(relative);
 
     try writer.print(
@@ -263,7 +263,8 @@ test "render" {
 
 fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !void {
     const alloc = std.testing.allocator;
-    var uri = try Uri.from_relative_to_cwd(alloc, "dummy.bean");
+    const io = std.testing.io;
+    var uri = try Uri.from_relative_to_cwd(alloc, io, "dummy.bean");
     defer uri.deinit(alloc);
     const e = Self{
         .tag = .{ .expected_token = .string },
@@ -278,7 +279,7 @@ fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !vo
         .uri = uri,
         .source = source,
     };
-    const rendered = try e.dump(alloc, false);
+    const rendered = try e.dump(alloc, io, false);
     defer alloc.free(rendered);
 
     try std.testing.expectEqualStrings(expected, rendered);

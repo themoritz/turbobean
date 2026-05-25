@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const Data = @import("data.zig");
 const File = @import("file.zig");
 const Tree = @import("tree.zig");
@@ -24,6 +25,7 @@ const ztracy = @import("ztracy");
 const Self = @This();
 
 alloc: Allocator,
+io: Io,
 
 /// Storage layer: per-file ASTs plus the merged semantic tables.
 data: Data,
@@ -50,14 +52,15 @@ const FileLine = struct {
 ///
 /// If `source` is provided, uses that as the source text of the root
 /// project file, otherwise loads from file.
-pub fn load(alloc: Allocator, uri: Uri, source: ?[:0]const u8) !Self {
+pub fn load(alloc: Allocator, io: Io, uri: Uri, source: ?[:0]const u8) !Self {
     const tracy_zone = ztracy.ZoneNC(@src(), "Load project", 0x00_00_ff_00);
     defer tracy_zone.End();
 
     var self = Self{
         .alloc = alloc,
+        .io = io,
         .data = try Data.init(alloc),
-        .errors = .{},
+        .errors = .empty,
         .plugin_arena = std.heap.ArenaAllocator.init(alloc),
         .account_open_pos = .{},
         .tags = std.StringHashMap(void).init(alloc),
@@ -131,7 +134,7 @@ fn loadFileRec(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !voi
     if (self.data.files_by_uri.get(uri.value)) |_| return error.ImportCycle;
 
     const uri_owned = try uri.clone(self.alloc);
-    const null_terminated = source orelse uri_owned.load_nullterminated(self.alloc) catch |err| {
+    const null_terminated = source orelse uri_owned.load_nullterminated(self.alloc, self.io) catch |err| {
         var u = uri_owned;
         u.deinit(self.alloc);
         return err;
@@ -144,7 +147,7 @@ fn loadFileRec(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !voi
         var import_uri = try uri_owned.move_relative(self.alloc, import.path);
         defer import_uri.deinit(self.alloc);
         // Check if the file exists before recursing
-        std.fs.accessAbsolute(import_uri.absolute(), .{}) catch {
+        std.Io.Dir.accessAbsolute(self.io, import_uri.absolute(), .{}) catch {
             const f = &self.data.files.items[file_id];
             try f.errors.append(self.alloc, .{
                 .tag = .include_file_not_found,
@@ -186,7 +189,7 @@ pub fn collectErrors(self: *const Self, alloc: Allocator) !std.StringHashMap(std
         errors.deinit();
     }
     for (self.data.files.items) |f| {
-        try errors.put(f.uri.value, std.ArrayList(ErrorDetails){});
+        try errors.put(f.uri.value, std.ArrayList(ErrorDetails).empty);
     }
     for (self.data.files.items) |f| {
         for (f.errors.items) |err| {
@@ -210,9 +213,9 @@ pub fn printErrors(self: *Self) !void {
     if (errors.count() == 0) return;
 
     // Separate errors and warnings
-    var error_list = std.ArrayList(ErrorDetails){};
+    var error_list = std.ArrayList(ErrorDetails).empty;
     defer error_list.deinit(self.alloc);
-    var warning_list = std.ArrayList(ErrorDetails){};
+    var warning_list = std.ArrayList(ErrorDetails).empty;
     defer warning_list.deinit(self.alloc);
 
     {
@@ -241,7 +244,7 @@ pub fn printErrors(self: *Self) !void {
             std.debug.print("... and {d} errors and {d} warnings more\n", .{ remaining_errors, remaining_warnings });
             return;
         }
-        try err.print(self.alloc);
+        try err.print(self.alloc, self.io);
         num_printed += 1;
     }
 
@@ -252,7 +255,7 @@ pub fn printErrors(self: *Self) !void {
             std.debug.print("... and {d} errors and {d} warnings more\n", .{ 0, remaining_warnings });
             return;
         }
-        try warn.print(self.alloc);
+        try warn.print(self.alloc, self.io);
         num_printed += 1;
     }
 }
@@ -304,7 +307,6 @@ pub fn check(self: *Self) !void {
             .close => |close| {
                 tree.close(close.account()) catch |err| switch (err) {
                     error.AccountNotOpen => try self.addError(close.accountLoc(), ErrorDetails.Tag.account_not_open),
-                    else => return err,
                 };
             },
             .pad => |pad| {
@@ -501,13 +503,13 @@ fn balanceTransactions(self: *Self) !void {
     // Stable, reused per-tx staging buffers. We ensureTotalCapacity before
     // filling so that the pointers we hand to the solver stay valid during
     // `solve()`.
-    var stage_numbers: std.ArrayList(?Number) = .{};
+    var stage_numbers: std.ArrayList(?Number) = .empty;
     defer stage_numbers.deinit(self.alloc);
-    var stage_currencies: std.ArrayList(?[]const u8) = .{};
+    var stage_currencies: std.ArrayList(?[]const u8) = .empty;
     defer stage_currencies.deinit(self.alloc);
-    var stage_prices: std.ArrayList(?Number) = .{};
+    var stage_prices: std.ArrayList(?Number) = .empty;
     defer stage_prices.deinit(self.alloc);
-    var stage_price_currencies: std.ArrayList(?[]const u8) = .{};
+    var stage_price_currencies: std.ArrayList(?[]const u8) = .empty;
     defer stage_price_currencies.deinit(self.alloc);
 
     const data = &self.data;

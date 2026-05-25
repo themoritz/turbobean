@@ -67,7 +67,7 @@ pub fn SseHandler(comptime T: type, comptime Ctx: type) type {
             var listener = state.broadcast.newListener();
 
             while (true) {
-                var timer = try std.time.Timer.start();
+                var timer = std.Io.Clock.Timestamp.now(state.io, .awake);
                 const tracy_zone = ztracy.ZoneNC(@src(), "SSE loop", 0x00_ff_00_00);
                 defer tracy_zone.End();
 
@@ -96,11 +96,10 @@ pub fn SseHandler(comptime T: type, comptime Ctx: type) type {
                 html.clearRetainingCapacity();
                 json.clearRetainingCapacity();
 
-                const elapsed_ns = timer.read();
-                const elapsed_ms = @divFloor(elapsed_ns, std.time.ns_per_ms);
-                std.log.info("Rendered in {d} ms", .{elapsed_ms});
+                const elapsed = timer.untilNow(state.io).raw.toMilliseconds();
+                std.log.info("Rendered in {d} ms", .{elapsed});
 
-                if (!listener.waitForNewVersion()) break;
+                if (!listener.waitForNewVersion(state.io)) break;
             }
 
             try sse.end();
@@ -359,7 +358,7 @@ pub const IntervalIterator = struct {
 
 pub const PlotData = struct {
     alloc: std.mem.Allocator,
-    points: std.ArrayList(PlotPoint) = .{},
+    points: std.ArrayList(PlotPoint) = .empty,
 
     const PlotPoint = struct {
         date: StringStore.String,

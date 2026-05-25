@@ -47,8 +47,8 @@ pub const Lots = struct {
     pub fn init(booking_method: BookingMethod) Lots {
         return .{
             .booking_method = booking_method,
-            .longs = std.ArrayListUnmanaged(Lot){},
-            .shorts = std.ArrayListUnmanaged(Lot){},
+            .longs = std.ArrayListUnmanaged(Lot).empty,
+            .shorts = std.ArrayListUnmanaged(Lot).empty,
         };
     }
 
@@ -356,7 +356,7 @@ pub const PlainInventory = struct {
         while (iter.next()) |kv| {
             try result.by_currency.put(alloc, kv.key, .{
                 .plain = kv.value_ptr.*,
-                .lots = .{},
+                .lots = .empty,
             });
         }
         return result;
@@ -525,7 +525,7 @@ pub const Summary = struct {
         }
     }
 
-    pub fn treeDisplay(self: *const Summary, pool: *const CurrencyPool, indent: u32, writer: std.io.AnyWriter) !void {
+    pub fn treeDisplay(self: *const Summary, pool: *const CurrencyPool, indent: u32, writer: *std.Io.Writer) !void {
         var it = self.by_currency.iterator();
         var first = true;
         while (it.next()) |entry| {
@@ -534,7 +534,7 @@ pub const Summary = struct {
             if (!v.plain.is_zero()) {
                 if (!first) {
                     try writer.writeByte('\n');
-                    try writer.writeByteNTimes(' ', indent);
+                    try writer.splatByteAll(' ', indent);
                 }
                 try writer.print("{f} {s}", .{ v.plain, cur_text });
                 first = false;
@@ -542,7 +542,7 @@ pub const Summary = struct {
             for (v.lots.items) |lot| {
                 if (!first) {
                     try writer.writeByte('\n');
-                    try writer.writeByteNTimes(' ', indent);
+                    try writer.splatByteAll(' ', indent);
                 }
                 const cost_cur = pool.get(lot.cost.currency);
                 try writer.print("{f} {s} @ {f} {s} {{{f}", .{

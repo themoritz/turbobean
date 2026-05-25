@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const Uri = @import("Uri.zig");
 
 const Self = @This();
@@ -7,14 +8,11 @@ const Self = @This();
 root: []const u8,
 
 /// Load the config from a directory. dir has to be an absolute path.
-pub fn load_from_dir(alloc: Allocator, uri: Uri) !Self {
+pub fn load_from_dir(alloc: Allocator, io: Io, uri: Uri) !Self {
     const config_path = try std.fs.path.join(alloc, &.{ uri.absolute(), "turbobean.config" });
     defer alloc.free(config_path);
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-
-    const config_file = try file.readToEndAlloc(alloc, std.math.maxInt(usize));
+    const config_file = try std.Io.Dir.cwd().readFileAlloc(io, config_path, alloc, .unlimited);
     defer alloc.free(config_file);
 
     return Self{ .root = try parseConfig(alloc, config_file) };
@@ -31,10 +29,8 @@ pub fn deinit(self: Self, alloc: Allocator) void {
     alloc.free(self.root);
 }
 
-pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-    _ = fmt;
-    _ = options;
-    try std.fmt.format(writer, "Config{{ .root = \"{s}\" }}", .{self.root});
+pub fn format(self: Self, writer: *std.Io.Writer) !void {
+    try writer.print("Config{{ .root = \"{s}\" }}", .{self.root});
 }
 
 test parseConfig {

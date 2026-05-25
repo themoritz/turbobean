@@ -42,7 +42,7 @@ pub fn init(alloc: Allocator, data: *Data, file_id: u8, is_root: bool) Self {
         .data = data,
         .file_id = file_id,
         .is_root = is_root,
-        .imports = .{},
+        .imports = .empty,
         .active_tags = .init(alloc),
         .active_meta = .init(alloc),
     };

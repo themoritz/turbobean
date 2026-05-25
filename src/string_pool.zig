@@ -21,10 +21,10 @@ pub fn StringPool(comptime Index: type, comptime OptionalIndex: type) type {
         map: std.HashMapUnmanaged(Index, void, IndexContext, std.hash_map.default_max_load_percentage),
 
         pub fn init(alloc: Allocator) !Self {
-            var starts: std.ArrayList(u32) = .{};
+            var starts: std.ArrayList(u32) = .empty;
             try starts.append(alloc, 0);
             return .{
-                .bytes = .{},
+                .bytes = .empty,
                 .starts = starts,
                 .map = .{},
             };

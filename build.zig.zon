@@ -2,19 +2,19 @@
     .name = .turbobean,
     .fingerprint = 0x8380b6b6b2f5bf2b,
     .version = "0.0.0-dev",
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .zts = .{
             .url = "git+https://github.com/zigster64/zts?ref=main#ca98e23fcf1a4fa331c80f5cd2e72f6838daf7ee",
             .hash = "zts-0.14.1-_M80Of22AgBwArz6uCXR49IoEjlzNt5yhu7KV8cWl5jr",
         },
         .lsp_kit = .{
-            .url = "git+https://github.com/zigtools/lsp-kit.git#6274eebace9a6a82ce182e24468fef88e0b95f37",
-            .hash = "lsp_kit-0.1.0-bi_PLzAyCgClDh8_M0U9Q50ysdsQBuRuBTZfwg6rZPd6",
+            .url = "git+https://github.com/zigtools/lsp-kit.git#b886a2b0d5cee85ecbcc3089b863f7517cc9ff7f",
+            .hash = "lsp_kit-0.1.0-bi_PL3IyDACfp1xdTnkiOHEok2YpPCCCJHuuOcNzjl1D",
         },
         .ztracy = .{
-            .url = "git+https://github.com/zig-gamedev/ztracy.git#3cc6a4a1502fdea2e4d3869099e39d9c5e8b98a5",
-            .hash = "ztracy-0.14.0-dev-zHJSq8SJGADr475eGiGJzmX_-P5sDoU564IQSVfZxmYC",
+            .url = "git+https://github.com/zig-gamedev/ztracy.git#d95d2a193b9f97944a17026c9a42b5d0f9a88c94",
+            .hash = "ztracy-0.14.0-dev-zHJSqzUHGQAmhJybhlwtl1QKevUBw4M5YKZqPfWx2y99",
         },
         .zlua = .{
             .url = "git+https://github.com/natecraddock/ziglua?ref=zig-0.15.2#b6e895f73e55d793e61844a8bab17a036631f6be",

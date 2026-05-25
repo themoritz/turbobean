@@ -26,8 +26,8 @@ pub fn init(alloc: std.mem.Allocator, uri: Uri, ast: *Ast) Self {
         .source = ast.source,
         .tokens = ast.tokens.items,
         .tok_i = 0,
-        .scratch = .{},
-        .token_scratch = .{},
+        .scratch = .empty,
+        .token_scratch = .empty,
         .nodes = &ast.nodes,
         .extra_data = &ast.extra_data,
         .errors = &ast.errors,
@@ -895,7 +895,7 @@ test "comments" {
 test "recover without final newline" {
     // Just verifies the parser doesn't crash - errors are expected
     const alloc = std.testing.allocator;
-    var uri = try Uri.from_relative_to_cwd(alloc, "dummy.bean");
+    var uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
     defer uri.deinit(alloc);
     var ast = try Ast.parse(alloc, uri, "2015-01-01");
     defer ast.deinit();
@@ -1307,14 +1307,14 @@ test "posting alignment" {
 fn testParse(source: [:0]const u8) !void {
     const alloc = std.testing.allocator;
 
-    var uri = try Uri.from_relative_to_cwd(alloc, "dummy.bean");
+    var uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
     defer uri.deinit(alloc);
 
     var ast = try Ast.parse(alloc, uri, source);
     defer ast.deinit();
 
     if (ast.errors.items.len > 0) {
-        try ast.errors.items[0].print(alloc);
+        try ast.errors.items[0].print(alloc, std.testing.io);
         return error.ParseError;
     }
 }
@@ -1322,13 +1322,13 @@ fn testParse(source: [:0]const u8) !void {
 fn testNormalize(source: [:0]const u8, expected: [:0]const u8) !void {
     const alloc = std.testing.allocator;
 
-    var uri = try Uri.from_relative_to_cwd(alloc, "dummy.bean");
+    var uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
     defer uri.deinit(alloc);
 
     var ast = try Ast.parse(alloc, uri, source);
     defer ast.deinit();
     if (ast.errors.items.len > 0) {
-        try ast.errors.items[0].print(alloc);
+        try ast.errors.items[0].print(alloc, std.testing.io);
         return error.ParseError;
     }
 
@@ -1344,13 +1344,13 @@ fn testNormalize(source: [:0]const u8, expected: [:0]const u8) !void {
 fn testRoundtrip(source: [:0]const u8) !void {
     const alloc = std.testing.allocator;
 
-    var uri = try Uri.from_relative_to_cwd(alloc, "dummy.bean");
+    var uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
     defer uri.deinit(alloc);
 
     var ast = try Ast.parse(alloc, uri, source);
     defer ast.deinit();
     if (ast.errors.items.len > 0) {
-        try ast.errors.items[0].print(alloc);
+        try ast.errors.items[0].print(alloc, std.testing.io);
         return error.ParseError;
     }
 

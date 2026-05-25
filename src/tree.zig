@@ -37,7 +37,7 @@ pub const Node = struct {
             .name = name,
             .inventory = inv,
             .parent = parent,
-            .children = .{},
+            .children = .empty,
         };
     }
 
@@ -48,7 +48,7 @@ pub const Node = struct {
 };
 
 pub fn init(alloc: Allocator, accounts_pool: *const AccountPool, currencies_pool: *const CurrencyPool) !Self {
-    var nodes = std.ArrayList(Node){};
+    var nodes = std.ArrayList(Node).empty;
     try nodes.append(alloc, Node.init(
         "",
         null,
@@ -264,7 +264,6 @@ pub fn balanceAggregatedByNode(self: *const Self, node: u32, currency: CurrencyI
         const balance = n.inventory.balance(currency) catch |err| if (catch_error)
             switch (err) {
                 error.DoesNotHoldCurrency => Number.zero(),
-                else => return err,
             }
         else
             return err;
@@ -290,7 +289,7 @@ pub fn inventoryAggregatedByNode(self: *const Self, alloc: Allocator, node: u32)
     var summary = Summary.init(alloc);
     errdefer summary.deinit();
 
-    var stack = std.ArrayList(usize){};
+    var stack = std.ArrayList(usize).empty;
     defer stack.deinit(self.alloc);
 
     try stack.append(self.alloc, node);
@@ -308,17 +307,17 @@ pub fn inventoryAggregatedByNode(self: *const Self, alloc: Allocator, node: u32)
 }
 
 pub fn render(self: *Self) ![]const u8 {
-    var buf = std.array_list.Managed(u8).init(self.alloc);
+    var buf = std.Io.Writer.Allocating.init(self.alloc);
     defer buf.deinit();
 
     const max_width = try self.maxWidth();
 
-    var prefix = std.array_list.Managed(bool).init(self.alloc);
-    defer prefix.deinit();
+    var prefix: std.ArrayList(bool) = .empty;
+    defer prefix.deinit(self.alloc);
 
     for (self.nodes.items[0].children.items, 0..) |child, i| {
         const is_last = i == self.nodes.items[0].children.items.len - 1;
-        try self.renderRec(&buf, child, max_width, 0, &prefix, is_last);
+        try self.renderRec(&buf.writer, child, max_width, 0, &prefix, is_last);
     }
 
     return buf.toOwnedSlice();
@@ -332,11 +331,11 @@ pub fn print(self: *Self) !void {
 
 fn renderRec(
     self: *Self,
-    buf: *std.array_list.Managed(u8),
+    w: *std.Io.Writer,
     node_index: u32,
     max_width: u32,
     depth: u32,
-    prefix: *std.array_list.Managed(bool),
+    prefix: *std.ArrayList(bool),
     is_last: bool,
 ) !void {
     const node = self.nodes.items[node_index];
@@ -344,45 +343,45 @@ fn renderRec(
     var prefix_width: u32 = 0;
     for (prefix.items) |last| {
         if (last) {
-            try buf.appendSlice("  ");
+            try w.writeAll("  ");
         } else {
-            try buf.appendSlice("│ ");
+            try w.writeAll("│ ");
         }
         prefix_width += 2;
     }
 
     if (depth > 0) {
         if (is_last) {
-            try buf.appendSlice("└ ");
+            try w.writeAll("└ ");
         } else {
-            try buf.appendSlice("├ ");
+            try w.writeAll("├ ");
         }
         prefix_width += 2;
     }
 
-    try buf.appendSlice(node.name);
+    try w.writeAll(node.name);
     var summary = try self.inventoryAggregatedByNode(self.alloc, node_index);
     defer summary.deinit();
     if (!summary.isEmpty()) {
         const name_width: u32 = try unicodeLen(self.nodes.items[node_index].name);
         const width: u32 = prefix_width + name_width;
         if (width <= max_width + 3) {
-            try buf.appendNTimes(' ', max_width + 3 - width);
+            try w.splatByteAll(' ', max_width + 3 - width);
         } else {
-            try buf.append(' ');
+            try w.writeByte(' ');
         }
-        try summary.treeDisplay(self.currencies_pool, max_width + 3, buf.writer().any());
+        try summary.treeDisplay(self.currencies_pool, max_width + 3, w);
     }
-    try buf.append('\n');
+    try w.writeByte('\n');
 
     if (node.children.items.len > 0) {
         if (depth > 0) {
-            try prefix.append(is_last);
+            try prefix.append(self.alloc, is_last);
         }
 
         for (node.children.items, 0..) |child, i| {
             const child_is_last = i == node.children.items.len - 1;
-            try self.renderRec(buf, child, max_width, depth + 1, prefix, child_is_last);
+            try self.renderRec(w, child, max_width, depth + 1, prefix, child_is_last);
         }
 
         if (depth > 0) {

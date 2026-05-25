@@ -1,26 +1,33 @@
 const std = @import("std");
+const Io = std.Io;
 const Self = @This();
 const log = std.log.scoped(.watcher);
 
 alloc: std.mem.Allocator,
+io: Io,
 watch_entries: std.ArrayList(WatchItem),
 kq: i32,
 onChange: *const fn (self: *anyopaque, path: []const u8) void,
 ctx: *anyopaque,
 running: bool,
 thread: std.Thread,
-mutex: std.Thread.Mutex,
+mutex: Io.Mutex,
 
 const WatchItem = struct {
     path: []const u8,
-    fd: std.fs.File,
+    fd: std.Io.File,
 };
 
-pub fn init(comptime T: type, ctx: *T, alloc: std.mem.Allocator) !Self {
+pub fn init(comptime T: type, ctx: *T, alloc: std.mem.Allocator, io: Io) !Self {
     return .{
         .alloc = alloc,
-        .watch_entries = std.ArrayList(WatchItem){},
-        .kq = try std.posix.kqueue(),
+        .io = io,
+        .watch_entries = std.ArrayList(WatchItem).empty,
+        .kq = blk: {
+            const rc = std.posix.system.kqueue();
+            if (rc < 0) return error.KqueueInitFailed;
+            break :blk rc;
+        },
         .onChange = struct {
             fn onChange(ctx_opaque: *anyopaque, path: []const u8) void {
                 T.onChange(@ptrCast(@alignCast(ctx_opaque)), path);
@@ -29,7 +36,7 @@ pub fn init(comptime T: type, ctx: *T, alloc: std.mem.Allocator) !Self {
         .ctx = ctx,
         .running = true,
         .thread = undefined,
-        .mutex = .{},
+        .mutex = .init,
     };
 }
 
@@ -38,23 +45,23 @@ pub fn start(self: *Self) !void {
 }
 
 pub fn deinit(self: *Self) void {
-    self.mutex.lock();
-    defer self.mutex.unlock();
+    self.mutex.lockUncancelable(self.io);
+    defer self.mutex.unlock(self.io);
 
     self.running = false;
     for (self.watch_entries.items) |item| {
-        item.fd.close();
+        item.fd.close(self.io);
     }
     self.watch_entries.deinit(self.alloc);
-    std.posix.close(self.kq);
+    _ = std.c.close(self.kq);
 }
 
 pub fn addFile(self: *Self, path: []const u8) !void {
-    const fd = try std.fs.openFileAbsolute(path, .{});
-    errdefer fd.close();
+    const fd = try std.Io.Dir.openFileAbsolute(self.io, path, .{});
+    errdefer fd.close(self.io);
 
-    self.mutex.lock();
-    defer self.mutex.unlock();
+    self.mutex.lockUncancelable(self.io);
+    defer self.mutex.unlock(self.io);
 
     var event = std.mem.zeroes(std.c.Kevent);
     event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
@@ -87,7 +94,7 @@ fn threadMain(self: *Self) !void {
 
         // Give the events more time to coalesce
         if (count < 128 / 2) {
-            std.Thread.sleep(10_000_000); // 10ms
+            std.Io.sleep(self.io, .fromMilliseconds(10), .awake) catch {};
             const remain = 128 - count;
             const extra = std.posix.system.kevent(
                 self.kq,
@@ -118,8 +125,8 @@ fn threadMain(self: *Self) !void {
 
         log.debug("Deduped to {d} events", .{deduped_count});
 
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
 
         if (self.running) {
             for (deduped[0..@intCast(deduped_count)]) |ev| {
