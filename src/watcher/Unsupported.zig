@@ -2,9 +2,10 @@ const std = @import("std");
 const Self = @This();
 const log = std.log.scoped(.watcher);
 
-pub fn init(comptime T: type, ctx: *T, alloc: std.mem.Allocator) !Self {
+pub fn init(comptime T: type, ctx: *T, alloc: std.mem.Allocator, io: std.Io) !Self {
     _ = ctx;
     _ = alloc;
+    _ = io;
     log.warn("File watcher not supported on this platform.", .{});
     return .{};
 }

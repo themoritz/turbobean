@@ -104,7 +104,7 @@ fn tagToTokenType(token: Token.Tag) ?TokenType {
 }
 
 pub fn tokensToData(alloc: std.mem.Allocator, tokens: []Token) !std.ArrayList(u32) {
-    var result = std.ArrayList(u32){};
+    var result = std.ArrayList(u32).empty;
     errdefer result.deinit(alloc);
 
     var last_line: u32 = 0;
@@ -233,7 +233,7 @@ fn testGoTokens(source: [:0]const u8, expected: []const u32) !void {
     const alloc = std.testing.allocator;
     var lexer = Lexer.init(source);
 
-    var tokens = std.ArrayList(Token){};
+    var tokens = std.ArrayList(Token).empty;
     defer tokens.deinit(alloc);
 
     while (true) {

@@ -47,8 +47,10 @@ pub const Date = struct {
         return Date{ .year = year, .month = month, .day = day };
     }
 
-    pub fn today() Date {
-        const epochSeconds = std.time.epoch.EpochSeconds{ .secs = @intCast(std.time.timestamp()) };
+    pub fn today(io: std.Io) Date {
+        const ts = std.Io.Clock.Timestamp.now(io, .real);
+        const secs: u64 = @intCast(@divFloor(ts.raw.nanoseconds, std.time.ns_per_s));
+        const epochSeconds = std.time.epoch.EpochSeconds{ .secs = secs };
         const epochDay = epochSeconds.getEpochDay();
         const yearDay = epochDay.calculateYearDay();
         const monthDay = yearDay.calculateMonthDay();

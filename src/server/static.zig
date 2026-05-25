@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const config = @import("config");
 const assets = @import("assets");
 
@@ -22,7 +23,8 @@ pub const StaticEmbedded = struct {
         return embassets;
     }
 
-    pub fn init(alloc: Allocator) !StaticEmbedded {
+    pub fn init(alloc: Allocator, io: Io) !StaticEmbedded {
+        _ = io;
         return .{ .alloc = alloc };
     }
 
@@ -39,7 +41,7 @@ pub const StaticEmbedded = struct {
         const asset = self.assets.get(sub_path) orelse
             return try req.respond("Asset not found\n", .{ .status = .not_found });
 
-        var response_headers = std.ArrayList(std.http.Header){};
+        var response_headers = std.ArrayList(std.http.Header).empty;
         defer response_headers.deinit(self.alloc);
 
         try response_headers.append(self.alloc, .{
@@ -74,17 +76,19 @@ pub const StaticEmbedded = struct {
 
 const StaticFiles = struct {
     alloc: Allocator,
-    assets: std.fs.Dir,
+    io: Io,
+    assets: std.Io.Dir,
 
-    pub fn init(alloc: Allocator) !StaticFiles {
+    pub fn init(alloc: Allocator, io: Io) !StaticFiles {
         return .{
             .alloc = alloc,
-            .assets = try std.fs.cwd().openDir("src/assets", .{}),
+            .io = io,
+            .assets = try std.Io.Dir.cwd().openDir(io, "src/assets", .{}),
         };
     }
 
     pub fn deinit(self: *StaticFiles) void {
-        self.assets.close();
+        self.assets.close(self.io);
     }
 
     pub fn handler(self: *StaticFiles, req: *std.http.Server.Request) !void {
@@ -93,13 +97,13 @@ const StaticFiles = struct {
         }
 
         const sub_path = req.head.target[8..];
-        const file = self.assets.openFile(sub_path, .{ .mode = .read_only }) catch |err| switch (err) {
+        var file = self.assets.openFile(self.io, sub_path, .{ .mode = .read_only }) catch |err| switch (err) {
             error.FileNotFound => return try req.respond("Asset not found\n", .{ .status = .not_found }),
             else => return err,
         };
-        defer file.close();
+        defer file.close(self.io);
 
-        var response_headers = std.ArrayList(std.http.Header){};
+        var response_headers = std.ArrayList(std.http.Header).empty;
         defer response_headers.deinit(self.alloc);
 
         try response_headers.append(self.alloc, .{
@@ -108,7 +112,7 @@ const StaticFiles = struct {
         });
 
         // ETag and caching
-        const stat = try file.stat();
+        const stat = try file.stat(self.io);
 
         var hash = std.hash.Wyhash.init(0);
         hash.update(std.mem.asBytes(&stat.size));
@@ -128,7 +132,9 @@ const StaticFiles = struct {
             }
         }
 
-        const contents = try file.readToEndAlloc(self.alloc, std.math.maxInt(usize));
+        var rbuf: [4096]u8 = undefined;
+        var r = file.reader(self.io, &rbuf);
+        const contents = try r.interface.allocRemaining(self.alloc, .unlimited);
         defer self.alloc.free(contents);
 
         try req.respond(contents, .{

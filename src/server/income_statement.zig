@@ -32,8 +32,8 @@ pub fn handler(
 
 pub const PlotData = struct {
     alloc: Allocator,
-    periods: std.ArrayList(PeriodGroup) = .{},
-    current_data_points: std.ArrayList(DataPoint) = .{},
+    periods: std.ArrayList(PeriodGroup) = .empty,
+    current_data_points: std.ArrayList(DataPoint) = .empty,
 
     const PeriodGroup = struct {
         date: StringStore.String,
@@ -66,7 +66,7 @@ pub const PlotData = struct {
             .data_points = try self.current_data_points.toOwnedSlice(self.alloc),
         });
 
-        self.current_data_points = .{};
+        self.current_data_points = .empty;
     }
 
     pub fn jsonStringify(self: *const PlotData, jw: anytype) !void {

@@ -52,7 +52,7 @@ pub fn build(b: *std.Build) !void {
         .root_module = exe_mod,
     });
     if (tracy_options.enable_ztracy) {
-        exe.linkLibrary(ztracy.artifact("tracy"));
+        exe.root_module.linkLibrary(ztracy.artifact("tracy"));
     }
 
     if (embed_static) {
@@ -97,12 +97,13 @@ pub fn build(b: *std.Build) !void {
             &.{ b.build_root.path.?, "tests", "golden" },
         ) catch @panic("OOM");
 
-        var tests_dir = std.fs.openDirAbsolute(tests_path, .{ .iterate = true }) catch
+        const io = b.graph.io;
+        var tests_dir = std.Io.Dir.openDirAbsolute(io, tests_path, .{ .iterate = true }) catch
             @panic("can't open golden test folder");
-        defer tests_dir.close();
+        defer tests_dir.close(io);
 
         var iter = tests_dir.iterate();
-        while (iter.next() catch @panic("next")) |entry| {
+        while (iter.next(io) catch @panic("next")) |entry| {
             if (std.mem.endsWith(u8, entry.name, ".bean")) {
                 const test_path = std.fmt.allocPrint(
                     b.allocator,
@@ -214,14 +215,17 @@ pub fn addAssetsOption(b: *std.Build, exe: anytype, target: anytype, optimize: a
     var files = std.array_list.Managed([]const u8).init(b.allocator);
     defer files.deinit();
 
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const path = try std.fs.cwd().realpath("src/assets", buf[0..]);
+    const io = b.graph.io;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const path_len = try std.Io.Dir.cwd().realPathFile(io, "src/assets", buf[0..]);
+    const path = buf[0..path_len];
 
-    var dir = try std.fs.openDirAbsolute(path, .{ .iterate = true });
+    var dir = try std.Io.Dir.openDirAbsolute(io, path, .{ .iterate = true });
+    defer dir.close(io);
     var walker = try dir.walk(b.allocator);
     defer walker.deinit();
 
-    while (try walker.next()) |file| {
+    while (try walker.next(io)) |file| {
         if (file.kind != .file) {
             continue;
         }
@@ -245,7 +249,7 @@ fn getVersion(b: *std.Build) std.SemanticVersion {
         "git", "-C", b.pathFromRoot("."), "--git-dir", ".git", "describe", "--match", "*.*.*", "--tags",
     };
     var code: u8 = undefined;
-    const git_describe_untrimmed = b.runAllowFail(argv, &code, .Ignore) catch |err| {
+    const git_describe_untrimmed = b.runAllowFail(argv, &code, .ignore) catch |err| {
         const argv_joined = std.mem.join(b.allocator, " ", argv) catch @panic("OOM");
         std.log.warn(
             \\Failed to run git describe to resolve turbobean version: {}

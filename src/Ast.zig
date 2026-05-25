@@ -16,10 +16,10 @@ pub fn parse(alloc: std.mem.Allocator, uri: Uri, source: [:0]const u8) !Self {
     var self = Self{
         .alloc = alloc,
         .source = source,
-        .tokens = .{},
-        .nodes = .{},
-        .extra_data = .{},
-        .errors = .{},
+        .tokens = .empty,
+        .nodes = .empty,
+        .extra_data = .empty,
+        .errors = .empty,
     };
 
     // Average 10 bytes per token:

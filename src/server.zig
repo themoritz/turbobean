@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const Project = @import("project.zig");
 const journal = @import("server/journal.zig");
 const balance_sheet = @import("server/balance_sheet.zig");
@@ -11,29 +12,29 @@ const Static = @import("server/static.zig").Static;
 
 var running: std.atomic.Value(bool) = .init(true);
 
-pub fn loop(alloc: std.mem.Allocator, project: *Project) !void {
-    var threads = std.ArrayList(std.Thread){};
+pub fn loop(alloc: std.mem.Allocator, io: Io, project: *Project) !void {
+    var threads = std.ArrayList(std.Thread).empty;
     defer threads.deinit(alloc);
 
-    const state = try State.init(alloc, project);
+    const state = try State.init(alloc, io, project);
     defer state.deinit();
 
-    var static = try Static.init(alloc);
+    var static = try Static.init(alloc, io);
     defer static.deinit();
 
     {
-        const address = try std.net.Address.parseIp("0.0.0.0", 8080);
-        var net_server = try address.listen(.{ .reuse_address = true });
-        defer net_server.deinit();
+        const address = try std.Io.net.IpAddress.parseIp4("0.0.0.0", 8080);
+        var net_server = try address.listen(io, .{ .reuse_address = true });
+        defer net_server.deinit(io);
 
-        std.log.info("Listening on {f}", .{address});
+        std.log.info("Listening on port 8080", .{});
 
         while (running.load(.seq_cst)) {
-            const conn = try net_server.accept();
-            const thread = try std.Thread.spawn(.{}, handle_conn, .{ alloc, conn, state, &static });
+            const stream = try net_server.accept(io);
+            const thread = try std.Thread.spawn(.{}, handle_conn, .{ alloc, io, stream, state, &static });
             try threads.append(alloc, thread);
             // Wait 1 ms in case this connection is a shutdown request.
-            std.Thread.sleep(1_000_000);
+            std.Io.sleep(io, .fromMilliseconds(1), .awake) catch {};
         }
 
         std.log.info("Server stopped, waiting for workers...", .{});
@@ -44,18 +45,19 @@ pub fn loop(alloc: std.mem.Allocator, project: *Project) !void {
 
 fn handle_conn(
     alloc: Allocator,
-    conn: std.net.Server.Connection,
+    io: Io,
+    stream: std.Io.net.Stream,
     state: *State,
     static: *Static,
 ) !void {
     // Don't reuse connection because we don't want to block forever on receiveHead.
-    defer conn.stream.close();
+    defer stream.close(io);
 
     var recv_buffer: [4096]u8 = undefined;
     var send_buffer: [4096]u8 = undefined;
-    var conn_reader = conn.stream.reader(&recv_buffer);
-    var conn_writer = conn.stream.writer(&send_buffer);
-    var server = std.http.Server.init(conn_reader.interface(), &conn_writer.interface);
+    var conn_reader = stream.reader(io, &recv_buffer);
+    var conn_writer = stream.writer(io, &send_buffer);
+    var server = std.http.Server.init(&conn_reader.interface, &conn_writer.interface);
 
     var req = server.receiveHead() catch |err| {
         switch (err) {
@@ -82,7 +84,7 @@ fn route(alloc: Allocator, state: *State, static: *Static, request: *std.http.Se
 
     if (std.mem.eql(u8, target, "/shutdown")) {
         running.store(false, .seq_cst);
-        state.broadcast.stop();
+        state.broadcast.stop(state.io);
         return request.respond("Shutdown initiated\n", .{ .status = .ok });
     }
 

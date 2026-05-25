@@ -110,7 +110,7 @@ pub const Solver = struct {
     pub fn init(alloc: Allocator) Solver {
         return Solver{
             .alloc = alloc,
-            .triples = .{},
+            .triples = .empty,
             .tolerances = std.StringHashMap(Number).init(alloc),
             .sum_by_currency = std.StringHashMap(Sum).init(alloc),
         };

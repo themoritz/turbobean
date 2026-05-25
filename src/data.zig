@@ -392,8 +392,8 @@ pub const Config = struct {
     pub fn init(alloc: Allocator) Config {
         return .{
             .alloc = alloc,
-            .options = .{},
-            .plugins = .{},
+            .options = .empty,
+            .plugins = .empty,
         };
     }
 
@@ -416,7 +416,7 @@ pub const Config = struct {
     }
 
     pub fn getOperatingCurrencies(self: *const Config, alloc: Allocator) ![][]const u8 {
-        var result: std.ArrayList([]const u8) = .{};
+        var result: std.ArrayList([]const u8) = .empty;
         defer result.deinit(alloc);
         for (self.options.items) |option| {
             const stripped_key = std.mem.trim(u8, option.key, "\"");
@@ -442,15 +442,15 @@ pub fn init(alloc: Allocator) !Self {
         .alloc = alloc,
         .accounts = accounts,
         .currencies = currencies,
-        .files = .{},
+        .files = .empty,
         .files_by_uri = std.StringHashMap(usize).init(alloc),
-        .entries = .{},
-        .postings = .{},
-        .prices = .{},
-        .lot_specs = .{},
-        .open_currencies = .{},
-        .tagslinks = .{},
-        .meta = .{},
+        .entries = .empty,
+        .postings = .empty,
+        .prices = .empty,
+        .lot_specs = .empty,
+        .open_currencies = .empty,
+        .tagslinks = .empty,
+        .meta = .empty,
         .config = Config.init(alloc),
     };
 }

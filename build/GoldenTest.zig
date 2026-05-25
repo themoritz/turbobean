@@ -37,6 +37,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     _ = options;
     const b = step.owner;
     const arena = b.allocator;
+    const io = b.graph.io;
     const self: *Self = @fieldParentPtr("step", step);
 
     const inp_file = try std.fmt.allocPrint(arena, "{s}.bean", .{self.test_path});
@@ -44,30 +45,23 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     const exe_path = self.exe.getEmittedBin().getPath(b);
 
-    var child = std.process.Child.init(&[_][]const u8{ exe_path, "tree", inp_file }, arena);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
+    const run_result = try std.process.run(arena, io, .{
+        .argv = &.{ exe_path, "tree", inp_file },
+    });
 
-    try child.spawn();
+    const actual_output = run_result.stderr;
 
-    var stdout = std.ArrayListUnmanaged(u8){};
-    var stderr = std.ArrayListUnmanaged(u8){};
-    try child.collectOutput(arena, &stdout, &stderr, 1024 * 1024);
-
-    _ = try child.wait();
-
-    const actual_output = stderr;
-
-    const expected_output = std.fs.cwd().readFileAlloc(
-        arena,
+    const expected_output = b.build_root.handle.readFileAlloc(
+        io,
         out_file,
-        std.math.maxInt(usize),
+        arena,
+        .unlimited,
     ) catch |err| switch (err) {
         error.FileNotFound => {
             if (self.accept) {
-                b.build_root.handle.writeFile(.{
+                b.build_root.handle.writeFile(io, .{
                     .sub_path = out_file,
-                    .data = actual_output.items,
+                    .data = actual_output,
                 }) catch |e| return step.fail("Can't write output: {any}", .{e});
                 return;
             } else {
@@ -78,15 +72,15 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     };
 
     // Compare outputs
-    if (std.mem.eql(u8, actual_output.items, expected_output)) {
+    if (std.mem.eql(u8, actual_output, expected_output)) {
         return;
     }
 
     // Outputs differ
     if (self.accept) {
-        b.build_root.handle.writeFile(.{
+        b.build_root.handle.writeFile(io, .{
             .sub_path = out_file,
-            .data = actual_output.items,
+            .data = actual_output,
         }) catch |e| return step.fail("Can't write output: {any}", .{e});
     } else {
         return step.fail(
@@ -96,6 +90,6 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
             \\=========== Actual: ===========
             \\{s}
             \\===============================
-        , .{ self.test_path, expected_output, actual_output.items });
+        , .{ self.test_path, expected_output, actual_output });
     }
 }

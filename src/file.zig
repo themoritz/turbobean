@@ -22,7 +22,7 @@ pub fn loadFromSource(alloc: Allocator, uri: Uri, source: [:0]const u8) !Self {
     var ast = try Ast.parse(alloc, uri, source);
     errdefer ast.deinit();
 
-    var token_interned: std.ArrayList(u32) = .{};
+    var token_interned: std.ArrayList(u32) = .empty;
     errdefer token_interned.deinit(alloc);
     try token_interned.appendNTimes(alloc, std.math.maxInt(u32), ast.tokens.items.len);
 
