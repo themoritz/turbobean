@@ -129,15 +129,12 @@ fn installMetatables(lua: *Lua, origin: *Origin) !void {
 fn entryIndexC(state: ?*zlua.LuaState) callconv(.c) c_int {
     const lua: *Lua = @ptrCast(state.?);
     // Stack: [self, key]
-    const t = lua.getUserValue(1, 1) catch {
-        lua.pushNil();
-        return 1;
-    };
+    const t = lua.getUserValue(1, 1);
     // Stack: [self, key, uvalue]
 
     if (t == .table) {
         lua.pushValue(2);
-        _ = lua.rawGetTable(-2);
+        _ = lua.getTableRaw(-2);
         return 1;
     }
 
@@ -182,10 +179,7 @@ fn tryPostingsAccess(lua: *Lua) bool {
     }
 
     // Cached? uv2 holds the PostingListUD across reads for identity.
-    const cached = lua.getUserValue(1, 2) catch {
-        lua.pushNil();
-        return true;
-    };
+    const cached = lua.getUserValue(1, 2);
     if (cached == .userdata) return true;
     lua.pop(1);
 
@@ -217,7 +211,7 @@ fn materializeAndRawGet(lua: *Lua) !void {
     try ensureEntryMaterialized(lua);
     // Stack: [self, key, cache]
     lua.pushValue(2);
-    _ = lua.rawGetTable(-2);
+    _ = lua.getTableRaw(-2);
     // Stack: [self, key, cache, value]; collapse to [..., value].
     lua.remove(-2);
 }
@@ -265,10 +259,7 @@ fn postingListIndexC(state: ?*zlua.LuaState) callconv(.c) c_int {
     }
 
     // Lazy-create or fetch the identity cache (a Lua array on uv1).
-    const cache_t = lua.getUserValue(1, 1) catch {
-        lua.pushNil();
-        return 1;
-    };
+    const cache_t = lua.getUserValue(1, 1);
     if (cache_t != .table) {
         lua.pop(1);
         lua.createTable(@intCast(size), 0);
@@ -277,7 +268,7 @@ fn postingListIndexC(state: ?*zlua.LuaState) callconv(.c) c_int {
     }
     // Stack: [self, key, cache]
 
-    const existing = lua.rawGetIndex(-1, @intCast(n));
+    const existing = lua.getIndexRaw(-1, @intCast(n));
     if (existing != .nil) {
         lua.remove(-2); // drop cache, leave posting userdata
         return 1;
@@ -290,7 +281,7 @@ fn postingListIndexC(state: ?*zlua.LuaState) callconv(.c) c_int {
     lua.setMetatableRegistry(POSTING_MT_KEY);
     // Cache for identity, then leave the userdata on top.
     lua.pushValue(-1);
-    lua.rawSetIndex(-3, @intCast(n));
+    lua.setIndexRaw(-3, @intCast(n));
     lua.remove(-2); // drop cache
     return 1;
 }
@@ -329,13 +320,10 @@ fn postingIndexC(state: ?*zlua.LuaState) callconv(.c) c_int {
     // posting table (set by a previous non-leaf read). In either case we
     // check the table first: it wins over the leaf path because the plugin
     // might have written there.
-    const t = lua.getUserValue(1, 1) catch {
-        lua.pushNil();
-        return 1;
-    };
+    const t = lua.getUserValue(1, 1);
     if (t == .table) {
         lua.pushValue(2);
-        _ = lua.rawGetTable(-2);
+        _ = lua.getTableRaw(-2);
         if (!lua.isNil(-1)) {
             lua.remove(-2); // drop the overlay/cache table, leave value
             return 1;
@@ -365,7 +353,7 @@ fn postingNewindexC(state: ?*zlua.LuaState) callconv(.c) c_int {
     // Stack: [self, key, value, overlay]
     lua.pushValue(2);
     lua.pushValue(3);
-    lua.rawSetTable(-3);
+    lua.setTableRaw(-3);
     lua.pop(1);
     return 0;
 }
@@ -383,12 +371,7 @@ fn entryPairsC(state: ?*zlua.LuaState) callconv(.c) c_int {
         return 3;
     };
     // Stack: [self, cache]
-    _ = lua.getGlobal("next") catch {
-        lua.pushNil();
-        lua.pushNil();
-        lua.pushNil();
-        return 3;
-    };
+    _ = lua.getGlobal("next");
     // Stack: [self, cache, next]
     lua.pushValue(-2); // cache
     lua.pushNil();
@@ -402,7 +385,7 @@ fn entryPairsC(state: ?*zlua.LuaState) callconv(.c) c_int {
 /// safe-but-eager path.
 fn postingPairsC(state: ?*zlua.LuaState) callconv(.c) c_int {
     const lua: *Lua = @ptrCast(state.?);
-    const t = lua.getUserValue(1, 1) catch .nil;
+    const t = lua.getUserValue(1, 1);
     if (t != .table) {
         lua.pop(1);
         const origin = lua.toUserdata(Origin, Lua.upvalueIndex(1)) catch {
@@ -433,12 +416,7 @@ fn postingPairsC(state: ?*zlua.LuaState) callconv(.c) c_int {
         lua.setUserValue(1, 1) catch {};
     }
     // Stack: [self, cache]
-    _ = lua.getGlobal("next") catch {
-        lua.pushNil();
-        lua.pushNil();
-        lua.pushNil();
-        return 3;
-    };
+    _ = lua.getGlobal("next");
     lua.pushValue(-2);
     lua.pushNil();
     return 3;
@@ -447,7 +425,7 @@ fn postingPairsC(state: ?*zlua.LuaState) callconv(.c) c_int {
 /// Lazy-create an empty overlay table on the posting userdata's uv1 if it
 /// doesn't already hold one. Leaves the table on top of the stack.
 fn ensurePostingOverlay(lua: *Lua) !void {
-    const t = try lua.getUserValue(1, 1);
+    const t = lua.getUserValue(1, 1);
     if (t == .table) return;
     lua.pop(1);
     // Hint for the ~6 leaf fields a plugin might write.
@@ -457,7 +435,7 @@ fn ensurePostingOverlay(lua: *Lua) !void {
 }
 
 /// Materialize the posting fully via the existing `pushPosting` helper and
-/// stash the result on uv1, then `rawGetTable` with the requested key.
+/// stash the result on uv1, then `getTableRaw` with the requested key.
 /// Used when the plugin reads a non-leaf field.
 fn materializePostingAndRawGet(lua: *Lua) !void {
     const origin = try lua.toUserdata(Origin, Lua.upvalueIndex(1));
@@ -469,7 +447,7 @@ fn materializePostingAndRawGet(lua: *Lua) !void {
     try lua.setUserValue(1, 1);
     // Stack: [self, key, table]
     lua.pushValue(2);
-    _ = lua.rawGetTable(-2);
+    _ = lua.getTableRaw(-2);
     lua.remove(-2);
 }
 
@@ -697,7 +675,7 @@ fn entryNewindexC(state: ?*zlua.LuaState) callconv(.c) c_int {
     // Stack: [self, key, value, cached_table]
     lua.pushValue(2);
     lua.pushValue(3);
-    lua.rawSetTable(-3);
+    lua.setTableRaw(-3);
     lua.pop(1);
     return 0;
 }
@@ -706,7 +684,7 @@ fn entryNewindexC(state: ?*zlua.LuaState) callconv(.c) c_int {
 /// it was nil, materialize via the regular `pushEntry` path and stash the
 /// result. On return the cached table is at the top of the stack.
 fn ensureEntryMaterialized(lua: *Lua) !void {
-    const t = try lua.getUserValue(1, 1);
+    const t = lua.getUserValue(1, 1);
     if (t == .table) return;
     lua.pop(1);
     const origin = try lua.toUserdata(Origin, Lua.upvalueIndex(1));
@@ -782,7 +760,7 @@ fn invokePlugin(lua: *Lua, origin: *Origin, ref: Data.Config.PluginRef) !bool {
     const abs_path = try std.fmt.allocPrint(arena, "{s}/{s}.lua", .{ root_dir, name });
 
     // Read the source ourselves so error messages don't leak the absolute path.
-    const source = std.fs.cwd().readFileAlloc(arena, abs_path, 1 << 24) catch |err| switch (err) {
+    const source = std.Io.Dir.cwd().readFileAlloc(project.io, abs_path, arena, .unlimited) catch |err| switch (err) {
         error.FileNotFound => {
             try appendPluginError(project, loc, .{ .plugin_load_failed = .{
                 .plugin = try arena.dupe(u8, name),
@@ -931,7 +909,7 @@ const Origin = struct {
 
             // Prefer the cached materialized table when available: its
             // origin slot has account/tag_locs filled by `pushEntry`.
-            const t = lua.getUserValue(table_idx, 1) catch return null;
+            const t = lua.getUserValue(table_idx, 1);
             defer lua.pop(1);
             if (t == .table) {
                 const id = readOriginId(lua, -1) orelse return null;
@@ -955,7 +933,7 @@ const Origin = struct {
             // Look for a stamped `_origin` on the materialized posting table
             // (set when `pushPosting` ran during a non-leaf access). That
             // gives us the populated origin slot with full loc info.
-            const t = lua.getUserValue(table_idx, 1) catch return null;
+            const t = lua.getUserValue(table_idx, 1);
             defer lua.pop(1);
             if (t == .table) {
                 if (readOriginId(lua, -1)) |id| {
@@ -1059,10 +1037,10 @@ fn readErrors(origin: *Origin, lua: *Lua, idx: i32) !void {
         return;
     }
     const arena = project.plugin_arena.allocator();
-    const len = lua.rawLen(idx);
+    const len = lua.lenRaw(idx);
     var i: u32 = 1;
     while (i <= len) : (i += 1) {
-        _ = lua.rawGetIndex(idx, @intCast(i));
+        _ = lua.getIndexRaw(idx, @intCast(i));
         defer lua.pop(1);
 
         var msg: []const u8 = "(no message)";
@@ -1124,7 +1102,7 @@ fn pushEntries(lua: *Lua, origin: *Origin) !void {
         const ud = lua.newUserdata(EntryUD, 2);
         ud.idx = i;
         lua.setMetatableRegistry(ENTRY_MT_KEY);
-        lua.rawSetIndex(-2, @intCast(i + 1));
+        lua.setIndexRaw(-2, @intCast(i + 1));
     }
 }
 
@@ -1234,7 +1212,7 @@ fn pushTransaction(lua: *Lua, origin: *Origin, tx: Data.TransactionView) !void {
     var i: i32 = 1;
     while (it.next()) |p| : (i += 1) {
         try pushPosting(lua, origin, p);
-        lua.rawSetIndex(-2, i);
+        lua.setIndexRaw(-2, i);
     }
     lua.setField(-2, "postings");
 }
@@ -1318,7 +1296,7 @@ fn pushOpen(lua: *Lua, project: *Project, open: Data.OpenView) !void {
         lua.createTable(@intCast(cs.len), 0);
         for (cs, 0..) |c, k| {
             _ = lua.pushString(project.data.currencyText(c));
-            lua.rawSetIndex(-2, @intCast(k + 1));
+            lua.setIndexRaw(-2, @intCast(k + 1));
         }
         lua.setField(-2, "currencies");
     }
@@ -1445,12 +1423,12 @@ fn pushTagsLinks(lua: *Lua, origin: *Origin, entry_id: u32, entry: Data.EntryVie
         _ = lua.pushString(text);
         switch (tl.kind) {
             .tag => {
-                lua.rawSetIndex(-3, ti);
+                lua.setIndexRaw(-3, ti);
                 tag_locs[@intCast(ti - 1)] = .{ .file_id = file_id, .index = tl.token };
                 ti += 1;
             },
             .link => {
-                lua.rawSetIndex(-2, li);
+                lua.setIndexRaw(-2, li);
                 link_locs[@intCast(li - 1)] = .{ .file_id = file_id, .index = tl.token };
                 li += 1;
             },
@@ -1663,9 +1641,9 @@ const Rebuild = struct {
             .alloc = a,
             .source = owned_source,
             .tokens = tokens,
-            .nodes = .{},
-            .extra_data = .{},
-            .errors = .{},
+            .nodes = .empty,
+            .extra_data = .empty,
+            .errors = .empty,
         };
 
         const uri = try Uri.from_raw(a, "file:///__plugin_synth__");
@@ -1675,7 +1653,7 @@ const Rebuild = struct {
             .source = owned_source,
             .ast = ast,
             .token_interned = token_interned,
-            .errors = .{},
+            .errors = .empty,
         };
 
         // Hand off ownership of display_locs in lockstep with the new synth
@@ -1717,10 +1695,10 @@ fn applyEntries(origin: *Origin, lua: *Lua, idx: i32) !void {
     };
     defer rb.deinit();
 
-    const len = lua.rawLen(idx);
+    const len = lua.lenRaw(idx);
     var i: u32 = 1;
     while (i <= len) : (i += 1) {
-        _ = lua.rawGetIndex(idx, @intCast(i));
+        _ = lua.getIndexRaw(idx, @intCast(i));
         defer lua.pop(1);
 
         // Shapes per entry slot:
@@ -1733,7 +1711,7 @@ fn applyEntries(origin: *Origin, lua: *Lua, idx: i32) !void {
         //   4) userdata, uv1 nil, no posting overlays → passthrough.
         if (lua.isUserdata(-1)) {
             const entry_abs = lua.getTop();
-            const cache_type = lua.getUserValue(entry_abs, 1) catch .nil;
+            const cache_type = lua.getUserValue(entry_abs, 1);
             lua.pop(1);
 
             const has_posting_writes = entryHasPostingOverlays(lua, entry_abs);
@@ -1756,9 +1734,7 @@ fn applyEntries(origin: *Origin, lua: *Lua, idx: i32) !void {
                     };
                 }
                 // Surface the cache at top so `readEntry` consumes it.
-                _ = lua.getUserValue(entry_abs, 1) catch {
-                    lua.pushNil();
-                };
+                _ = lua.getUserValue(entry_abs, 1);
                 lua.remove(-2);
             } else if (has_posting_writes) {
                 // Entry never materialized but postings were modified —
@@ -1820,17 +1796,14 @@ fn absIdx(lua: *Lua, idx: i32) i32 {
 fn entryHasPostingOverlays(lua: *Lua, entry_idx: i32) bool {
     const abs = absIdx(lua, entry_idx);
 
-    const ptype = lua.getUserValue(abs, 2) catch return false;
+    const ptype = lua.getUserValue(abs, 2);
     if (ptype != .userdata) {
         lua.pop(1);
         return false;
     }
     // Stack: [..., PostingListUD]
 
-    const ctype = lua.getUserValue(-1, 1) catch {
-        lua.pop(1);
-        return false;
-    };
+    const ctype = lua.getUserValue(-1, 1);
     if (ctype != .table) {
         lua.pop(2);
         return false;
@@ -1843,10 +1816,7 @@ fn entryHasPostingOverlays(lua: *Lua, entry_idx: i32) bool {
     while (lua.next(cache_abs)) {
         // Stack: [..., cache, key, value]
         if (lua.isUserdata(-1)) {
-            const ovt = lua.getUserValue(-1, 1) catch {
-                lua.pop(1);
-                continue;
-            };
+            const ovt = lua.getUserValue(-1, 1);
             const is_table = (ovt == .table);
             lua.pop(1); // pop overlay/nil
             if (is_table) {
@@ -1871,7 +1841,7 @@ fn applyPostingOverlays(rb: *Rebuild, lua: *Lua, entry_idx: i32) !void {
 
     // 1. Ensure full materialization of the entry.
     {
-        const t = try lua.getUserValue(entry_abs, 1);
+        const t = lua.getUserValue(entry_abs, 1);
         if (t != .table) {
             lua.pop(1);
             const ud = try lua.toUserdata(EntryUD, entry_abs);
@@ -1886,7 +1856,7 @@ fn applyPostingOverlays(rb: *Rebuild, lua: *Lua, entry_idx: i32) !void {
     }
 
     // 2. Get cache → cache.postings → posting list (uv2) → posting cache.
-    const t1 = try lua.getUserValue(entry_abs, 1);
+    const t1 = lua.getUserValue(entry_abs, 1);
     if (t1 != .table) {
         lua.pop(1);
         return;
@@ -1900,14 +1870,14 @@ fn applyPostingOverlays(rb: *Rebuild, lua: *Lua, entry_idx: i32) !void {
     }
     const postings_abs = lua.getTop();
 
-    const t2 = try lua.getUserValue(entry_abs, 2);
+    const t2 = lua.getUserValue(entry_abs, 2);
     if (t2 != .userdata) {
         lua.pop(3);
         return;
     }
     const pl_abs = lua.getTop();
 
-    const t3 = try lua.getUserValue(pl_abs, 1);
+    const t3 = lua.getUserValue(pl_abs, 1);
     if (t3 != .table) {
         lua.pop(4);
         return;
@@ -1932,10 +1902,7 @@ fn applyPostingOverlays(rb: *Rebuild, lua: *Lua, entry_idx: i32) !void {
             continue;
         }
 
-        const ovt = lua.getUserValue(-1, 1) catch {
-            lua.pop(1);
-            continue;
-        };
+        const ovt = lua.getUserValue(-1, 1);
         if (ovt != .table) {
             lua.pop(2); // overlay (nil) + posting_ud
             continue;
@@ -1943,7 +1910,7 @@ fn applyPostingOverlays(rb: *Rebuild, lua: *Lua, entry_idx: i32) !void {
         // Stack: [..., pcache, key, posting_ud, overlay]
         const overlay_abs = lua.getTop();
 
-        _ = lua.rawGetIndex(postings_abs, @intCast(slot));
+        _ = lua.getIndexRaw(postings_abs, @intCast(slot));
         if (!lua.isTable(-1)) {
             lua.pop(3); // cached_posting + overlay + posting_ud
             continue;
@@ -1956,7 +1923,7 @@ fn applyPostingOverlays(rb: *Rebuild, lua: *Lua, entry_idx: i32) !void {
             // Stack: [..., overlay, cached_posting, ovkey, ovvalue]
             lua.pushValue(-2); // dup key
             lua.pushValue(-2); // dup value
-            lua.rawSetTable(cp_abs);
+            lua.setTableRaw(cp_abs);
             lua.pop(1); // pop ovvalue; leave ovkey for next iter
         }
         // Inner next consumed the last key, leaving [..., overlay, cached_posting].
@@ -2038,13 +2005,13 @@ fn rebuildEntryWithPostingOverlays(rb: *Rebuild, lua: *Lua, entry_idx: i32) Read
     // pcache_abs == 0 means no overlay anywhere — but we wouldn't be in
     // this path then. Still handle defensively.
     const pcache_pop_count: u8 = blk: {
-        const t1 = lua.getUserValue(entry_abs, 2) catch .nil;
+        const t1 = lua.getUserValue(entry_abs, 2);
         if (t1 != .userdata) {
             lua.pop(1);
             break :blk 0;
         }
         const pl_abs = lua.getTop();
-        const t2 = lua.getUserValue(pl_abs, 1) catch .nil;
+        const t2 = lua.getUserValue(pl_abs, 1);
         if (t2 != .table) {
             lua.pop(2);
             break :blk 0;
@@ -2098,12 +2065,12 @@ fn rebuildPostingWithOverlay(
     // overlay_abs == 0 means "no overlay; everything from Data".
     const overlay_abs: i32 = blk: {
         if (pcache_abs == 0) break :blk @as(i32, 0);
-        const t = lua.rawGetIndex(pcache_abs, @intCast(slot));
+        const t = lua.getIndexRaw(pcache_abs, @intCast(slot));
         if (t != .userdata) {
             lua.pop(1);
             break :blk @as(i32, 0);
         }
-        const ovt = lua.getUserValue(-1, 1) catch .nil;
+        const ovt = lua.getUserValue(-1, 1);
         if (ovt != .table) {
             lua.pop(2);
             break :blk @as(i32, 0);
@@ -2421,10 +2388,10 @@ fn readTransaction(rb: *Rebuild, lua: *Lua, idx: i32) ReadEntryError!Data.Transa
     _ = lua.getField(idx, "postings");
     defer lua.pop(1);
     if (lua.isTable(-1)) {
-        const len = lua.rawLen(-1);
+        const len = lua.lenRaw(-1);
         var i: u32 = 1;
         while (i <= len) : (i += 1) {
-            _ = lua.rawGetIndex(-1, @intCast(i));
+            _ = lua.getIndexRaw(-1, @intCast(i));
             defer lua.pop(1);
             try readPosting(rb, lua);
         }
@@ -2551,10 +2518,10 @@ fn readOpen(rb: *Rebuild, lua: *Lua, idx: i32, eo: Origin.EntryOrigin) ReadEntry
     const cur_start: u32 = @intCast(rb.open_currencies.items.len);
     _ = lua.getField(idx, "currencies");
     if (lua.isTable(-1)) {
-        const len = lua.rawLen(-1);
+        const len = lua.lenRaw(-1);
         var i: u32 = 1;
         while (i <= len) : (i += 1) {
-            _ = lua.rawGetIndex(-1, @intCast(i));
+            _ = lua.getIndexRaw(-1, @intCast(i));
             defer lua.pop(1);
             if (lua.toString(-1) catch null) |s| {
                 const cur_idx = try rb.origin.project.data.currencies.intern(rb.alloc(), s);
@@ -2654,10 +2621,10 @@ fn readTagsLinks(rb: *Rebuild, lua: *Lua, idx: i32, eo: Origin.EntryOrigin) Read
 
     _ = lua.getField(idx, "tags");
     if (lua.isTable(-1)) {
-        const len = lua.rawLen(-1);
+        const len = lua.lenRaw(-1);
         var i: u32 = 0;
         while (i < len) : (i += 1) {
-            _ = lua.rawGetIndex(-1, @intCast(i + 1));
+            _ = lua.getIndexRaw(-1, @intCast(i + 1));
             defer lua.pop(1);
             if (lua.toString(-1) catch null) |s| {
                 const saved = rb.current_loc;
@@ -2672,10 +2639,10 @@ fn readTagsLinks(rb: *Rebuild, lua: *Lua, idx: i32, eo: Origin.EntryOrigin) Read
 
     _ = lua.getField(idx, "links");
     if (lua.isTable(-1)) {
-        const len = lua.rawLen(-1);
+        const len = lua.lenRaw(-1);
         var i: u32 = 0;
         while (i < len) : (i += 1) {
-            _ = lua.rawGetIndex(-1, @intCast(i + 1));
+            _ = lua.getIndexRaw(-1, @intCast(i + 1));
             defer lua.pop(1);
             if (lua.toString(-1) catch null) |s| {
                 const saved = rb.current_loc;

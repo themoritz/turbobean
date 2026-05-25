@@ -17,8 +17,8 @@
             .hash = "ztracy-0.14.0-dev-zHJSqzUHGQAmhJybhlwtl1QKevUBw4M5YKZqPfWx2y99",
         },
         .zlua = .{
-            .url = "git+https://github.com/natecraddock/ziglua?ref=zig-0.15.2#b6e895f73e55d793e61844a8bab17a036631f6be",
-            .hash = "zlua-0.1.0-hGRpCxFDBQBTLH7HYIvzCfvr_8xFE6kqLzLFxkcgdWNl",
+            .url = "git+https://github.com/natecraddock/ziglua?ref=main#8f271c82baa5fc43aa02a72f6da020c2025d9436",
+            .hash = "zlua-0.1.0-hGRpC2aABQD4D9PBVH3wAW8k32-I4969MRQ0CpOwoley",
         },
     },
     .paths = .{

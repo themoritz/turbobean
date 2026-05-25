@@ -1236,10 +1236,10 @@ pub fn ensureSynthFile(self: *Self) !u8 {
     const ast = Ast{
         .alloc = self.alloc,
         .source = empty,
-        .tokens = .{},
-        .nodes = .{},
-        .extra_data = .{},
-        .errors = .{},
+        .tokens = .empty,
+        .nodes = .empty,
+        .extra_data = .empty,
+        .errors = .empty,
     };
 
     const uri = try Uri.from_raw(self.alloc, "file:///__plugin_synth__");
@@ -1252,8 +1252,8 @@ pub fn ensureSynthFile(self: *Self) !u8 {
         .uri = uri,
         .source = empty,
         .ast = ast,
-        .token_interned = .{},
-        .errors = .{},
+        .token_interned = .empty,
+        .errors = .empty,
     };
 
     if (self.files.items.len >= std.math.maxInt(u8)) return error.TooManyFiles;

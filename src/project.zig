@@ -1005,10 +1005,11 @@ test "update_file does not Sema the synth plugin file" {
     // nodes, so iterating it in `rebuildFromFiles` used to crash on the
     // first edit after a plugin had run.
     const alloc = std.testing.allocator;
-    var uri = try Uri.from_relative_to_cwd(alloc, "tests/golden/plugin_basic.bean");
+    const io = std.testing.io;
+    var uri = try Uri.from_relative_to_cwd(alloc, io, "tests/golden/plugin_basic.bean");
     defer uri.deinit(alloc);
 
-    var project = try Self.load(alloc, uri, null);
+    var project = try Self.load(alloc, io, uri, null);
     defer project.deinit();
 
     const new_source = try alloc.dupeZ(u8,
@@ -1026,10 +1027,11 @@ test "iterators surface user-file tokens after identity plugin" {
     // displayLoc so LSP highlight / findAccount land on the user's source
     // tokens with correct line/col.
     const alloc = std.testing.allocator;
-    var uri = try Uri.from_relative_to_cwd(alloc, "tests/golden/plugin_identity.bean");
+    const io = std.testing.io;
+    var uri = try Uri.from_relative_to_cwd(alloc, io, "tests/golden/plugin_identity.bean");
     defer uri.deinit(alloc);
 
-    var project = try Self.load(alloc, uri, null);
+    var project = try Self.load(alloc, io, uri, null);
     defer project.deinit();
 
     const synth_id = project.data.synth_file_id orelse return error.PluginDidNotRun;
