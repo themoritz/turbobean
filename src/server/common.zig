@@ -5,7 +5,6 @@ const Inventory = @import("../inventory.zig");
 const DisplaySettings = @import("DisplaySettings.zig");
 const Prices = @import("../Prices.zig");
 const Project = @import("../project.zig");
-const StringStore = @import("../StringStore.zig");
 const zts = @import("zts");
 const t = @import("templates.zig");
 const SSE = @import("SSE.zig");
@@ -41,32 +40,28 @@ pub fn SseHandler(comptime T: type, comptime Ctx: type) type {
                 *Project,
                 DisplaySettings,
                 *std.Io.Writer,
-                *StringStore,
                 Ctx,
             ) anyerror!T,
             json_event_name: []const u8,
         ) !void {
             var sse = try SSE.init(alloc, req);
-            defer sse.deinit();
 
             var parsed_request = try http.ParsedRequest.parse(alloc, req.head.target);
-            defer parsed_request.deinit(alloc);
 
-            var display = try http.Query(DisplaySettings).parse(alloc, &parsed_request.params);
-            defer display.deinit(alloc);
-
-            var string_store = StringStore.init(alloc);
-            defer string_store.deinit();
-
-            var html = std.Io.Writer.Allocating.init(alloc);
-            defer html.deinit();
-
-            var json = std.Io.Writer.Allocating.init(alloc);
-            defer json.deinit();
+            const display = try http.Query(DisplaySettings).parse(alloc, &parsed_request.params);
 
             var listener = state.broadcast.newListener();
 
+            var arena_alloc = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena_alloc.deinit();
+            const arena = arena_alloc.allocator();
+
             while (true) {
+                _ = arena_alloc.reset(.retain_capacity);
+
+                var html = std.Io.Writer.Allocating.init(arena);
+                var json = std.Io.Writer.Allocating.init(arena);
+
                 var timer = std.Io.Clock.Timestamp.now(state.io, .awake);
                 const tracy_zone = ztracy.ZoneNC(@src(), "SSE loop", 0x00_ff_00_00);
                 defer tracy_zone.End();
@@ -75,15 +70,13 @@ pub fn SseHandler(comptime T: type, comptime Ctx: type) type {
                     state.acquireProject();
                     defer state.releaseProject();
 
-                    var plot_data = try render(
-                        alloc,
+                    const plot_data = try render(
+                        arena,
                         state.project,
                         display,
                         &html.writer,
-                        &string_store,
                         ctx,
                     );
-                    defer plot_data.deinit();
 
                     var stringify = std.json.Stringify{ .writer = &json.writer };
                     try stringify.write(plot_data);
@@ -91,10 +84,6 @@ pub fn SseHandler(comptime T: type, comptime Ctx: type) type {
 
                 try sse.send(.{ .payload = html.writer.buffered() });
                 try sse.send(.{ .payload = json.writer.buffered(), .event = json_event_name });
-
-                string_store.clearRetainingCapacity();
-                html.clearRetainingCapacity();
-                json.clearRetainingCapacity();
 
                 const elapsed = timer.untilNow(state.io).raw.toMilliseconds();
                 std.log.info("Rendered in {d} ms", .{elapsed});
@@ -168,11 +157,9 @@ pub const TreeRenderer = struct {
         const node = self.tree.nodes.items[node_index];
         const has_children = node.children.items.len > 0;
 
-        var unconverted_inv = try node.inventory.toPlain(self.alloc);
-        defer unconverted_inv.deinit();
+        const unconverted_inv = try node.inventory.toPlain(self.alloc);
 
         var converted_inv = try Inventory.PlainInventory.init(self.alloc, null);
-        defer converted_inv.deinit();
 
         var inv =
             if (self.conversion_target) |cur| blk: {
@@ -269,7 +256,6 @@ pub const TreeRenderer = struct {
         if (has_children) {
             // Sort children by name
             const sorted_children = try self.alloc.dupe(u32, node.children.items);
-            defer self.alloc.free(sorted_children);
 
             std.mem.sort(u32, sorted_children, self.tree, struct {
                 fn lessThan(tr: *const Tree, a: u32, b: u32) bool {
@@ -361,15 +347,11 @@ pub const PlotData = struct {
     points: std.ArrayList(PlotPoint) = .empty,
 
     const PlotPoint = struct {
-        date: StringStore.String,
+        date: []const u8,
         currency: []const u8,
         balance: f64,
-        balance_rendered: StringStore.String,
+        balance_rendered: []const u8,
     };
-
-    pub fn deinit(self: *PlotData) void {
-        self.points.deinit(self.alloc);
-    }
 
     pub fn jsonStringify(self: *const PlotData, jw: anytype) !void {
         try jw.write(self.points.items);

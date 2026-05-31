@@ -15,10 +15,6 @@ fn GenericMap(K: type, V: type) type {
             return self;
         }
 
-        pub fn deinit(self: *Self, alloc: Allocator) void {
-            self.array.deinit(alloc);
-        }
-
         pub fn get(self: *const Self, k: K) ?V {
             const i: usize = @intFromEnum(k);
             return if (i < self.array.items.len) self.array.items[i] else null;
@@ -44,7 +40,7 @@ fn GenericMap(K: type, V: type) type {
 
         /// Keeps capacity
         pub fn clear(self: *Self) void {
-            @memset(self.array.items, null);
+            self.array.clearRetainingCapacity();
         }
 
         pub fn contains(self: *const Self, k: K) bool {
@@ -156,9 +152,8 @@ pub fn AccountMap(V: type) type {
 }
 
 test {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var map = CurrencyMap(usize){};
-    defer map.deinit(alloc);
 
     const a: Data.CurrencyIndex = @enumFromInt(3);
     const b: Data.CurrencyIndex = @enumFromInt(6);

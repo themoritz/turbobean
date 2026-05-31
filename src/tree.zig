@@ -40,11 +40,6 @@ pub const Node = struct {
             .children = .empty,
         };
     }
-
-    pub fn deinit(self: *Node, alloc: Allocator) void {
-        self.children.deinit(alloc);
-        self.inventory.deinit();
-    }
 };
 
 pub fn init(alloc: Allocator, accounts_pool: *const AccountPool, currencies_pool: *const CurrencyPool) !Self {
@@ -61,14 +56,6 @@ pub fn init(alloc: Allocator, accounts_pool: *const AccountPool, currencies_pool
         .nodes_by_account = .{},
         .nodes = nodes,
     };
-}
-
-pub fn deinit(self: *Self) void {
-    self.nodes_by_account.deinit(self.alloc);
-    for (self.nodes.items) |*node| {
-        node.deinit(self.alloc);
-    }
-    self.nodes.deinit(self.alloc);
 }
 
 /// Returns null if the account is already open.
@@ -216,7 +203,6 @@ pub fn clearEarnings(self: *Self, to_account: AccountIndex) !void {
             const to_inv = &self.nodes.items[to_index].inventory;
 
             var summary = try from_inv.summary(self.alloc);
-            defer summary.deinit();
 
             var cur_iter = summary.by_currency.iterator();
             while (cur_iter.next()) |cur_kv| {
@@ -287,17 +273,14 @@ pub fn inventoryAggregatedByAccount(self: *const Self, alloc: Allocator, account
 /// Caller owns returned inventory.
 pub fn inventoryAggregatedByNode(self: *const Self, alloc: Allocator, node: u32) !Summary {
     var summary = Summary.init(alloc);
-    errdefer summary.deinit();
 
     var stack = std.ArrayList(usize).empty;
-    defer stack.deinit(self.alloc);
 
     try stack.append(self.alloc, node);
     while (stack.items.len > 0) {
         const index = stack.pop().?;
         var n = self.nodes.items[index];
-        var n_summary = try n.inventory.summary(alloc);
-        defer n_summary.deinit();
+        const n_summary = try n.inventory.summary(alloc);
         try summary.combine(n_summary);
         for (n.children.items) |child| {
             try stack.append(self.alloc, child);
@@ -308,12 +291,10 @@ pub fn inventoryAggregatedByNode(self: *const Self, alloc: Allocator, node: u32)
 
 pub fn render(self: *Self) ![]const u8 {
     var buf = std.Io.Writer.Allocating.init(self.alloc);
-    defer buf.deinit();
 
     const max_width = try self.maxWidth();
 
     var prefix: std.ArrayList(bool) = .empty;
-    defer prefix.deinit(self.alloc);
 
     for (self.nodes.items[0].children.items, 0..) |child, i| {
         const is_last = i == self.nodes.items[0].children.items.len - 1;
@@ -325,7 +306,6 @@ pub fn render(self: *Self) ![]const u8 {
 
 pub fn print(self: *Self) !void {
     const s = try self.render();
-    defer self.alloc.free(s);
     std.debug.print("{s}", .{s});
 }
 
@@ -361,7 +341,6 @@ fn renderRec(
 
     try w.writeAll(node.name);
     var summary = try self.inventoryAggregatedByNode(self.alloc, node_index);
-    defer summary.deinit();
     if (!summary.isEmpty()) {
         const name_width: u32 = try unicodeLen(self.nodes.items[node_index].name);
         const width: u32 = prefix_width + name_width;
@@ -416,21 +395,10 @@ const TestFixture = struct {
 
     fn init(alloc: Allocator) !*TestFixture {
         const self = try alloc.create(TestFixture);
-        errdefer alloc.destroy(self);
         self.accounts = try AccountPool.init(alloc);
-        errdefer self.accounts.deinit(alloc);
         self.currencies = try CurrencyPool.init(alloc);
-        errdefer self.currencies.deinit(alloc);
         self.tree = try Self.init(alloc, &self.accounts, &self.currencies);
         return self;
-    }
-
-    fn deinit(self: *TestFixture) void {
-        const alloc = self.tree.alloc;
-        self.accounts.deinit(alloc);
-        self.currencies.deinit(alloc);
-        self.tree.deinit();
-        alloc.destroy(self);
     }
 
     fn account(self: *TestFixture, name: []const u8) !AccountIndex {
@@ -443,9 +411,8 @@ const TestFixture = struct {
 };
 
 test "tree" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var fx = try TestFixture.init(alloc);
-    defer fx.deinit();
 
     _ = try fx.tree.open(try fx.account("Assets:Currency:Chase"), null, null);
     _ = try fx.tree.open(try fx.account("Assets:Currency:BoA"), null, null);
@@ -453,7 +420,6 @@ test "tree" {
     _ = try fx.tree.open(try fx.account("Assets:Stocks"), null, null);
 
     const rendered = try fx.tree.render();
-    defer alloc.free(rendered);
 
     const expected =
         \\Assets
@@ -470,20 +436,17 @@ test "tree" {
 }
 
 test "render empty tree" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var fx = try TestFixture.init(alloc);
-    defer fx.deinit();
 
     const rendered = try fx.tree.render();
-    defer alloc.free(rendered);
 
     try std.testing.expectEqualStrings("", rendered);
 }
 
 test "aggregated" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var fx = try TestFixture.init(alloc);
-    defer fx.deinit();
 
     const acc_chas = try fx.account("Assets:Currency:Chas𝄞");
     const acc_boa = try fx.account("Assets:Currency:BoA");
@@ -502,7 +465,6 @@ test "aggregated" {
     try fx.tree.addPosition(acc_div, usd, Number.fromInt(1));
 
     const rendered = try fx.tree.render();
-    defer alloc.free(rendered);
 
     const expected =
         \\Assets        1 EUR
@@ -521,9 +483,8 @@ test "aggregated" {
 }
 
 test "isDescendant" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var fx = try TestFixture.init(alloc);
-    defer fx.deinit();
 
     const a = try fx.account("Assets");
     const chase = try fx.account("Assets:Currency:Chase");
@@ -543,9 +504,8 @@ test "isDescendant" {
 }
 
 test "balanceAggregatedByAccount" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var fx = try TestFixture.init(alloc);
-    defer fx.deinit();
 
     const foo = try fx.account("Assets:Foo");
     const foo_bar = try fx.account("Assets:Foo:Bar");

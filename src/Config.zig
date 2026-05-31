@@ -10,11 +10,7 @@ root: []const u8,
 /// Load the config from a directory. dir has to be an absolute path.
 pub fn load_from_dir(alloc: Allocator, io: Io, uri: Uri) !Self {
     const config_path = try std.fs.path.join(alloc, &.{ uri.absolute(), "turbobean.config" });
-    defer alloc.free(config_path);
-
     const config_file = try std.Io.Dir.cwd().readFileAlloc(io, config_path, alloc, .unlimited);
-    defer alloc.free(config_file);
-
     return Self{ .root = try parseConfig(alloc, config_file) };
 }
 
@@ -25,23 +21,17 @@ fn parseConfig(alloc: Allocator, config_file: []const u8) ![]const u8 {
     return try alloc.dupe(u8, config_file[7..i]);
 }
 
-pub fn deinit(self: Self, alloc: Allocator) void {
-    alloc.free(self.root);
-}
-
 pub fn format(self: Self, writer: *std.Io.Writer) !void {
     try writer.print("Config{{ .root = \"{s}\" }}", .{self.root});
 }
 
 test parseConfig {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
 
     const c1 = try parseConfig(alloc, "root = test.bean");
-    defer alloc.free(c1);
     try std.testing.expectEqualStrings("test.bean", c1);
 
     const c2 = try parseConfig(alloc, "root = test.bean\nfoo = bar");
-    defer alloc.free(c2);
     try std.testing.expectEqualStrings("test.bean", c2);
 
     const err = parseConfig(alloc, "roo = test.bean");

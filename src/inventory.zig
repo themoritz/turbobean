@@ -52,11 +52,6 @@ pub const Lots = struct {
         };
     }
 
-    pub fn deinit(self: *Lots, alloc: Allocator) void {
-        self.longs.deinit(alloc);
-        self.shorts.deinit(alloc);
-    }
-
     pub fn book(self: *Lots, alloc: Allocator, lot: Lot, lot_spec: ?LotSpec) !Number {
         if (lot.units.is_zero()) return Number.zero();
 
@@ -201,7 +196,6 @@ pub const LotsInventory = struct {
         currencies: ?[]const CurrencyIndex,
     ) !LotsInventory {
         var by_currency: CurrencyMap(Lots) = .{};
-        errdefer by_currency.deinit(alloc);
         if (currencies) |cs| {
             for (cs) |c| try by_currency.put(alloc, c, Lots.init(booking_method));
         }
@@ -211,12 +205,6 @@ pub const LotsInventory = struct {
             .booking_method = booking_method,
             .by_currency = by_currency,
         };
-    }
-
-    pub fn deinit(self: *LotsInventory) void {
-        var iter = self.by_currency.valueIterator();
-        while (iter.next()) |v| v.deinit(self.alloc);
-        self.by_currency.deinit(self.alloc);
     }
 
     pub fn book(
@@ -249,11 +237,9 @@ pub const LotsInventory = struct {
 
     pub fn summary(self: *const LotsInventory, alloc: Allocator) !Summary {
         var result = Summary.init(alloc);
-        errdefer result.deinit();
         var iter = self.by_currency.iterator();
         while (iter.next()) |kv| {
             var lots = try kv.value_ptr.longs.clone(alloc);
-            errdefer lots.deinit(alloc);
             try lots.appendSlice(alloc, kv.value_ptr.shorts.items);
             try result.by_currency.put(alloc, kv.key, .{
                 .plain = Number.zero(),
@@ -265,7 +251,6 @@ pub const LotsInventory = struct {
 
     pub fn toPlain(self: *const LotsInventory, alloc: Allocator) !PlainInventory {
         var inv = try PlainInventory.init(alloc, null);
-        errdefer inv.deinit();
 
         var iter = self.by_currency.iterator();
         while (iter.next()) |kv| {
@@ -290,19 +275,15 @@ pub const LotsInventory = struct {
             .booking_method = self.booking_method,
             .by_currency = .{},
         };
-        errdefer result.deinit();
         var iter = self.by_currency.iterator();
         while (iter.next()) |kv| {
-            var lots = try kv.value_ptr.clone(alloc);
-            errdefer lots.deinit(alloc);
+            const lots = try kv.value_ptr.clone(alloc);
             try result.by_currency.put(alloc, kv.key, lots);
         }
         return result;
     }
 
     pub fn clear(self: *LotsInventory) void {
-        var iter = self.by_currency.valueIterator();
-        while (iter.next()) |v| v.deinit(self.alloc);
         self.by_currency.clear();
     }
 };
@@ -315,7 +296,6 @@ pub const PlainInventory = struct {
 
     pub fn init(alloc: Allocator, currencies: ?[]const CurrencyIndex) !PlainInventory {
         var by_currency: CurrencyMap(Number) = .{};
-        errdefer by_currency.deinit(alloc);
         if (currencies) |cs| {
             for (cs) |c| try by_currency.put(alloc, c, Number.zero());
         }
@@ -324,10 +304,6 @@ pub const PlainInventory = struct {
             .restricted = currencies != null,
             .by_currency = by_currency,
         };
-    }
-
-    pub fn deinit(self: *PlainInventory) void {
-        self.by_currency.deinit(self.alloc);
     }
 
     pub fn add(self: *PlainInventory, currency: CurrencyIndex, number: Number) !void {
@@ -351,7 +327,6 @@ pub const PlainInventory = struct {
 
     pub fn summary(self: *const PlainInventory, alloc: Allocator) !Summary {
         var result = Summary.init(alloc);
-        errdefer result.deinit();
         var iter = self.by_currency.iterator();
         while (iter.next()) |kv| {
             try result.by_currency.put(alloc, kv.key, .{
@@ -388,13 +363,6 @@ pub const Inventory = union(enum) {
             return .{
                 .plain = try PlainInventory.init(alloc, currencies),
             };
-        }
-    }
-
-    pub fn deinit(self: *Inventory) void {
-        switch (self.*) {
-            .plain => |*inv| inv.deinit(),
-            .lots => |*inv| inv.deinit(),
         }
     }
 
@@ -488,12 +456,6 @@ pub const Summary = struct {
         };
     }
 
-    pub fn deinit(self: *Summary) void {
-        var iter = self.by_currency.valueIterator();
-        while (iter.next()) |v| v.lots.deinit(self.alloc);
-        self.by_currency.deinit(self.alloc);
-    }
-
     pub fn isEmpty(self: *const Summary) bool {
         var iter = self.by_currency.valueIterator();
         while (iter.next()) |v| {
@@ -576,7 +538,6 @@ pub const Summary = struct {
 
     pub fn toPlain(self: *const Summary, alloc: Allocator) !PlainInventory {
         var result = try PlainInventory.init(alloc, null);
-        errdefer result.deinit();
 
         var iter = self.by_currency.iterator();
         while (iter.next()) |entry| {
@@ -588,13 +549,11 @@ pub const Summary = struct {
 };
 
 test "cost weight" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
-    defer pool.deinit(alloc);
     const usd = try pool.intern(alloc, "USD");
 
     var inv = Lots.init(.fifo);
-    defer inv.deinit(alloc);
 
     _ = try inv.book(alloc, Lot{
         .units = Number.fromInt(10),
@@ -631,13 +590,11 @@ test "cost weight" {
 }
 
 test "cross line" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
-    defer pool.deinit(alloc);
     const usd = try pool.intern(alloc, "USD");
 
     var inv = Lots.init(.fifo);
-    defer inv.deinit(alloc);
 
     _ = try inv.book(alloc, Lot{
         .units = Number.fromInt(-1),
@@ -665,17 +622,14 @@ test "cross line" {
 }
 
 test "combine" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
-    defer pool.deinit(alloc);
     const usd = try pool.intern(alloc, "USD");
     const eur = try pool.intern(alloc, "EUR");
     const nzd = try pool.intern(alloc, "NZD");
 
     var plain = try PlainInventory.init(alloc, null);
-    defer plain.deinit();
     var lots = try LotsInventory.init(alloc, .fifo, null);
-    defer lots.deinit();
     try plain.add(usd, Number.fromInt(1));
     _ = try lots.book(usd, Lot{
         .units = Number.fromInt(1),
@@ -696,9 +650,7 @@ test "combine" {
         },
     }, null);
     var plain_sum = try plain.summary(alloc);
-    var lots_sum = try lots.summary(alloc);
-    defer plain_sum.deinit();
-    defer lots_sum.deinit();
+    const lots_sum = try lots.summary(alloc);
     try plain_sum.combine(lots_sum);
     try std.testing.expectEqual(Number.fromInt(1), plain_sum.by_currency.get(usd).?.plain);
     try std.testing.expectEqual(1, plain_sum.by_currency.get(usd).?.lots.items.len);
@@ -706,13 +658,11 @@ test "combine" {
 }
 
 test "plain empty" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
-    defer pool.deinit(alloc);
     const usd = try pool.intern(alloc, "USD");
 
     var inv = try PlainInventory.init(alloc, null);
-    defer inv.deinit();
 
     try std.testing.expect(inv.isEmpty());
     try inv.add(usd, Number.fromInt(1));
@@ -722,14 +672,12 @@ test "plain empty" {
 }
 
 test "lots empty" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
-    defer pool.deinit(alloc);
     const usd = try pool.intern(alloc, "USD");
     const nzd = try pool.intern(alloc, "NZD");
 
     var inv = try LotsInventory.init(alloc, .fifo, null);
-    defer inv.deinit();
 
     try std.testing.expect(inv.isEmpty());
     _ = try inv.book(usd, Lot{

@@ -48,7 +48,7 @@ pub fn onChange(self: *Self, path: []const u8) void {
         return;
     };
 
-    self.project.printErrors() catch {};
+    self.project.printErrors(self.alloc) catch {};
 
     self.broadcast.publishVersion(self.io);
 }
@@ -63,7 +63,6 @@ pub fn releaseProject(self: *Self) void {
 
 fn updateProject(self: *Self, path: []const u8) !void {
     var uri = try Uri.from_absolute(self.alloc, path);
-    defer uri.deinit(self.alloc);
     const source = try uri.load_nullterminated(self.alloc, self.io);
     {
         self.project_rwlock.lockUncancelable(self.io);

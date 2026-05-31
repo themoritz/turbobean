@@ -10,7 +10,6 @@ const t = @import("templates.zig");
 const tpl = t.journal;
 const common = @import("common.zig");
 const Prices = @import("../Prices.zig");
-const StringStore = @import("../StringStore.zig");
 const Inventory = @import("../inventory.zig");
 const Data = @import("../data.zig");
 
@@ -35,14 +34,11 @@ fn render(
     project: *Project,
     display: DisplaySettings,
     out: *std.Io.Writer,
-    string_store: *StringStore,
     account: []const u8,
 ) !common.PlotData {
     var tree = try Tree.init(alloc, &project.data.accounts, &project.data.currencies);
-    defer tree.deinit();
 
     var plot_data = common.PlotData{ .alloc = alloc };
-    errdefer plot_data.deinit();
 
     const account_idx = project.findAccount(account) orelse return plot_data;
     const conversion_target: ?Data.CurrencyIndex = switch (display.conversion) {
@@ -51,19 +47,15 @@ fn render(
     };
 
     const operating_currencies = try project.getConfig().getOperatingCurrencies(alloc);
-    defer alloc.free(operating_currencies);
 
     var prices = Prices.init(alloc);
-    defer prices.deinit();
 
     try common.renderPlotArea(operating_currencies, out);
     try zts.write(tpl, "table", out);
 
     var plain_inv = try Inventory.PlainInventory.init(alloc, null);
-    defer plain_inv.deinit();
 
     var converted_inv = try Inventory.PlainInventory.init(alloc, null);
-    defer converted_inv.deinit();
 
     var entry_iter = project.data.iterEntries();
     while (entry_iter.next()) |entry| {
@@ -182,10 +174,10 @@ fn render(
 
                     const balance = conv_inv.by_currency.get(conv_cur_idx).?;
                     try plot_data.points.append(alloc, .{
-                        .date = try string_store.print("{f}", .{entry.date()}),
+                        .date = try std.fmt.allocPrint(alloc, "{f}", .{entry.date()}),
                         .currency = project.data.currencies.get(conv_cur_idx),
                         .balance = balance.toFloat(),
-                        .balance_rendered = try string_store.print("{f}", .{balance.withPrecision(2)}),
+                        .balance_rendered = try std.fmt.allocPrint(alloc, "{f}", .{balance.withPrecision(2)}),
                     });
                 }
             },

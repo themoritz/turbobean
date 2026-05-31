@@ -22,10 +22,6 @@ pub fn init(alloc: std.mem.Allocator, request: *Server.Request) !*Self {
     return self;
 }
 
-pub fn deinit(self: *Self) void {
-    self.alloc.destroy(self);
-}
-
 const SendOptions = struct {
     event: ?[]const u8 = null,
     payload: []const u8,

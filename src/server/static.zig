@@ -55,7 +55,6 @@ pub const StaticEmbedded = struct {
         const etag_hash = hash.final();
 
         const calc_etag = try std.fmt.allocPrint(self.alloc, "\"{d}\"", .{etag_hash});
-        defer self.alloc.free(calc_etag);
 
         try response_headers.append(self.alloc, .{ .name = "ETag", .value = calc_etag });
 
@@ -120,7 +119,6 @@ const StaticFiles = struct {
         const etag_hash = hash.final();
 
         const calc_etag = try std.fmt.allocPrint(self.alloc, "\"{d}\"", .{etag_hash});
-        defer self.alloc.free(calc_etag);
 
         try response_headers.append(self.alloc, .{ .name = "ETag", .value = calc_etag });
 
@@ -135,7 +133,6 @@ const StaticFiles = struct {
         var rbuf: [4096]u8 = undefined;
         var r = file.reader(self.io, &rbuf);
         const contents = try r.interface.allocRemaining(self.alloc, .unlimited);
-        defer self.alloc.free(contents);
 
         try req.respond(contents, .{
             .status = .ok,

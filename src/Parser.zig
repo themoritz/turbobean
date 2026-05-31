@@ -6,42 +6,39 @@ const Node = Ast.Node;
 const ErrorDetails = @import("ErrorDetails.zig");
 const Uri = @import("Uri.zig");
 
-alloc: std.mem.Allocator,
 uri: Uri,
 source: [:0]const u8,
 tokens: []const Lexer.Token,
 tok_i: usize,
 
+scratch_alloc: std.mem.Allocator,
 scratch: std.ArrayList(Node.Index),
 token_scratch: std.ArrayList(Ast.TokenIndex),
 
+ast_alloc: std.mem.Allocator,
 nodes: *std.ArrayList(Node),
 extra_data: *std.ArrayList(u32),
 errors: *std.ArrayList(ErrorDetails),
 
 pub fn init(alloc: std.mem.Allocator, uri: Uri, ast: *Ast) Self {
     return .{
-        .alloc = alloc,
+        .scratch_alloc = undefined,
         .uri = uri,
         .source = ast.source,
         .tokens = ast.tokens.items,
         .tok_i = 0,
         .scratch = .empty,
         .token_scratch = .empty,
+        .ast_alloc = alloc,
         .nodes = &ast.nodes,
         .extra_data = &ast.extra_data,
         .errors = &ast.errors,
     };
 }
 
-pub fn deinit(self: *Self) void {
-    self.scratch.deinit(self.alloc);
-    self.token_scratch.deinit(self.alloc);
-}
-
 fn addNode(self: *Self, node: Node) !Node.Index {
     const result: Node.Index = @enumFromInt(self.nodes.items.len);
-    try self.nodes.append(self.alloc, node);
+    try self.nodes.append(self.ast_alloc, node);
     return result;
 }
 
@@ -56,12 +53,12 @@ fn addExtra(self: *Self, extra: anytype) !Ast.ExtraIndex {
             Ast.OptionalTokenIndex,
             Ast.ExtraIndex,
             => {
-                try self.extra_data.append(self.alloc, @intFromEnum(@field(extra, field.name)));
+                try self.extra_data.append(self.ast_alloc, @intFromEnum(@field(extra, field.name)));
             },
             Node.Range => {
                 const range: Node.Range = @field(extra, field.name);
-                try self.extra_data.append(self.alloc, @intFromEnum(range.start));
-                try self.extra_data.append(self.alloc, @intFromEnum(range.end));
+                try self.extra_data.append(self.ast_alloc, @intFromEnum(range.start));
+                try self.extra_data.append(self.ast_alloc, @intFromEnum(range.end));
             },
             else => @compileError("unsupported field type"),
         }
@@ -70,7 +67,7 @@ fn addExtra(self: *Self, extra: anytype) !Ast.ExtraIndex {
 }
 
 fn makeRange(self: *Self, slice: []const Node.Index) !Node.Range {
-    try self.extra_data.appendSlice(self.alloc, @ptrCast(slice));
+    try self.extra_data.appendSlice(self.ast_alloc, @ptrCast(slice));
     return .{
         .start = @enumFromInt(self.extra_data.items.len - slice.len),
         .end = @enumFromInt(self.extra_data.items.len),
@@ -78,7 +75,7 @@ fn makeRange(self: *Self, slice: []const Node.Index) !Node.Range {
 }
 
 fn makeTokenRange(self: *Self, slice: []const Ast.TokenIndex) !Node.Range {
-    try self.extra_data.appendSlice(self.alloc, @ptrCast(slice));
+    try self.extra_data.appendSlice(self.ast_alloc, @ptrCast(slice));
     return .{
         .start = @enumFromInt(self.extra_data.items.len - slice.len),
         .end = @enumFromInt(self.extra_data.items.len),
@@ -110,7 +107,7 @@ fn failAt(self: *Self, token: Lexer.Token, msg: ErrorDetails.Tag) Error {
 }
 
 fn failMsg(self: *Self, err: ErrorDetails) Error {
-    try self.errors.append(self.alloc, err);
+    try self.errors.append(self.ast_alloc, err);
     return error.ParseError;
 }
 
@@ -148,6 +145,10 @@ fn tryToken(self: *Self, tag: Lexer.Token.Tag) ?Ast.TokenIndex {
 }
 
 pub fn parse(self: *Self) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    self.scratch_alloc = arena.allocator();
+
     // Add root node at index 0 for entrypoint into the AST.
     _ = try self.addNode(undefined);
 
@@ -175,7 +176,7 @@ pub fn parse(self: *Self) !void {
             else => return err,
         };
         if (node) |n| {
-            try self.scratch.append(self.alloc, n);
+            try self.scratch.append(self.scratch_alloc, n);
             try self.eatWhiteSpace();
         } else {
             break :decls;
@@ -237,10 +238,10 @@ fn parseEntry(self: *Self) !?Node.Index {
             defer self.token_scratch.shrinkRetainingCapacity(tscratch_top);
 
             if (self.tryToken(.currency)) |cur| {
-                try self.token_scratch.append(self.alloc, cur);
+                try self.token_scratch.append(self.scratch_alloc, cur);
                 while (self.tryToken(.comma) != null) {
                     const c = try self.expectToken(.currency);
-                    try self.token_scratch.append(self.alloc, c);
+                    try self.token_scratch.append(self.scratch_alloc, c);
                 }
             }
 
@@ -369,7 +370,7 @@ fn parseTransactionEntry(self: *Self, date: Ast.TokenIndex) !Node.Index {
 
     while (true) {
         if (try self.parsePosting()) |posting_node| {
-            try self.scratch.append(self.alloc, posting_node);
+            try self.scratch.append(self.scratch_alloc, posting_node);
         } else if (try self.parseIndentedLine()) |_| {
             //
         } else break;
@@ -460,9 +461,9 @@ fn parseTagsLinks(self: *Self) !Node.Range {
 
     while (true) {
         if (self.tryToken(.tag)) |tag| {
-            try self.token_scratch.append(self.alloc, tag);
+            try self.token_scratch.append(self.scratch_alloc, tag);
         } else if (self.tryToken(.link)) |link| {
-            try self.token_scratch.append(self.alloc, link);
+            try self.token_scratch.append(self.scratch_alloc, link);
         } else break;
     }
 
@@ -475,7 +476,7 @@ fn parseMeta(self: *Self) !Node.Range {
 
     while (true) {
         if (try self.parseKeyValueLine()) |kv_node| {
-            try self.scratch.append(self.alloc, kv_node);
+            try self.scratch.append(self.scratch_alloc, kv_node);
         } else if (try self.parseIndentedLine()) |_| {
             //
         } else break;
@@ -894,11 +895,10 @@ test "comments" {
 
 test "recover without final newline" {
     // Just verifies the parser doesn't crash - errors are expected
-    const alloc = std.testing.allocator;
-    var uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
-    defer uri.deinit(alloc);
-    var ast = try Ast.parse(alloc, uri, "2015-01-01");
-    defer ast.deinit();
+    const alloc = std.heap.smp_allocator;
+    const uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
+    var ast = Ast.empty;
+    try ast.parse(alloc, uri, "2015-01-01");
 }
 
 // Formatter -------------
@@ -1305,13 +1305,12 @@ test "posting alignment" {
 }
 
 fn testParse(source: [:0]const u8) !void {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
 
-    var uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
-    defer uri.deinit(alloc);
+    const uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
 
-    var ast = try Ast.parse(alloc, uri, source);
-    defer ast.deinit();
+    var ast = Ast.empty;
+    try ast.parse(alloc, uri, source);
 
     if (ast.errors.items.len > 0) {
         try ast.errors.items[0].print(alloc, std.testing.io);
@@ -1320,13 +1319,12 @@ fn testParse(source: [:0]const u8) !void {
 }
 
 fn testNormalize(source: [:0]const u8, expected: [:0]const u8) !void {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
 
-    var uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
-    defer uri.deinit(alloc);
+    const uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
 
-    var ast = try Ast.parse(alloc, uri, source);
-    defer ast.deinit();
+    var ast = Ast.empty;
+    try ast.parse(alloc, uri, source);
     if (ast.errors.items.len > 0) {
         try ast.errors.items[0].print(alloc, std.testing.io);
         return error.ParseError;
@@ -1342,20 +1340,18 @@ fn testNormalize(source: [:0]const u8, expected: [:0]const u8) !void {
 }
 
 fn testRoundtrip(source: [:0]const u8) !void {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
 
-    var uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
-    defer uri.deinit(alloc);
+    const uri = try Uri.from_relative_to_cwd(alloc, std.testing.io, "dummy.bean");
 
-    var ast = try Ast.parse(alloc, uri, source);
-    defer ast.deinit();
+    var ast = Ast.empty;
+    try ast.parse(alloc, uri, source);
     if (ast.errors.items.len > 0) {
         try ast.errors.items[0].print(alloc, std.testing.io);
         return error.ParseError;
     }
 
     var allocating = std.Io.Writer.Allocating.init(alloc);
-    defer allocating.deinit();
 
     const Render = @import("Renderer.zig");
     try Render.render(alloc, &allocating.writer, &ast);

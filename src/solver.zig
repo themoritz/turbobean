@@ -116,12 +116,6 @@ pub const Solver = struct {
         };
     }
 
-    pub fn deinit(p: *Solver) void {
-        p.triples.deinit(p.alloc);
-        p.tolerances.deinit();
-        p.sum_by_currency.deinit();
-    }
-
     pub fn clear(p: *Solver) void {
         p.num_number_vars = 0;
         p.num_currency_vars = 0;
@@ -388,16 +382,14 @@ pub const Solver = struct {
 };
 
 test "plain balance" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var p = Solver.init(alloc);
-    defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
     var five: ?Number = Number.fromFloat(5);
     var neg_five: ?Number = Number.fromFloat(-5);
 
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
-    defer alloc.free(eur.?);
 
     try p.addTriple(&one, &five, &eur, null);
     try p.addTriple(&one, &neg_five, &eur, null);
@@ -406,9 +398,8 @@ test "plain balance" {
 }
 
 test "currency solution" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var p = Solver.init(alloc);
-    defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
     var five: ?Number = Number.fromFloat(5);
@@ -418,8 +409,6 @@ test "currency solution" {
 
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
     var usd: ?[]const u8 = try alloc.dupe(u8, "USD");
-    defer alloc.free(eur.?);
-    defer alloc.free(usd.?);
 
     var c1: ?[]const u8 = null;
     var c2: ?[]const u8 = null;
@@ -435,9 +424,8 @@ test "currency solution" {
 }
 
 test "number solution" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var p = Solver.init(alloc);
-    defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
     var six: ?Number = Number.fromFloat(6);
@@ -445,8 +433,6 @@ test "number solution" {
 
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
     var usd: ?[]const u8 = try alloc.dupe(u8, "USD");
-    defer alloc.free(eur.?);
-    defer alloc.free(usd.?);
 
     var n1: ?Number = null;
     var n2: ?Number = null;
@@ -462,15 +448,13 @@ test "number solution" {
 }
 
 test "combined solution" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var p = Solver.init(alloc);
-    defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
     var six: ?Number = Number.fromFloat(6);
 
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
-    defer alloc.free(eur.?);
 
     var n1: ?Number = null;
     var c1: ?[]const u8 = null;
@@ -484,15 +468,13 @@ test "combined solution" {
 }
 
 test "too many variables" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var p = Solver.init(alloc);
-    defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
     var five: ?Number = Number.fromFloat(5);
 
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
-    defer alloc.free(eur.?);
 
     var n1: ?Number = null;
     var n2: ?Number = null;
@@ -506,12 +488,10 @@ test "too many variables" {
 }
 
 test "too many variables price" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var p = Solver.init(alloc);
-    defer p.deinit();
 
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
-    defer alloc.free(eur.?);
 
     var n1: ?Number = null;
     var n2: ?Number = null;
@@ -523,9 +503,8 @@ test "too many variables price" {
 }
 
 test "does not balance" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var p = Solver.init(alloc);
-    defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
     var five: ?Number = Number.fromFloat(5);
@@ -533,8 +512,6 @@ test "does not balance" {
 
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
     var usd: ?[]const u8 = try alloc.dupe(u8, "USD");
-    defer alloc.free(eur.?);
-    defer alloc.free(usd.?);
 
     var n1: ?Number = null;
     var c1: ?[]const u8 = null;
@@ -551,9 +528,8 @@ test "does not balance" {
 }
 
 test "single no currency" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var p = Solver.init(alloc);
-    defer p.deinit();
 
     var n1: ?Number = null;
     var one: ?Number = Number.fromFloat(1);
@@ -566,15 +542,13 @@ test "single no currency" {
 }
 
 test "single zero" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var p = Solver.init(alloc);
-    defer p.deinit();
 
     var n1: ?Number = null;
     var one: ?Number = Number.fromFloat(1);
 
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
-    defer alloc.free(eur.?);
 
     try p.addTriple(&n1, &one, &eur, null);
 
@@ -583,9 +557,8 @@ test "single zero" {
 }
 
 test "price interpolation rounding" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var p = Solver.init(alloc);
-    defer p.deinit();
 
     var one: ?Number = Number.fromFloat(1);
     var seven: ?Number = Number.fromFloat(7);
@@ -594,7 +567,6 @@ test "price interpolation rounding" {
     var neg_small: ?Number = Number.fromFloat(-0.01);
 
     var eur: ?[]const u8 = try alloc.dupe(u8, "EUR");
-    defer alloc.free(eur.?);
 
     // 7 USD @ ? EUR: price unknown, should solve to 1/7 ≈ 0.142857143
     // then round to 0.14 based on EUR tolerance of 0.01

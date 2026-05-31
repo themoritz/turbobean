@@ -46,29 +46,28 @@ pub fn myLogFn(
 }
 
 pub fn main(init: std.process.Init) !void {
-    const alloc = init.gpa;
+    var arena_alloc = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const arena = arena_alloc.allocator();
     const io = init.io;
 
-    var iter = try std.process.Args.Iterator.initAllocator(init.minimal.args, alloc);
+    var iter = try std.process.Args.Iterator.initAllocator(init.minimal.args, arena);
     defer iter.deinit();
     _ = iter.next();
 
     if (iter.next()) |command| {
         if (std.mem.eql(u8, command, "lsp")) {
-            try lsp.loop(alloc, io);
+            try lsp.loop(arena, io);
             return;
         }
         if (std.mem.eql(u8, command, "serve")) {
             if (iter.next()) |file| {
-                var uri = try Uri.from_relative_to_cwd(alloc, io, file);
-                defer uri.deinit(alloc);
+                const uri = try Uri.from_relative_to_cwd(arena, io, file);
 
-                var project = try Project.load(alloc, io, uri, null);
-                defer project.deinit();
+                var project = try Project.load(arena, io, uri, null);
 
-                if (project.hasErrors()) try project.printErrors();
+                if (project.hasErrors()) try project.printErrors(arena);
 
-                try server.loop(alloc, io, &project);
+                try server.loop(arena, io, &project);
                 return;
             } else {
                 cli.printMissingFileArgument();
@@ -77,14 +76,11 @@ pub fn main(init: std.process.Init) !void {
         }
         if (std.mem.eql(u8, command, "tree")) {
             if (iter.next()) |file| {
-                var uri = try Uri.from_relative_to_cwd(alloc, io, file);
-                defer uri.deinit(alloc);
+                const uri = try Uri.from_relative_to_cwd(arena, io, file);
+                var project = try Project.load(arena, io, uri, null);
 
-                var project = try Project.load(alloc, io, uri, null);
-                defer project.deinit();
-
-                if (project.hasErrors()) try project.printErrors();
-                try project.printTree();
+                if (project.hasErrors()) try project.printErrors(arena);
+                try project.printTree(arena);
                 return;
             } else {
                 cli.printMissingFileArgument();
@@ -113,24 +109,23 @@ pub fn main(init: std.process.Init) !void {
                 defer f.close(io);
                 var rbuf: [4096]u8 = undefined;
                 var r = f.reader(io, &rbuf);
-                break :blk try r.interface.allocRemainingAlignedSentinel(alloc, .unlimited, .@"1", 0);
+                break :blk try r.interface.allocRemainingAlignedSentinel(arena, .unlimited, .@"1", 0);
             } else blk: {
                 const stdin = Io.File.stdin();
                 var rbuf: [4096]u8 = undefined;
                 var r = stdin.reader(io, &rbuf);
-                break :blk try r.interface.allocRemainingAlignedSentinel(alloc, .unlimited, .@"1", 0);
+                break :blk try r.interface.allocRemainingAlignedSentinel(arena, .unlimited, .@"1", 0);
             };
-            defer alloc.free(source);
 
             const uri = Uri{ .value = file_arg orelse "<stdin>" };
-            var ast = try Ast.parse(alloc, uri, source);
-            defer ast.deinit();
+            var ast = Ast.empty;
+            try ast.parse(arena, uri, source);
 
             if (ast.errors.items.len > 0) {
                 var stderr_buf: [4096]u8 = undefined;
                 var stderr_w = Io.File.stderr().writer(io, &stderr_buf);
                 for (ast.errors.items) |err| {
-                    try err.format(&stderr_w.interface, alloc, io, true);
+                    try err.format(&stderr_w.interface, arena, io, true);
                 }
                 try stderr_w.interface.flush();
                 std.process.exit(1);
@@ -141,13 +136,13 @@ pub fn main(init: std.process.Init) !void {
                 defer atomic.deinit(io);
                 var write_buf: [4096]u8 = undefined;
                 var fw = atomic.file.writer(io, &write_buf);
-                try Renderer.render(alloc, &fw.interface, &ast);
+                try Renderer.render(arena, &fw.interface, &ast);
                 try fw.interface.flush();
                 try atomic.replace(io);
             } else {
                 var stdout_buf: [4096]u8 = undefined;
                 var stdout_w = Io.File.stdout().writer(io, &stdout_buf);
-                try Renderer.render(alloc, &stdout_w.interface, &ast);
+                try Renderer.render(arena, &stdout_w.interface, &ast);
                 try stdout_w.interface.flush();
             }
             return;

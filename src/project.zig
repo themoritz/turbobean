@@ -60,20 +60,10 @@ pub fn load(alloc: Allocator, io: Io, uri: Uri, source: ?[:0]const u8) !Self {
         .tags = std.StringHashMap(void).init(alloc),
         .links = std.StringHashMap(void).init(alloc),
     };
-    errdefer self.deinit();
     try self.loadFileRec(uri, true, source);
 
     try self.pipeline();
     return self;
-}
-
-pub fn deinit(self: *Self) void {
-    self.data.deinit();
-    self.errors.deinit(self.alloc);
-
-    self.account_open_pos.deinit(self.alloc);
-    self.tags.deinit();
-    self.links.deinit();
 }
 
 // --- forwarding accessors ---------------------------------------------------
@@ -127,18 +117,12 @@ fn loadFileRec(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !voi
     if (self.data.files_by_uri.get(uri.value)) |_| return error.ImportCycle;
 
     const uri_owned = try uri.clone(self.alloc);
-    const null_terminated = source orelse uri_owned.load_nullterminated(self.alloc, self.io) catch |err| {
-        var u = uri_owned;
-        u.deinit(self.alloc);
-        return err;
-    };
+    const null_terminated = source orelse try uri_owned.load_nullterminated(self.alloc, self.io);
 
     const file_id, const imports = try self.data.loadFile(uri_owned, is_root, null_terminated);
-    defer self.alloc.free(imports);
 
     for (imports) |import| {
         var import_uri = try uri_owned.move_relative(self.alloc, import.path);
-        defer import_uri.deinit(self.alloc);
         // Check if the file exists before recursing
         std.Io.Dir.accessAbsolute(self.io, import_uri.absolute(), .{}) catch {
             const f = &self.data.files.items[file_id];
@@ -146,7 +130,7 @@ fn loadFileRec(self: *Self, uri: Uri, is_root: bool, source: ?[:0]const u8) !voi
                 .tag = .include_file_not_found,
                 .token = import.token,
                 .uri = f.uri,
-                .source = f.source,
+                .source = f.source.items,
             });
             continue;
         };
@@ -176,11 +160,6 @@ pub fn hasSevereErrors(self: *const Self) bool {
 
 pub fn collectErrors(self: *const Self, alloc: Allocator) !std.StringHashMap(std.ArrayList(ErrorDetails)) {
     var errors = std.StringHashMap(std.ArrayList(ErrorDetails)).init(alloc);
-    errdefer {
-        var iter = errors.valueIterator();
-        while (iter.next()) |v| v.deinit(alloc);
-        errors.deinit();
-    }
     for (self.data.files.items) |f| {
         try errors.put(f.uri.value, std.ArrayList(ErrorDetails).empty);
     }
@@ -195,14 +174,8 @@ pub fn collectErrors(self: *const Self, alloc: Allocator) !std.StringHashMap(std
     return errors;
 }
 
-pub fn printErrors(self: *Self) !void {
-    var errors = try self.collectErrors(self.alloc);
-    defer {
-        var iter = errors.valueIterator();
-        while (iter.next()) |v| v.deinit(self.alloc);
-        errors.deinit();
-    }
-
+pub fn printErrors(self: *Self, alloc: Allocator) !void {
+    var errors = try self.collectErrors(alloc);
     if (errors.count() == 0) return;
 
     // Separate errors and warnings
@@ -256,11 +229,15 @@ pub fn printErrors(self: *Self) !void {
 // --- pipeline ---------------------------------------------------------------
 
 pub fn pipeline(self: *Self) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+
     self.errors.clearRetainingCapacity();
-    try self.balanceTransactions();
+    try self.balanceTransactions(scratch);
     self.sortEntries();
     try self.refreshLspCache();
-    try self.check();
+    try self.check(scratch);
 }
 
 /// Sort `data.entries` in place by date+time-of-day. Posting/TagLink/Meta
@@ -277,15 +254,10 @@ pub fn sortEntries(self: *Self) void {
     self.data.entries.sort(Ctx{ .slice = self.data.entries.slice() });
 }
 
-pub fn check(self: *Self) !void {
+pub fn check(self: *Self, scratch: Allocator) !void {
     var lastPads: AccountMap(Data.PadView) = .{};
-    defer lastPads.deinit(self.alloc);
-
     var pnlAccounts: AccountMap(Data.TokenLoc) = .{};
-    defer pnlAccounts.deinit(self.alloc);
-
-    var tree = try Tree.init(self.alloc, &self.data.accounts, &self.data.currencies);
-    defer tree.deinit();
+    var tree = try Tree.init(scratch, &self.data.accounts, &self.data.currencies);
 
     var entry_iter = self.data.iterEntries();
     while (entry_iter.next()) |entry| {
@@ -323,7 +295,7 @@ pub fn check(self: *Self) !void {
                 if (lastPads.contains(acc_idx)) {
                     try self.addError(entry.mainTokenLoc(), .multiple_pads);
                 } else {
-                    try lastPads.put(self.alloc, acc_idx, pad);
+                    try lastPads.put(scratch, acc_idx, pad);
                 }
             },
             .balance => |balance| {
@@ -378,7 +350,7 @@ pub fn check(self: *Self) !void {
                     try self.addError(entry.loc(pnl.account), .pnl_account_must_be_lots);
                     continue;
                 }
-                try pnlAccounts.put(self.alloc, acc_idx, entry.loc(pnl.income_account));
+                try pnlAccounts.put(scratch, acc_idx, entry.loc(pnl.income_account));
             },
             .transaction => |tx| {
                 if (tx.dirty()) continue;
@@ -481,12 +453,8 @@ fn postInventoryRecovering(
 /// Run the balancer over every transaction in the project, solving for
 /// unknown numbers and currencies. Sets `dirty = true` on transactions that
 /// cannot be solved.
-fn balanceTransactions(self: *Self) !void {
-    const tracy_zone = ztracy.ZoneNC(@src(), "Project.balanceTransactions", 0x00_00_ff_00);
-    defer tracy_zone.End();
-
-    var solver = Solver.init(self.alloc);
-    defer solver.deinit();
+fn balanceTransactions(self: *Self, scratch: Allocator) !void {
+    var solver = Solver.init(scratch);
     var diagnostics: Solver.CurrencyImbalance = undefined;
 
     var one: ?Number = Number.fromFloat(1);
@@ -495,13 +463,9 @@ fn balanceTransactions(self: *Self) !void {
     // filling so that the pointers we hand to the solver stay valid during
     // `solve()`.
     var stage_numbers: std.ArrayList(?Number) = .empty;
-    defer stage_numbers.deinit(self.alloc);
     var stage_currencies: std.ArrayList(?[]const u8) = .empty;
-    defer stage_currencies.deinit(self.alloc);
     var stage_prices: std.ArrayList(?Number) = .empty;
-    defer stage_prices.deinit(self.alloc);
     var stage_price_currencies: std.ArrayList(?[]const u8) = .empty;
-    defer stage_price_currencies.deinit(self.alloc);
 
     const data = &self.data;
     const payloads = data.entries.items(.payload);
@@ -521,10 +485,10 @@ fn balanceTransactions(self: *Self) !void {
         stage_currencies.clearRetainingCapacity();
         stage_prices.clearRetainingCapacity();
         stage_price_currencies.clearRetainingCapacity();
-        try stage_numbers.ensureTotalCapacity(self.alloc, n);
-        try stage_currencies.ensureTotalCapacity(self.alloc, n);
-        try stage_prices.ensureTotalCapacity(self.alloc, n);
-        try stage_price_currencies.ensureTotalCapacity(self.alloc, n);
+        try stage_numbers.ensureTotalCapacity(scratch, n);
+        try stage_currencies.ensureTotalCapacity(scratch, n);
+        try stage_prices.ensureTotalCapacity(scratch, n);
+        try stage_price_currencies.ensureTotalCapacity(scratch, n);
 
         for (postings.start..postings.end) |i| {
             stage_numbers.appendAssumeCapacity(data.postings.items(.amount_number)[i].unpack());
@@ -832,6 +796,7 @@ fn refreshLspCache(self: *Self) !void {
 /// Assumes checkAccountsOpen has been called.
 pub fn accountInventoryUntilLine(
     self: *Self,
+    scratch: Allocator,
     account: []const u8,
     uri: []const u8,
     line: u32,
@@ -839,8 +804,7 @@ pub fn accountInventoryUntilLine(
     const file = self.data.files_by_uri.get(uri) orelse return null;
     const account_idx = self.data.accounts.find(account) orelse return null;
 
-    var tree = try Tree.init(self.alloc, &self.data.accounts, &self.data.currencies);
-    defer tree.deinit();
+    var tree = try Tree.init(scratch, &self.data.accounts, &self.data.currencies);
 
     var entry_iter = self.data.iterEntries();
     while (entry_iter.next()) |entry| {
@@ -859,11 +823,9 @@ pub fn accountInventoryUntilLine(
                     if (posting.account() != account_idx) continue;
                     const acc_line = fdata.token(posting.accountToken()).start_line;
                     if (acc_line == line and entry_file == file) {
-                        var before = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
-                        errdefer before.deinit();
+                        const before = try tree.inventoryAggregatedByAccount(scratch, account_idx);
                         _ = try tree.postInventory(entry.date(), posting);
-                        var after = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
-                        errdefer after.deinit();
+                        const after = try tree.inventoryAggregatedByAccount(scratch, account_idx);
                         return .{ .before = before, .after = after };
                     } else {
                         _ = try tree.postInventory(entry.date(), posting);
@@ -875,11 +837,9 @@ pub fn accountInventoryUntilLine(
                     if (posting.account() == account_idx) {
                         const acc_line = fdata.token(posting.accountToken()).start_line;
                         if (acc_line == line and entry_file == file) {
-                            var before = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
-                            errdefer before.deinit();
+                            const before = try tree.inventoryAggregatedByAccount(scratch, account_idx);
                             _ = try tree.postInventory(entry.date(), posting);
-                            var after = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
-                            errdefer after.deinit();
+                            const after = try tree.inventoryAggregatedByAccount(scratch, account_idx);
                             return .{ .before = before, .after = after };
                         } else {
                             _ = try tree.postInventory(entry.date(), posting);
@@ -890,11 +850,9 @@ pub fn accountInventoryUntilLine(
                     if (posting.account() == account_idx) {
                         const acc_line = fdata.token(posting.accountToken()).start_line;
                         if (acc_line == line and entry_file == file) {
-                            var before = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
-                            errdefer before.deinit();
+                            const before = try tree.inventoryAggregatedByAccount(scratch, account_idx);
                             _ = try tree.postInventory(entry.date(), posting);
-                            var after = try tree.inventoryAggregatedByAccount(self.alloc, account_idx);
-                            errdefer after.deinit();
+                            const after = try tree.inventoryAggregatedByAccount(scratch, account_idx);
                             return .{ .before = before, .after = after };
                         } else {
                             _ = try tree.postInventory(entry.date(), posting);
@@ -935,9 +893,8 @@ pub fn update_file(self: *Self, uri_value: []const u8, source: [:0]const u8) !vo
     try self.pipeline();
 }
 
-pub fn printTree(self: *Self) !void {
-    var tree = try Tree.init(self.alloc, &self.data.accounts, &self.data.currencies);
-    defer tree.deinit();
+pub fn printTree(self: *Self, scratch: Allocator) !void {
+    var tree = try Tree.init(scratch, &self.data.accounts, &self.data.currencies);
 
     var entry_iter = self.data.iterEntries();
     while (entry_iter.next()) |entry| {
@@ -974,7 +931,7 @@ fn addErrorDetails(self: *Self, loc: Data.TokenLoc, tag: ErrorDetails.Tag, sever
         .severity = severity,
         .token = f.token(loc.index),
         .uri = f.uri,
-        .source = f.source,
+        .source = f.source.items,
     });
 }
 

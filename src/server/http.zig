@@ -3,7 +3,6 @@ const std = @import("std");
 /// Decode URL-encoded bytes.
 pub fn decode_url_alloc(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
     var list = try std.ArrayListUnmanaged(u8).initCapacity(allocator, input.len);
-    defer list.deinit(allocator);
 
     var input_index: usize = 0;
     while (input_index < input.len) {
@@ -44,14 +43,13 @@ test "decode_url" {
 }
 
 fn test_decode_url(input: []const u8, expected: []const u8) !void {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     const actual = try decode_url_alloc(alloc, input);
-    defer alloc.free(actual);
     try std.testing.expectEqualStrings(expected, actual);
 }
 
 fn test_decode_url_error(input: []const u8, err: anyerror) !void {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     const actual = decode_url_alloc(alloc, input);
     try std.testing.expectError(err, actual);
 }
@@ -109,7 +107,7 @@ pub fn Query(comptime T: type) type {
 }
 
 test Query {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
 
     const T = struct {
         a: u8,
@@ -119,9 +117,7 @@ test Query {
     const input = "/?a=1&b=true&c=abc";
     const expected = T{ .a = 1, .b = true, .c = "abc" };
     var request = try ParsedRequest.parse(alloc, input);
-    defer request.deinit(alloc);
     const actual = try Query(T).parse(alloc, &request.params);
-    defer alloc.free(actual.c);
     try std.testing.expectEqual(expected.a, actual.a);
     try std.testing.expectEqual(expected.b.?, actual.b.?);
     try std.testing.expectEqualStrings(expected.c, actual.c);
@@ -129,9 +125,7 @@ test Query {
     // Missing value => null
     const input2 = "/?a=1&c=abc";
     var request2 = try ParsedRequest.parse(alloc, input2);
-    defer request2.deinit(alloc);
     const actual2 = try Query(T).parse(alloc, &request2.params);
-    defer alloc.free(actual2.c);
     try std.testing.expectEqual(null, actual2.b);
 }
 
@@ -149,10 +143,8 @@ pub const ParsedRequest = struct {
             try alloc.dupe(u8, piece)
         else
             return error.MissingPath;
-        errdefer alloc.free(path);
 
         var params = QueryPararms.init(alloc);
-        errdefer params.deinit();
 
         if (pieces.next()) |query| {
             var pairs = std.mem.splitScalar(u8, query, '&');
@@ -167,18 +159,12 @@ pub const ParsedRequest = struct {
                 if (std.mem.indexOfScalar(u8, value, '=') != null) return error.MalformedPair;
 
                 const decoded_key = try decode_url_alloc(alloc, key);
-                errdefer alloc.free(decoded_key);
 
                 const decoded_value = try decode_url_alloc(alloc, value);
-                errdefer alloc.free(decoded_value);
 
                 // Allow for duplicates (like with the URL params),
                 // The last one just takes precedent.
                 const entry = try params.getOrPut(decoded_key);
-                if (entry.found_existing) {
-                    alloc.free(decoded_key);
-                    alloc.free(entry.value_ptr.*);
-                }
                 entry.value_ptr.* = decoded_value;
             }
         }
@@ -188,47 +174,35 @@ pub const ParsedRequest = struct {
             .params = params,
         };
     }
-
-    pub fn deinit(self: *ParsedRequest, alloc: std.mem.Allocator) void {
-        var it = self.params.iterator();
-        while (it.next()) |entry| {
-            alloc.free(entry.key_ptr.*);
-            alloc.free(entry.value_ptr.*);
-        }
-        self.params.deinit();
-        alloc.free(self.path);
-    }
 };
 
 test "parse" {
     const input = "/?foo=bar";
-    var req = try ParsedRequest.parse(std.testing.allocator, input);
-    defer req.deinit(std.testing.allocator);
+    var req = try ParsedRequest.parse(std.heap.smp_allocator, input);
     try std.testing.expectEqualStrings(req.path, "/");
     try std.testing.expectEqualStrings(req.params.get("foo").?, "bar");
 }
 
 test "duplicates" {
     const input = "/?foo=bar&foo=baz";
-    var req = try ParsedRequest.parse(std.testing.allocator, input);
-    defer req.deinit(std.testing.allocator);
+    var req = try ParsedRequest.parse(std.heap.smp_allocator, input);
     try std.testing.expectEqualStrings(req.params.get("foo").?, "baz");
 }
 
 test "missing" {
     const input = "/foo?id=";
-    const result = ParsedRequest.parse(std.testing.allocator, input);
+    const result = ParsedRequest.parse(std.heap.smp_allocator, input);
     try std.testing.expectError(error.MissingValue, result);
 }
 
 test "missing sep" {
     const input = "/foo?id";
-    const result = ParsedRequest.parse(std.testing.allocator, input);
+    const result = ParsedRequest.parse(std.heap.smp_allocator, input);
     try std.testing.expectError(error.MissingSeperator, result);
 }
 
 test "malformed pair" {
     const input = "/foo?id=bar=baz";
-    const result = ParsedRequest.parse(std.testing.allocator, input);
+    const result = ParsedRequest.parse(std.heap.smp_allocator, input);
     try std.testing.expectError(error.MalformedPair, result);
 }

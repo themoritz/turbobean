@@ -10,7 +10,7 @@ tag: Tag,
 severity: Severity = .err,
 token: Lexer.Token,
 uri: Uri,
-source: [:0]const u8,
+source: []const u8,
 
 pub const Severity = enum {
     err,
@@ -69,13 +69,11 @@ pub const Tag = union(enum) {
 
 pub fn print(e: Self, alloc: Allocator, io: std.Io) !void {
     const rendered = try dump(e, alloc, io, true);
-    defer alloc.free(rendered);
     std.debug.print("{s}\n", .{rendered});
 }
 
 pub fn dump(e: Self, alloc: Allocator, io: std.Io, color: bool) ![]const u8 {
     var allocating = std.Io.Writer.Allocating.init(alloc);
-    defer allocating.deinit();
     const writer = &allocating.writer;
 
     try e.format(writer, alloc, io, color);
@@ -84,7 +82,6 @@ pub fn dump(e: Self, alloc: Allocator, io: std.Io, color: bool) ![]const u8 {
 
 pub fn message(e: Self, alloc: Allocator) ![]const u8 {
     var allocating = std.Io.Writer.Allocating.init(alloc);
-    defer allocating.deinit();
     const writer = &allocating.writer;
 
     try e.formatMessage(writer);
@@ -207,7 +204,6 @@ pub fn format(e: Self, writer: *std.Io.Writer, alloc: Allocator, io: std.Io, col
     };
 
     const relative = try e.uri.relative(alloc, io);
-    defer alloc.free(relative);
 
     try writer.print(
         "{s}: [{s}{s}{s}] ",
@@ -252,10 +248,9 @@ test "render" {
 }
 
 fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !void {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     const io = std.testing.io;
-    var uri = try Uri.from_relative_to_cwd(alloc, io, "dummy.bean");
-    defer uri.deinit(alloc);
+    const uri = try Uri.from_relative_to_cwd(alloc, io, "dummy.bean");
     const e = Self{
         .tag = .{ .expected_token = .string },
         .token = Lexer.Token{
@@ -270,7 +265,6 @@ fn testLoc(start: u32, len: u32, source: [:0]const u8, expected: []const u8) !vo
         .source = source,
     };
     const rendered = try e.dump(alloc, io, false);
-    defer alloc.free(rendered);
 
     try std.testing.expectEqualStrings(expected, rendered);
 }

@@ -397,11 +397,6 @@ pub const Config = struct {
         };
     }
 
-    pub fn deinit(self: *Config) void {
-        self.options.deinit(self.alloc);
-        self.plugins.deinit(self.alloc);
-    }
-
     pub fn clear(self: *Config) void {
         self.options.clearRetainingCapacity();
         self.plugins.clearRetainingCapacity();
@@ -432,11 +427,8 @@ pub const Config = struct {
 // --- init / deinit ----------------------------------------------------------
 
 pub fn init(alloc: Allocator) !Self {
-    var accounts = try AccountPool.init(alloc);
-    errdefer accounts.deinit(alloc);
-
-    var currencies = try CurrencyPool.init(alloc);
-    errdefer currencies.deinit(alloc);
+    const accounts = try AccountPool.init(alloc);
+    const currencies = try CurrencyPool.init(alloc);
 
     return .{
         .alloc = alloc,
@@ -455,27 +447,9 @@ pub fn init(alloc: Allocator) !Self {
     };
 }
 
-pub fn deinit(self: *Self) void {
-    for (self.files.items) |*f| f.deinit(self.alloc);
-    self.files.deinit(self.alloc);
-    self.files_by_uri.deinit();
-
-    self.entries.deinit(self.alloc);
-    self.postings.deinit(self.alloc);
-    self.prices.deinit(self.alloc);
-    self.lot_specs.deinit(self.alloc);
-    self.open_currencies.deinit(self.alloc);
-    self.tagslinks.deinit(self.alloc);
-    self.meta.deinit(self.alloc);
-    self.config.deinit();
-
-    self.accounts.deinit(self.alloc);
-    self.currencies.deinit(self.alloc);
-}
-
-/// Clear all merged-record arrays, but keep `files` and `files_by_uri` and the
+/// Reset all merged-record arrays, but keep `files` and `files_by_uri` and the
 /// intern pools intact. Used by `rebuildFromFiles` ahead of re-running Sema.
-fn clearRecords(self: *Self) void {
+fn reset(self: *Self) void {
     self.entries.clearRetainingCapacity();
     self.postings.clearRetainingCapacity();
     self.prices.clearRetainingCapacity();
@@ -1120,20 +1094,14 @@ pub fn postingAt(self: *Self, file_id: u8, idx: u32) PostingView {
 /// Add a new file to the project: parse its source, run Sema (which appends
 /// entries/postings/etc into the merged arrays), and return its file index
 /// alongside the list of `include` directives encountered.
-///
-/// Takes ownership of `uri` (cloned internally is the caller's responsibility)
-/// and of `source`. Caller must check capacity (file_id fits in u8).
 pub fn loadFile(
     self: *Self,
     uri: Uri,
     is_root: bool,
     source: [:0]const u8,
 ) !struct { usize, Imports } {
-    const tracy_zone = ztracy.ZoneNC(@src(), "Data.loadFile", 0x00_00_ff_00);
-    defer tracy_zone.End();
-
-    var file = try File.loadFromSource(self.alloc, uri, source);
-    errdefer file.deinit(self.alloc);
+    var file = File.init(uri);
+    try file.loadFromSource(self.alloc, source);
 
     try self.files.append(self.alloc, file);
     const file_id = self.files.items.len - 1;
@@ -1141,8 +1109,7 @@ pub fn loadFile(
     try self.files_by_uri.put(self.files.items[file_id].uri.value, file_id);
 
     var sem = Sema.init(self.alloc, self, @intCast(file_id), is_root);
-    defer sem.deinit();
-    const imports = try sem.run();
+    const imports = try sem.run(self.alloc);
     return .{ file_id, imports };
 }
 
@@ -1150,27 +1117,9 @@ pub fn loadFile(
 /// scratch by re-running Sema over every file in original order. Takes
 /// ownership of `source`.
 pub fn updateFile(self: *Self, uri_value: []const u8, source: [:0]const u8) !void {
-    const tracy_zone = ztracy.ZoneNC(@src(), "Data.updateFile", 0x00_00_ff_00);
-    defer tracy_zone.End();
-
     const file_id = self.files_by_uri.get(uri_value) orelse return error.FileNotFound;
-    const old_uri = self.files.items[file_id].uri;
-    const cloned_uri = try old_uri.clone(self.alloc);
-    var new_file = File.loadFromSource(self.alloc, cloned_uri, source) catch |err| {
-        var u = cloned_uri;
-        u.deinit(self.alloc);
-        return err;
-    };
-    errdefer new_file.deinit(self.alloc);
-
-    // Replace file. The hashmap key (uri.value) is the same string contents,
-    // but cloning gave us a fresh allocation; rewire the map to the new key
-    // so it stays valid after the old file is freed.
-    _ = self.files_by_uri.remove(uri_value);
-    var old_file = self.files.items[file_id];
-    self.files.items[file_id] = new_file;
-    old_file.deinit(self.alloc);
-    try self.files_by_uri.put(self.files.items[file_id].uri.value, file_id);
+    const file = &self.files.items[file_id];
+    try file.loadFromSource(self.alloc, source);
 
     try self.rebuildFromFiles();
 }
@@ -1178,26 +1127,26 @@ pub fn updateFile(self: *Self, uri_value: []const u8, source: [:0]const u8) !voi
 /// Clear all merged record arrays and re-run Sema over every file in order.
 /// Files (their Asts/sources) are kept; only the semantic layer is rebuilt.
 fn rebuildFromFiles(self: *Self) !void {
-    const tracy_zone = ztracy.ZoneNC(@src(), "Data.rebuildFromFiles", 0x00_00_ff_00);
-    defer tracy_zone.End();
+    self.reset();
 
-    self.clearRecords();
     // Reset per-file token_interned tables (the indices are about to be
     // re-assigned by Sema).
+    // FIXME: This is ugly state mutation
     for (self.files.items) |*f| {
         const n = f.ast.tokens.items.len;
         f.token_interned.clearRetainingCapacity();
         try f.token_interned.appendNTimes(self.alloc, std.math.maxInt(u32), n);
     }
 
+    var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer scratch.deinit();
+    const alloc = scratch.allocator();
+
     for (self.files.items, 0..) |_, i| {
         const is_root = i == 0;
-        var sem = Sema.init(self.alloc, self, @intCast(i), is_root);
-        defer sem.deinit();
-        const imports = try sem.run();
-        // Imports are tracked from the outer Project on initial load, but on
-        // rebuild we don't currently re-walk them; the file set is unchanged.
-        self.alloc.free(imports);
+        var sem = Sema.init(alloc, self, @intCast(i), is_root);
+        // Ignore imports; file set is unchanged when a file is updated
+        _ = try sem.run(alloc);
     }
 }
 

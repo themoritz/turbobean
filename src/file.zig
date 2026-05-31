@@ -9,7 +9,7 @@ const Data = @import("data.zig");
 const Self = @This();
 
 uri: Uri,
-source: [:0]const u8,
+source: std.ArrayList(u8),
 ast: Ast,
 /// Parallel to `ast.tokens`; interpretation depends on the token's tag.
 token_interned: std.ArrayList(u32),
@@ -17,32 +17,33 @@ token_interned: std.ArrayList(u32),
 /// Cross-file errors live on `Project.errors`.
 errors: std.ArrayList(ErrorDetails),
 
-/// Takes ownership of `uri` and `source`.
-pub fn loadFromSource(alloc: Allocator, uri: Uri, source: [:0]const u8) !Self {
-    var ast = try Ast.parse(alloc, uri, source);
-    errdefer ast.deinit();
-
-    var token_interned: std.ArrayList(u32) = .empty;
-    errdefer token_interned.deinit(alloc);
-    try token_interned.appendNTimes(alloc, std.math.maxInt(u32), ast.tokens.items.len);
-
-    const errors = try ast.errors.clone(alloc);
-
+pub fn init(uri: Uri) Self {
     return .{
         .uri = uri,
-        .source = source,
-        .ast = ast,
-        .token_interned = token_interned,
-        .errors = errors,
+        .source = .empty,
+        .ast = .empty,
+        .token_interned = .empty,
+        .errors = .empty,
     };
 }
 
-pub fn deinit(self: *Self, alloc: Allocator) void {
-    alloc.free(self.source);
-    self.uri.deinit(alloc);
-    self.ast.deinit();
-    self.token_interned.deinit(alloc);
-    self.errors.deinit(alloc);
+/// Makes a copy of source
+pub fn loadFromSource(self: *Self, alloc: Allocator, source: [:0]const u8) !void {
+    self.reset();
+
+    try self.source.appendSlice(alloc, source);
+    try self.source.append(alloc, 0);
+    // Recover slice at new owned position:
+    const source_ = self.source.items[0 .. self.source.items.len - 1 :0];
+    try self.ast.parse(alloc, self.uri, source_);
+    try self.token_interned.appendNTimes(alloc, std.math.maxInt(u32), self.ast.tokens.items.len);
+    try self.errors.appendSlice(alloc, self.ast.errors.items);
+}
+
+pub fn reset(self: *Self) void {
+    self.source.clearRetainingCapacity();
+    self.token_interned.clearRetainingCapacity();
+    self.errors.clearRetainingCapacity();
 }
 
 pub fn token(self: *const Self, index: Ast.TokenIndex) Lexer.Token {
@@ -83,6 +84,6 @@ pub fn addWarning(self: *Self, alloc: Allocator, tok: Ast.TokenIndex, tag: Error
         .severity = .warn,
         .token = self.token(tok),
         .uri = self.uri,
-        .source = self.source,
+        .source = self.source.items,
     });
 }

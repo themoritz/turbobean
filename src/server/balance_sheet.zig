@@ -10,7 +10,6 @@ const Data = @import("../data.zig");
 const DisplaySettings = @import("DisplaySettings.zig");
 const PlainInventory = @import("../inventory.zig").PlainInventory;
 const Prices = @import("../Prices.zig");
-const StringStore = @import("../StringStore.zig");
 const t = @import("templates.zig");
 const tpl = t.balance_sheet;
 const common = @import("common.zig");
@@ -37,7 +36,6 @@ const NetWorth = struct {
     conversion_target: ?Data.CurrencyIndex,
     inv: PlainInventory,
     converted_inv: PlainInventory,
-    string_store: *StringStore,
     plot_data: *common.PlotData,
 
     pub fn init(
@@ -45,7 +43,6 @@ const NetWorth = struct {
         prices: *Prices,
         project: *Project,
         conversion_target: ?Data.CurrencyIndex,
-        string_store: *StringStore,
         plot_data: *common.PlotData,
     ) !NetWorth {
         return .{
@@ -55,14 +52,8 @@ const NetWorth = struct {
             .conversion_target = conversion_target,
             .inv = try PlainInventory.init(alloc, null),
             .converted_inv = try PlainInventory.init(alloc, null),
-            .string_store = string_store,
             .plot_data = plot_data,
         };
-    }
-
-    pub fn deinit(self: *NetWorth) void {
-        self.inv.deinit();
-        self.converted_inv.deinit();
     }
 
     pub fn flush(self: *NetWorth, date: Date) !void {
@@ -79,10 +70,10 @@ const NetWorth = struct {
         while (iter.next()) |kv| {
             const balance = kv.value_ptr.*;
             try self.plot_data.points.append(self.alloc, .{
-                .date = try self.string_store.print("{f}", .{date}),
+                .date = try std.fmt.allocPrint(self.alloc, "{f}", .{date}),
                 .currency = self.project.data.currencies.get(kv.key),
                 .balance = balance.toFloat(),
-                .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
+                .balance_rendered = try std.fmt.allocPrint(self.alloc, "{f}", .{balance.withPrecision(2)}),
             });
         }
     }
@@ -106,21 +97,16 @@ fn render(
     project: *Project,
     display: DisplaySettings,
     out: *std.Io.Writer,
-    string_store: *StringStore,
     ctx: void,
 ) !common.PlotData {
     _ = ctx;
     var tree = try Tree.init(alloc, &project.data.accounts, &project.data.currencies);
-    defer tree.deinit();
 
     const operating_currencies = try project.getConfig().getOperatingCurrencies(alloc);
-    defer alloc.free(operating_currencies);
 
     var prices = Prices.init(alloc);
-    defer prices.deinit();
 
     var plot_data = common.PlotData{ .alloc = alloc };
-    errdefer plot_data.deinit();
 
     // `Equity:Earnings:Previous` / `Equity:Earnings:Current` are system
     // accounts used by the earnings clearing step; intern so we have stable
@@ -137,10 +123,8 @@ fn render(
         &prices,
         project,
         conversion_target,
-        string_store,
         &plot_data,
     );
-    defer net_worth.deinit();
 
     var date_state = DateState.before;
 

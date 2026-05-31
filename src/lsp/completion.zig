@@ -3,7 +3,7 @@ const lsp = @import("lsp");
 
 /// For a given source file and line number, returns the slice of the source
 /// that represents the text in the requested line number (excluding newlines).
-pub fn getLine(source: [:0]const u8, line: u32) ?[]const u8 {
+pub fn getLine(source: []const u8, line: u32) ?[]const u8 {
     var current_line: u32 = 0;
     var line_start: usize = 0;
 

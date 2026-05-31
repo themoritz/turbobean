@@ -17,7 +17,6 @@ const Uri = @import("Uri.zig");
 const Node = Ast.Node;
 const Self = @This();
 
-alloc: Allocator,
 data: *Data,
 file_id: u8,
 is_root: bool,
@@ -38,7 +37,6 @@ const StackedKV = struct {
 
 pub fn init(alloc: Allocator, data: *Data, file_id: u8, is_root: bool) Self {
     return .{
-        .alloc = alloc,
         .data = data,
         .file_id = file_id,
         .is_root = is_root,
@@ -46,12 +44,6 @@ pub fn init(alloc: Allocator, data: *Data, file_id: u8, is_root: bool) Self {
         .active_tags = .init(alloc),
         .active_meta = .init(alloc),
     };
-}
-
-pub fn deinit(self: *Self) void {
-    self.imports.deinit(self.alloc);
-    self.active_tags.deinit();
-    self.active_meta.deinit();
 }
 
 // --- file helpers -----------------------------------------------------------
@@ -82,13 +74,13 @@ fn optTokSlice(self: *Self, index: Ast.OptionalTokenIndex) ?[]const u8 {
 // --- intern helpers ---------------------------------------------------------
 
 fn internAccount(self: *Self, t: Ast.TokenIndex) !Data.AccountIndex {
-    const idx = try self.data.accounts.intern(self.alloc, self.tokSlice(t));
+    const idx = try self.data.accounts.intern(self.data.alloc, self.tokSlice(t));
     self.file().token_interned.items[@intFromEnum(t)] = @intFromEnum(idx);
     return idx;
 }
 
 fn internCurrency(self: *Self, t: Ast.TokenIndex) !Data.CurrencyIndex {
-    const idx = try self.data.currencies.intern(self.alloc, self.tokSlice(t));
+    const idx = try self.data.currencies.intern(self.data.alloc, self.tokSlice(t));
     self.file().token_interned.items[@intFromEnum(t)] = @intFromEnum(idx);
     return idx;
 }
@@ -101,16 +93,16 @@ fn internCurrencyOpt(self: *Self, t: Ast.OptionalTokenIndex) !Data.OptionalCurre
 // --- error reporting --------------------------------------------------------
 
 fn warnAt(self: *Self, token: Ast.TokenIndex, msg: ErrorDetails.Tag) !void {
-    try self.file().addWarning(self.alloc, token, msg);
+    try self.file().addWarning(self.data.alloc, token, msg);
 }
 
 fn errAt(self: *Self, token: Ast.TokenIndex, msg: ErrorDetails.Tag) !void {
-    try self.file().addError(self.alloc, token, msg);
+    try self.file().addError(self.data.alloc, token, msg);
 }
 
 // --- top level --------------------------------------------------------------
 
-pub fn run(self: *Self) !Data.Imports {
+pub fn run(self: *Self, alloc: Allocator) !Data.Imports {
     for (self.ast().root()) |decl_index| {
         const n = self.ast().node(decl_index);
         switch (n) {
@@ -125,7 +117,7 @@ pub fn run(self: *Self) !Data.Imports {
             else => {},
         }
     }
-    return self.imports.toOwnedSlice(self.alloc);
+    return self.imports.toOwnedSlice(alloc);
 }
 
 fn handlePushtag(self: *Self, tag_tok: Ast.TokenIndex) !void {
@@ -156,7 +148,7 @@ fn handleOption(self: *Self, kv: Ast.KeyValue) !void {
 fn handleInclude(self: *Self, file_tok: Ast.TokenIndex) !void {
     const file_token = self.tok(file_tok);
     const slice = file_token.slice;
-    try self.imports.append(self.alloc, .{
+    try self.imports.append(self.data.alloc, .{
         .path = slice[1 .. slice.len - 1],
         .token = file_token,
     });
@@ -220,7 +212,7 @@ fn convertEntry(self: *Self, extra: Ast.ExtraIndex) !void {
         else => return,
     };
 
-    try self.data.entries.append(self.alloc, Data.Entry{
+    try self.data.entries.append(self.data.alloc, Data.Entry{
         .date = date,
         .main_token = entry_data.date,
         .tagslinks = tagslinks,
@@ -284,17 +276,17 @@ fn convertPosting(self: *Self, posting_index: Node.Index) !void {
 
     const price_idx: Data.OptionalPriceIndex = if (price) |pr| blk: {
         const idx: Data.PriceIndex = @enumFromInt(self.data.prices.items.len);
-        try self.data.prices.append(self.alloc, pr);
+        try self.data.prices.append(self.data.alloc, pr);
         break :blk idx.toOptional();
     } else .none;
 
     const lot_spec_idx: Data.OptionalLotSpecIndex = if (lot_spec) |ls| blk: {
         const idx: Data.LotSpecIndex = @enumFromInt(self.data.lot_specs.items.len);
-        try self.data.lot_specs.append(self.alloc, ls);
+        try self.data.lot_specs.append(self.data.alloc, ls);
         break :blk idx.toOptional();
     } else .none;
 
-    try self.data.postings.append(self.alloc, Data.Posting{
+    try self.data.postings.append(self.data.alloc, Data.Posting{
         .account = p.account,
         .flag = p.flag,
         .amount_number = Data.PackedNumber.pack(amount.number),
@@ -374,7 +366,7 @@ fn convertOpen(self: *Self, open_extra: Ast.ExtraIndex) !Data.Entry.Payload {
     const cur_top = self.data.open_currencies.items.len;
     for (self.ast().tokenList(open.currencies)) |cur_tok| {
         const idx = try self.internCurrency(cur_tok);
-        try self.data.open_currencies.append(self.alloc, idx);
+        try self.data.open_currencies.append(self.data.alloc, idx);
     }
     const currencies = Data.Range.from(cur_top, self.data.open_currencies.items.len);
 
@@ -431,7 +423,7 @@ fn convertTagsLinks(self: *Self, range: Node.Range) !Data.Range {
             .link => .link,
             else => continue,
         };
-        try self.data.tagslinks.append(self.alloc, Data.TagLink{
+        try self.data.tagslinks.append(self.data.alloc, Data.TagLink{
             .kind = kind,
             .token = tag_tok,
             .explicit = true,
@@ -441,7 +433,7 @@ fn convertTagsLinks(self: *Self, range: Node.Range) !Data.Range {
     // Implicit tags from active pushtag stack.
     var tags_iter = self.active_tags.iterator();
     while (tags_iter.next()) |kv| {
-        try self.data.tagslinks.append(self.alloc, Data.TagLink{
+        try self.data.tagslinks.append(self.data.alloc, Data.TagLink{
             .kind = .tag,
             .token = kv.value_ptr.*,
             .explicit = false,
@@ -457,7 +449,7 @@ fn convertMeta(self: *Self, range: Node.Range, add_from_stack: bool) !Data.Range
     for (self.ast().list(range)) |kv_index| {
         const n = self.ast().node(kv_index);
         const kv = n.key_value;
-        try self.data.meta.append(self.alloc, Data.KeyValue{
+        try self.data.meta.append(self.data.alloc, Data.KeyValue{
             .key = kv.key,
             .value = kv.value,
         });
@@ -466,7 +458,7 @@ fn convertMeta(self: *Self, range: Node.Range, add_from_stack: bool) !Data.Range
     if (add_from_stack) {
         var meta_iter = self.active_meta.iterator();
         while (meta_iter.next()) |kv| {
-            try self.data.meta.append(self.alloc, Data.KeyValue{
+            try self.data.meta.append(self.data.alloc, Data.KeyValue{
                 .key = kv.value_ptr.key_tok,
                 .value = kv.value_ptr.value_tok,
             });

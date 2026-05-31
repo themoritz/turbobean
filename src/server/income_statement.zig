@@ -10,7 +10,6 @@ const Data = @import("../data.zig");
 const DisplaySettings = @import("DisplaySettings.zig");
 const PlainInventory = @import("../inventory.zig").PlainInventory;
 const Prices = @import("../Prices.zig");
-const StringStore = @import("../StringStore.zig");
 const t = @import("templates.zig");
 const tpl = t.income_statement;
 const common = @import("common.zig");
@@ -36,8 +35,8 @@ pub const PlotData = struct {
     current_data_points: std.ArrayList(DataPoint) = .empty,
 
     const PeriodGroup = struct {
-        date: StringStore.String,
-        period: StringStore.String,
+        date: []const u8,
+        period: []const u8,
         data_points: []DataPoint,
     };
 
@@ -45,21 +44,14 @@ pub const PlotData = struct {
         currency: []const u8,
         account: []const u8,
         balance: f64,
-        balance_rendered: StringStore.String,
+        balance_rendered: []const u8,
     };
-
-    pub fn deinit(self: *PlotData) void {
-        for (self.periods.items) |period| {
-            self.alloc.free(period.data_points);
-        }
-        self.periods.deinit(self.alloc);
-    }
 
     pub fn addDataPoint(self: *PlotData, data_point: DataPoint) !void {
         try self.current_data_points.append(self.alloc, data_point);
     }
 
-    pub fn endPeriod(self: *PlotData, date: StringStore.String, period: StringStore.String) !void {
+    pub fn endPeriod(self: *PlotData, date: []const u8, period: []const u8) !void {
         try self.periods.append(self.alloc, .{
             .date = date,
             .period = period,
@@ -83,7 +75,6 @@ const DataTracker = struct {
     conversion_target: ?Data.CurrencyIndex,
     display: DisplaySettings,
     inv: Inventories,
-    string_store: *StringStore,
     plot_data: *PlotData,
 
     pub fn init(
@@ -92,7 +83,6 @@ const DataTracker = struct {
         project: *Project,
         conversion_target: ?Data.CurrencyIndex,
         display: DisplaySettings,
-        string_store: *StringStore,
         plot_data: *PlotData,
     ) DataTracker {
         return .{
@@ -102,13 +92,8 @@ const DataTracker = struct {
             .conversion_target = conversion_target,
             .display = display,
             .inv = Inventories.init(alloc),
-            .string_store = string_store,
             .plot_data = plot_data,
         };
-    }
-
-    pub fn deinit(self: *DataTracker) void {
-        self.inv.deinit();
     }
 
     pub fn flush(self: *DataTracker, date: Date) !void {
@@ -122,13 +107,13 @@ const DataTracker = struct {
                 .currency = self.project.data.currencies.get(pair.currency),
                 .account = self.project.data.accounts.get(pair.account),
                 .balance = balance.toFloat(),
-                .balance_rendered = try self.string_store.print("{f}", .{balance.withPrecision(2)}),
+                .balance_rendered = try std.fmt.allocPrint(self.alloc, "{f}", .{balance.withPrecision(2)}),
             });
         }
         self.inv.clear();
 
-        const date_str = try self.string_store.print("{f}", .{date});
-        const period_str = try self.display.interval.formatPeriod(date, self.string_store);
+        const date_str = try std.fmt.allocPrint(self.alloc, "{f}", .{date});
+        const period_str = try self.display.interval.formatPeriod(date, self.alloc);
 
         try self.plot_data.endPeriod(date_str, period_str);
     }
@@ -148,21 +133,16 @@ fn render(
     project: *Project,
     display: DisplaySettings,
     out: *std.Io.Writer,
-    string_store: *StringStore,
     ctx: void,
 ) !PlotData {
     _ = ctx;
     var tree = try Tree.init(alloc, &project.data.accounts, &project.data.currencies);
-    defer tree.deinit();
 
     const operating_currencies = try project.getConfig().getOperatingCurrencies(alloc);
-    defer alloc.free(operating_currencies);
 
     var prices = Prices.init(alloc);
-    defer prices.deinit();
 
     var plot_data = PlotData{ .alloc = alloc };
-    errdefer plot_data.deinit();
 
     const conversion_target: ?Data.CurrencyIndex = switch (display.conversion) {
         .units => null,
@@ -175,10 +155,8 @@ fn render(
         project,
         conversion_target,
         display,
-        string_store,
         &plot_data,
     );
-    defer data_tracker.deinit();
 
     var iter = common.IntervalIterator.init(project, display.interval);
     while (iter.next()) |it| switch (it) {
@@ -253,10 +231,6 @@ const Inventories = struct {
 
     pub fn init(alloc: std.mem.Allocator) Inventories {
         return .{ .map = std.AutoHashMap(Pair, Number).init(alloc) };
-    }
-
-    pub fn deinit(self: *Inventories) void {
-        self.map.deinit();
     }
 
     pub fn clear(self: *Inventories) void {

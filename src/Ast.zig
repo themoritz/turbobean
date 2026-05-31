@@ -5,22 +5,23 @@ const ErrorDetails = @import("ErrorDetails.zig");
 const Parser = @import("Parser.zig");
 const Uri = @import("Uri.zig");
 
-alloc: std.mem.Allocator,
 source: [:0]const u8,
 tokens: std.ArrayList(Lexer.Token),
 nodes: std.ArrayList(Node),
 extra_data: std.ArrayList(u32),
 errors: std.ArrayList(ErrorDetails),
 
-pub fn parse(alloc: std.mem.Allocator, uri: Uri, source: [:0]const u8) !Self {
-    var self = Self{
-        .alloc = alloc,
-        .source = source,
-        .tokens = .empty,
-        .nodes = .empty,
-        .extra_data = .empty,
-        .errors = .empty,
-    };
+pub const empty = Self{
+    .source = undefined,
+    .tokens = .empty,
+    .nodes = .empty,
+    .extra_data = .empty,
+    .errors = .empty,
+};
+
+pub fn parse(self: *Self, alloc: std.mem.Allocator, uri: Uri, source: [:0]const u8) !void {
+    self.reset();
+    self.source = source;
 
     // Average 10 bytes per token:
     try self.tokens.ensureTotalCapacity(alloc, source.len / 10);
@@ -31,17 +32,15 @@ pub fn parse(alloc: std.mem.Allocator, uri: Uri, source: [:0]const u8) !Self {
         if (token.tag == .eof) break;
     }
 
-    var parser = Parser.init(alloc, uri, &self);
-    defer parser.deinit();
+    var parser = Parser.init(alloc, uri, self);
     try parser.parse();
-    return self;
 }
 
-pub fn deinit(self: *Self) void {
-    self.tokens.deinit(self.alloc);
-    self.nodes.deinit(self.alloc);
-    self.extra_data.deinit(self.alloc);
-    self.errors.deinit(self.alloc);
+fn reset(self: *Self) void {
+    self.tokens.clearRetainingCapacity();
+    self.nodes.clearRetainingCapacity();
+    self.extra_data.clearRetainingCapacity();
+    self.errors.clearRetainingCapacity();
 }
 
 pub const ExtraIndex = enum(u32) {

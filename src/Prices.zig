@@ -27,10 +27,6 @@ pub fn init(alloc: Allocator) Self {
     };
 }
 
-pub fn deinit(self: *Self) void {
-    self.latest_prices.deinit();
-}
-
 /// Set the latest price for a currency pair. Also stores the inverse pair
 /// automatically. `rate` is the number to multiply with when going from `from`
 /// to `to`.
@@ -89,7 +85,7 @@ pub fn convertInventory(
 }
 
 test "setPrice stores both forward and inverse rates" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
 
@@ -105,7 +101,7 @@ test "setPrice stores both forward and inverse rates" {
 }
 
 test "getPrice returns null for unknown pair" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
 
@@ -119,7 +115,7 @@ test "getPrice returns null for unknown pair" {
 }
 
 test "setPrice updates existing rates" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
 
@@ -141,7 +137,7 @@ test "setPrice updates existing rates" {
 }
 
 test "convert amount between currencies" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
 
@@ -159,7 +155,7 @@ test "convert amount between currencies" {
 }
 
 test "convert returns null for unknown currency pair" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
 
@@ -174,7 +170,7 @@ test "convert returns null for unknown currency pair" {
 }
 
 test "convert returns same amount for same currency" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
 
@@ -189,7 +185,7 @@ test "convert returns same amount for same currency" {
 }
 
 test "no inverse of zero rate" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
     defer pool.deinit(alloc);
 

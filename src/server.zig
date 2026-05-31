@@ -14,7 +14,6 @@ var running: std.atomic.Value(bool) = .init(true);
 
 pub fn loop(alloc: std.mem.Allocator, io: Io, project: *Project) !void {
     var threads = std.ArrayList(std.Thread).empty;
-    defer threads.deinit(alloc);
 
     const state = try State.init(alloc, io, project);
     defer state.deinit();
@@ -31,7 +30,7 @@ pub fn loop(alloc: std.mem.Allocator, io: Io, project: *Project) !void {
 
         while (running.load(.seq_cst)) {
             const stream = try net_server.accept(io);
-            const thread = try std.Thread.spawn(.{}, handle_conn, .{ alloc, io, stream, state, &static });
+            const thread = try std.Thread.spawn(.{}, handle_conn, .{ io, stream, state, &static });
             try threads.append(alloc, thread);
             // Wait 1 ms in case this connection is a shutdown request.
             std.Io.sleep(io, .fromMilliseconds(1), .awake) catch {};
@@ -44,7 +43,6 @@ pub fn loop(alloc: std.mem.Allocator, io: Io, project: *Project) !void {
 }
 
 fn handle_conn(
-    alloc: Allocator,
     io: Io,
     stream: std.Io.net.Stream,
     state: *State,
@@ -67,11 +65,14 @@ fn handle_conn(
         return;
     };
 
-    const decoded = try http.decode_url_alloc(alloc, req.head.target);
-    defer alloc.free(decoded);
+    var arena_alloc = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena_alloc.deinit();
+    const arena = arena_alloc.allocator();
+
+    const decoded = try http.decode_url_alloc(arena, req.head.target);
     std.log.info("Request: {s} {s}", .{ @tagName(req.head.method), decoded });
 
-    try route(alloc, state, static, &req);
+    try route(arena, state, static, &req);
 }
 
 fn route(alloc: Allocator, state: *State, static: *Static, request: *std.http.Server.Request) !void {
@@ -117,7 +118,6 @@ fn route(alloc: Allocator, state: *State, static: *Static, request: *std.http.Se
     if (std.mem.startsWith(u8, target, "/sse/journal/")) {
         const raw_account = if (std.mem.indexOf(u8, target, "?")) |i| target[13..i] else target[13..];
         const account = try http.decode_url_alloc(alloc, raw_account);
-        defer alloc.free(account);
         journal.handler(alloc, request, state, account) catch |err| switch (err) {
             error.WriteFailed => return, // TODO: Broken pipe?
             else => return err,

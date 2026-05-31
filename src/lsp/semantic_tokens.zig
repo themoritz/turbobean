@@ -230,7 +230,7 @@ test "unicode account" {
 }
 
 fn testGoTokens(source: [:0]const u8, expected: []const u32) !void {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var lexer = Lexer.init(source);
 
     var tokens = std.ArrayList(Token).empty;

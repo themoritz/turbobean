@@ -1,7 +1,6 @@
 const std = @import("std");
 const Self = @This();
 const Date = @import("../date.zig").Date;
-const StringStore = @import("../StringStore.zig");
 
 interval: Interval = .week,
 conversion: Conversion = .{ .units = {} },
@@ -26,19 +25,19 @@ pub const Interval = enum {
         }
     }
 
-    pub fn formatPeriod(self: Interval, date: Date, string_store: *StringStore) !StringStore.String {
+    pub fn formatPeriod(self: Interval, date: Date, alloc: std.mem.Allocator) ![]const u8 {
         switch (self) {
-            .day => return try string_store.print("{f}", .{date}),
+            .day => return try std.fmt.allocPrint(alloc, "{f}", .{date}),
             .week => {
                 const week = date.getISOWeek();
-                return try string_store.print("W{d} {d}", .{ week, date.year });
+                return try std.fmt.allocPrint(alloc, "W{d} {d}", .{ week, date.year });
             },
-            .month => return try string_store.print("{s} {d}", .{ date.getMonthName(), date.year }),
+            .month => return try std.fmt.allocPrint(alloc, "{s} {d}", .{ date.getMonthName(), date.year }),
             .quarter => {
                 const quarter = date.getQuarter();
-                return try string_store.print("Q{d} {d}", .{ quarter, date.year });
+                return try std.fmt.allocPrint(alloc, "Q{d} {d}", .{ quarter, date.year });
             },
-            .year => return try string_store.print("{d}", .{date.year}),
+            .year => return try std.fmt.allocPrint(alloc, "{d}", .{date.year}),
         }
     }
 };
@@ -55,11 +54,6 @@ pub const Conversion = union(enum) {
         }
     }
 };
-
-pub fn deinit(self: *Self, alloc: std.mem.Allocator) void {
-    if (self.start_date) |start| alloc.free(start);
-    if (self.end_date) |end| alloc.free(end);
-}
 
 pub fn isWithinDateRange(self: Self, date: Date) bool {
     if (self.start_date) |start| {
@@ -109,12 +103,11 @@ pub fn hasEndDate(self: Self) bool {
 
 test "parse" {
     const http = @import("http.zig");
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
 
     const input = "/?interval=month&conversion=USD";
 
     var request = try http.ParsedRequest.parse(alloc, input);
-    defer request.deinit(alloc);
     const actual = try http.Query(Self).parse(alloc, &request.params);
 
     try std.testing.expectEqual(.month, actual.interval);
@@ -123,12 +116,11 @@ test "parse" {
 
 test "parse default" {
     const http = @import("http.zig");
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
 
     const input = "/?foo=bar";
 
     var request = try http.ParsedRequest.parse(alloc, input);
-    defer request.deinit(alloc);
     const actual = try http.Query(Self).parse(alloc, &request.params);
 
     try std.testing.expectEqual(.week, actual.interval);
@@ -136,13 +128,11 @@ test "parse default" {
 }
 
 fn testFormatPeriod(year: u32, month: u4, day: u5, interval: Interval, expected: []const u8) !void {
-    const alloc = std.testing.allocator;
-    var string_store = StringStore.init(alloc);
-    defer string_store.deinit();
+    const alloc = std.heap.smp_allocator;
 
     const date = Date{ .year = year, .month = month, .day = day };
-    const result = try interval.formatPeriod(date, &string_store);
-    try std.testing.expectEqualStrings(expected, result.slice());
+    const result = try interval.formatPeriod(date, alloc);
+    try std.testing.expectEqualStrings(expected, result);
 }
 
 test "formatPeriod - day" {

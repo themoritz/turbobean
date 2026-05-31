@@ -30,12 +30,6 @@ pub fn StringPool(comptime Index: type, comptime OptionalIndex: type) type {
             };
         }
 
-        pub fn deinit(self: *Self, alloc: Allocator) void {
-            self.bytes.deinit(alloc);
-            self.starts.deinit(alloc);
-            self.map.deinit(alloc);
-        }
-
         pub fn count(self: *const Self) u32 {
             return @intCast(self.starts.items.len - 1);
         }
@@ -106,9 +100,8 @@ pub const CurrencyPool = StringPool(Data.CurrencyIndex, Data.OptionalCurrencyInd
 pub const AccountPool = StringPool(Data.AccountIndex, Data.OptionalAccountIndex);
 
 test "intern deduplicates and preserves identity" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
-    defer pool.deinit(alloc);
 
     const a1 = try pool.intern(alloc, "USD");
     const a2 = try pool.intern(alloc, "EUR");
@@ -121,9 +114,8 @@ test "intern deduplicates and preserves identity" {
 }
 
 test "intern handles empty string and many inserts" {
-    const alloc = std.testing.allocator;
+    const alloc = std.heap.smp_allocator;
     var pool = try CurrencyPool.init(alloc);
-    defer pool.deinit(alloc);
 
     const empty = try pool.intern(alloc, "");
     try std.testing.expectEqualStrings("", pool.get(empty));

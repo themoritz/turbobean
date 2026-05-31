@@ -361,7 +361,6 @@ test "format" {
 }
 
 fn testFormat(num: Number, expected: []const u8) !void {
-    const formatted = try std.fmt.allocPrint(std.testing.allocator, "{f}", .{num.withPrecision(2)});
-    defer std.testing.allocator.free(formatted);
+    const formatted = try std.fmt.allocPrint(std.heap.smp_allocator, "{f}", .{num.withPrecision(2)});
     try std.testing.expectEqualStrings(expected, formatted);
 }
