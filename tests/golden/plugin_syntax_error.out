@@ -1,0 +1,7 @@
+tests/golden/plugin_syntax_error.bean: [[31mError[0m] Failed to load plugin plugin_syntax_error: plugin_syntax_error.lua:5: 'end' expected (to close 'if' at line 3) near <eof>
+
+    1 | plugin "plugin_syntax_error"
+               [31m^^^^^^^^^^^^^^^^^^^^^[0m
+
+Assets
+└ Cash

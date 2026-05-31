@@ -74,13 +74,11 @@ pub fn build(b: *std.Build) !void {
     }
 
     {
-        // Add a unit test step
+        // Add a unit test step. Reuse the same module factory as the exe so
+        // tests that exercise project/data code (which pull in ztracy, zlua,
+        // etc.) compile cleanly.
         const unit_tests = b.addTest(.{
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/main.zig"),
-                .target = target,
-                .optimize = optimize,
-            }),
+            .root_module = createRootModule(b, target, optimize, options, ztracy),
         });
 
         const run_unit_tests = b.addRunArtifact(unit_tests);
@@ -204,6 +202,11 @@ fn createRootModule(
     exe_mod.addImport("lsp", b.dependency("lsp_kit", .{}).module("lsp"));
     exe_mod.addImport("zts", b.dependency("zts", .{}).module("zts"));
     exe_mod.addImport("ztracy", ztracy.module("root"));
+    exe_mod.addImport("zlua", b.dependency("zlua", .{
+        .target = target,
+        .optimize = optimize,
+        .lang = .lua54,
+    }).module("zlua"));
     exe_mod.addOptions("config", options);
     return exe_mod;
 }

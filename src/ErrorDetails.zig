@@ -65,6 +65,14 @@ pub const Tag = union(enum) {
 
     flagged,
     inferred_price,
+
+    plugin_error: PluginError,
+    plugin_load_failed: PluginError,
+};
+
+pub const PluginError = struct {
+    plugin: []const u8,
+    message: []const u8,
 };
 
 pub fn print(e: Self, alloc: Allocator, io: std.Io) !void {
@@ -146,6 +154,8 @@ pub fn formatMessage(self: Self, writer: *std.Io.Writer) !void {
         .include_file_not_found => try writer.writeAll("Included file not found"),
         .flagged => try writer.writeAll("Flagged"),
         .inferred_price => try writer.writeAll("Price inferred from cost spec. Please consider using @ syntax."),
+        .plugin_error => |e| try writer.print("[plugin {s}] {s}", .{ e.plugin, e.message }),
+        .plugin_load_failed => |e| try writer.print("Failed to load plugin {s}: {s}", .{ e.plugin, e.message }),
     }
 }
 

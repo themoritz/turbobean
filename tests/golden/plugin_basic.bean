@@ -1,0 +1,8 @@
+plugin "plugin_basic"
+
+2024-01-01 open Assets:Cash USD
+2024-01-01 open Expenses:Food
+
+2024-01-02 * "Acme" "groceries"
+  Assets:Cash                       -50.00 USD
+  Expenses:Food

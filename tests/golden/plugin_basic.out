@@ -1,0 +1,9 @@
+tests/golden/plugin_basic.bean: [[31mError[0m] [plugin plugin_basic] txn 2024-01-02 payee=Acme narration=groceries postings=2
+
+    6 | 2024-01-02 * "Acme" "groceries"
+        [31m^^^^^^^^^^[0m
+
+Assets     -50.00 USD
+└ Cash     -50.00 USD
+Expenses   50 USD
+└ Food     50 USD

@@ -1,0 +1,16 @@
+tests/golden/plugin_attach.bean: [[31mError[0m] [plugin plugin_attach] no Equity postings allowed
+
+   13 |   Equity:Opening
+          [31m^^^^^^^^^^^^^^[0m
+
+tests/golden/plugin_attach.bean: [[33mWarning[0m] [plugin plugin_attach] Acme is on the watchlist
+
+    7 | 2024-01-02 * "Acme" "groceries"
+        [33m^^^^^^^^^^[0m
+
+Assets      40.00 USD
+└ Cash      40.00 USD
+Equity      -50 USD
+└ Opening   -50 USD
+Expenses    10 USD
+└ Food      10 USD

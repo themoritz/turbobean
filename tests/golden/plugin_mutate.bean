@@ -1,0 +1,8 @@
+plugin "plugin_mutate"
+
+2024-01-01 open Assets:Cash USD
+2024-01-01 open Expenses:Food
+
+2024-01-02 * "OLD-PAYEE" "OLD-NARRATION"
+  Assets:Cash    -10.00 USD
+  Expenses:Food

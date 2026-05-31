@@ -1,0 +1,7 @@
+plugin "plugin_passthrough_errors"
+
+2024-01-01 open Assets:Cash USD
+
+2024-01-02 * "groceries"
+  Assets:Cash         -10.00 USD
+  Expenses:NotOpened

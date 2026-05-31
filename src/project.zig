@@ -13,6 +13,7 @@ const InvSummary = @import("inventory.zig").Summary;
 const Date = @import("date.zig").Date;
 const Number = @import("number.zig").Number;
 const Solver = @import("solver.zig").Solver;
+const plugins = @import("plugins.zig");
 const string_pool = @import("string_pool.zig");
 const AccountPool = string_pool.AccountPool;
 const CurrencyPool = string_pool.CurrencyPool;
@@ -32,6 +33,10 @@ data: Data,
 /// Project-level errors (cross-file analysis: balance, check). Per-file parse
 /// errors live on each `File.errors`.
 errors: std.ArrayList(ErrorDetails),
+
+/// Backing memory for plugin-emitted error messages and intermediate strings.
+/// Reset at the start of each pipeline run so re-runs don't accumulate.
+plugin_arena: std.heap.ArenaAllocator,
 
 // LSP specific caches
 account_open_pos: AccountMap(FileLine),
@@ -56,6 +61,7 @@ pub fn load(alloc: Allocator, io: Io, uri: Uri, source: ?[:0]const u8) !Self {
         .io = io,
         .data = try Data.init(alloc),
         .errors = .empty,
+        .plugin_arena = std.heap.ArenaAllocator.init(alloc),
         .account_open_pos = .{},
         .tags = std.StringHashMap(void).init(alloc),
         .links = std.StringHashMap(void).init(alloc),
@@ -70,6 +76,7 @@ pub fn load(alloc: Allocator, io: Io, uri: Uri, source: ?[:0]const u8) !Self {
 pub fn deinit(self: *Self) void {
     self.data.deinit();
     self.errors.deinit(self.alloc);
+    self.plugin_arena.deinit();
 
     self.account_open_pos.deinit(self.alloc);
     self.tags.deinit();
@@ -257,6 +264,8 @@ pub fn printErrors(self: *Self) !void {
 
 pub fn pipeline(self: *Self) !void {
     self.errors.clearRetainingCapacity();
+    _ = self.plugin_arena.reset(.retain_capacity);
+    try plugins.run(self);
     try self.balanceTransactions();
     self.sortEntries();
     try self.refreshLspCache();
@@ -645,75 +654,78 @@ pub const AccountIterator = struct {
         document,
     };
 
-    pub fn next(it: *AccountIterator) ?struct { file: u8, token: Token, kind: Kind } {
+    pub const Yielded = struct { file: u8, token: Token, kind: Kind };
+
+    pub fn next(it: *AccountIterator) ?Yielded {
         const data = &it.self.data;
         const entry_files = data.entries.items(.file);
         const payloads = data.entries.items(.payload);
 
         while (it.entry < data.entries.len) {
             const file = entry_files[it.entry];
-            const fdata = &data.files.items[file];
 
-            // Drain in-progress transaction first. The filter was already
-            // applied when we entered this transaction.
+            // Drain in-progress transaction first.
             if (it.in_tx) {
+                const is_synth = data.synth_file_id != null and data.synth_file_id.? == file;
                 while (it.posting < it.posting_end) {
                     const idx = it.posting;
                     it.posting += 1;
-                    if (data.postings.items(.ast_node)[idx] == .none) continue;
+                    // Balancer-added pnl postings have `ast_node == .none` and
+                    // their account token aliases the pnl entry's account
+                    // (already yielded via `.pnl` / `.pnl_income`). Skip them
+                    // for non-synth entries to avoid duplicates. Plugin-emitted
+                    // postings also have `ast_node == .none`, but they live in
+                    // the synth file and we need to yield them so their accounts
+                    // get highlighted.
+                    if (!is_synth and data.postings.items(.ast_node)[idx] == .none) continue;
                     const acc_tok = data.postings.items(.account)[idx];
-                    return .{ .file = file, .token = fdata.token(acc_tok), .kind = .posting };
+                    if (it.yieldLoc(file, acc_tok, .posting)) |y| return y;
                 }
                 it.in_tx = false;
                 it.entry += 1;
                 continue;
             }
 
-            if (it.file_filter) |f| {
-                if (file != f) {
-                    it.entry += 1;
-                    continue;
-                }
-            }
-
             switch (payloads[it.entry]) {
                 .open => |open| {
                     it.entry += 1;
-                    return .{ .file = file, .token = fdata.token(open.account), .kind = .open };
+                    if (it.yieldLoc(file, open.account, .open)) |y| return y;
                 },
                 .close => |close| {
                     it.entry += 1;
-                    return .{ .file = file, .token = fdata.token(close.account), .kind = .close };
+                    if (it.yieldLoc(file, close.account, .close)) |y| return y;
                 },
                 .pad => |pad| {
                     if (!it.second_slot) {
                         it.second_slot = true;
-                        return .{ .file = file, .token = fdata.token(pad.account), .kind = .pad };
+                        if (it.yieldLoc(file, pad.account, .pad)) |y| return y;
+                        continue;
                     }
                     it.second_slot = false;
                     it.entry += 1;
-                    return .{ .file = file, .token = fdata.token(pad.pad_to), .kind = .pad_to };
+                    if (it.yieldLoc(file, pad.pad_to, .pad_to)) |y| return y;
                 },
                 .pnl => |pnl| {
                     if (!it.second_slot) {
                         it.second_slot = true;
-                        return .{ .file = file, .token = fdata.token(pnl.account), .kind = .pnl };
+                        if (it.yieldLoc(file, pnl.account, .pnl)) |y| return y;
+                        continue;
                     }
                     it.second_slot = false;
                     it.entry += 1;
-                    return .{ .file = file, .token = fdata.token(pnl.income_account), .kind = .pnl_income };
+                    if (it.yieldLoc(file, pnl.income_account, .pnl_income)) |y| return y;
                 },
                 .balance => |balance| {
                     it.entry += 1;
-                    return .{ .file = file, .token = fdata.token(balance.account), .kind = .balance };
+                    if (it.yieldLoc(file, balance.account, .balance)) |y| return y;
                 },
                 .note => |note| {
                     it.entry += 1;
-                    return .{ .file = file, .token = fdata.token(note.account), .kind = .note };
+                    if (it.yieldLoc(file, note.account, .note)) |y| return y;
                 },
                 .document => |doc| {
                     it.entry += 1;
-                    return .{ .file = file, .token = fdata.token(doc.account), .kind = .document };
+                    if (it.yieldLoc(file, doc.account, .document)) |y| return y;
                 },
                 .transaction => |tx| {
                     // Mark in-progress; the next loop iteration drains it.
@@ -725,6 +737,16 @@ pub const AccountIterator = struct {
             }
         }
         return null;
+    }
+
+    /// Translate a synth-file token reference to its display location and
+    /// honor the file filter. Returns null for filtered-out tokens.
+    fn yieldLoc(it: *AccountIterator, file: u8, tok: Ast.TokenIndex, kind: Kind) ?Yielded {
+        const data = &it.self.data;
+        const display = data.displayLoc(.{ .file_id = file, .index = tok });
+        if (it.file_filter) |f| if (display.file_id != f) return null;
+        const fdata = &data.files.items[display.file_id];
+        return .{ .file = display.file_id, .token = fdata.token(display.index), .kind = kind };
     }
 };
 
@@ -764,13 +786,6 @@ pub const TagLinkIterator = struct {
 
         while (it.entry < data.entries.len) {
             const file = entry_files[it.entry];
-            if (it.file_filter) |f| {
-                if (file != f) {
-                    it.entry += 1;
-                    continue;
-                }
-            }
-            const fdata = &data.files.items[file];
 
             if (!it.in_range) {
                 const tl_range = entry_taglinks[it.entry];
@@ -781,9 +796,11 @@ pub const TagLinkIterator = struct {
             while (it.tl_idx < it.tl_end) {
                 const idx = it.tl_idx;
                 it.tl_idx += 1;
-                if (tl_explicit[idx]) {
-                    return .{ .file = file, .token = fdata.token(tl_tokens[idx]) };
-                }
+                if (!tl_explicit[idx]) continue;
+                const display = data.displayLoc(.{ .file_id = file, .index = tl_tokens[idx] });
+                if (it.file_filter) |f| if (display.file_id != f) continue;
+                const fdata = &data.files.items[display.file_id];
+                return .{ .file = display.file_id, .token = fdata.token(display.index) };
             }
             // Done with this entry.
             it.in_range = false;
@@ -968,11 +985,12 @@ pub fn printTree(self: *Self) !void {
 }
 
 fn addErrorDetails(self: *Self, loc: Data.TokenLoc, tag: ErrorDetails.Tag, severity: ErrorDetails.Severity) !void {
-    const f = &self.data.files.items[loc.file_id];
+    const display = self.data.displayLoc(loc);
+    const f = &self.data.files.items[display.file_id];
     try self.errors.append(self.alloc, ErrorDetails{
         .tag = tag,
         .severity = severity,
-        .token = f.token(loc.index),
+        .token = f.token(display.index),
         .uri = f.uri,
         .source = f.source,
     });
@@ -981,3 +999,68 @@ fn addErrorDetails(self: *Self, loc: Data.TokenLoc, tag: ErrorDetails.Tag, sever
 fn addError(self: *Self, loc: Data.TokenLoc, tag: ErrorDetails.Tag) !void {
     try self.addErrorDetails(loc, tag, .err);
 }
+
+test "update_file does not Sema the synth plugin file" {
+    // Regression: the synth file appended by plugin write-back has no AST
+    // nodes, so iterating it in `rebuildFromFiles` used to crash on the
+    // first edit after a plugin had run.
+    const alloc = std.testing.allocator;
+    const io = std.testing.io;
+    var uri = try Uri.from_relative_to_cwd(alloc, io, "tests/golden/plugin_basic.bean");
+    defer uri.deinit(alloc);
+
+    var project = try Self.load(alloc, io, uri, null);
+    defer project.deinit();
+
+    const new_source = try alloc.dupeZ(u8,
+        \\plugin "plugin_basic"
+        \\
+        \\2024-01-01 open Assets:Cash USD
+        \\
+    );
+    try project.update_file(uri.value, new_source);
+}
+
+test "iterators surface user-file tokens after identity plugin" {
+    // Regression: after a plugin runs, all entries live in the synth file
+    // whose tokens have line/col=0. The iterators must translate via
+    // displayLoc so LSP highlight / findAccount land on the user's source
+    // tokens with correct line/col.
+    const alloc = std.testing.allocator;
+    const io = std.testing.io;
+    var uri = try Uri.from_relative_to_cwd(alloc, io, "tests/golden/plugin_identity.bean");
+    defer uri.deinit(alloc);
+
+    var project = try Self.load(alloc, io, uri, null);
+    defer project.deinit();
+
+    const synth_id = project.data.synth_file_id orelse return error.PluginDidNotRun;
+    const user_file_id = project.data.files_by_uri.get(uri.value).?;
+
+    // Filter by the user's file URI — every yielded token should come from
+    // that file (not synth) and have non-zero line/col.
+    var seen: usize = 0;
+    var posting_seen: usize = 0;
+    var iter = project.accountIterator(uri.value);
+    while (iter.next()) |yielded| {
+        try std.testing.expect(yielded.file != synth_id);
+        try std.testing.expect(yielded.file == user_file_id);
+        try std.testing.expect(yielded.token.start_line > 0 or yielded.token.start_col > 0);
+        if (yielded.kind == .posting) posting_seen += 1;
+        seen += 1;
+    }
+    try std.testing.expect(seen > 0);
+    // The fixture has a transaction with two postings — both should surface.
+    try std.testing.expect(posting_seen >= 2);
+
+    // Same for tags/links — exercises the parallel _tag_locs path.
+    var tl_seen: usize = 0;
+    var tl_iter = project.tagLinkIterator(uri.value);
+    while (tl_iter.next()) |yielded| {
+        try std.testing.expect(yielded.file != synth_id);
+        try std.testing.expect(yielded.token.start_line > 0 or yielded.token.start_col > 0);
+        tl_seen += 1;
+    }
+    try std.testing.expect(tl_seen > 0);
+}
+

@@ -1,0 +1,7 @@
+tests/golden/plugin_missing.bean: [[31mError[0m] Failed to load plugin plugin_missing_does_not_exist: plugin_missing_does_not_exist.lua not found
+
+    1 | plugin "plugin_missing_does_not_exist"
+               [31m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+Assets
+└ Cash

@@ -1,0 +1,13 @@
+plugin "plugin_attach"
+
+2024-01-01 open Assets:Cash USD
+2024-01-01 open Equity:Opening
+2024-01-01 open Expenses:Food
+
+2024-01-02 * "Acme" "groceries"
+  Assets:Cash                       -10.00 USD
+  Expenses:Food
+
+2024-01-03 * "Setup" "initial balance"
+  Assets:Cash                        50.00 USD
+  Equity:Opening

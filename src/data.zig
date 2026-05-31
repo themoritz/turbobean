@@ -26,10 +26,21 @@ currencies: CurrencyPool,
 
 /// Per-file state (Ast, source, URI, token-interning side table). Indexed by
 /// `Entry.file`. Files are inserted in load order (root file at index 0,
-/// imports follow).
+/// imports follow). Plugin-emitted entries reference a synthetic file at
+/// `synth_file_id`, allocated lazily on first plugin write-back.
 files: std.ArrayList(File),
 /// Keys are URI values, values are index into `files`.
 files_by_uri: std.StringHashMap(usize),
+/// Slot in `files` reserved for plugin-emitted synthetic source. Allocated
+/// lazily by `ensureSynthFile`.
+synth_file_id: ?u8 = null,
+/// Per-synth-token display location. `synth_display_locs.items[i]` is the
+/// source location to surface in diagnostics when an error references synth
+/// token index `i`. For tokens emitted from plugin-pass-through entries this
+/// points at the original `.bean` token; for plugin-created tokens it points
+/// at the `plugin "..."` directive. Length tracks the synth file's token
+/// list; replaced wholesale by `replaceSynthFile`.
+synth_display_locs: std.ArrayList(TokenLoc) = .empty,
 
 entries: Entries,
 postings: Postings,
@@ -382,11 +393,20 @@ pub const KeyValue = struct {
 pub const Config = struct {
     alloc: Allocator,
     options: std.ArrayList(OptionPair),
-    plugins: std.ArrayList([]const u8),
+    plugins: std.ArrayList(PluginRef),
 
     pub const OptionPair = struct {
         key: []const u8,
         value: []const u8,
+    };
+
+    /// A `plugin "..."` directive. Carries source location so the runner can
+    /// point error messages at the directive token.
+    pub const PluginRef = struct {
+        /// Plugin name token slice, including surrounding quotes.
+        name: []const u8,
+        file_id: u8,
+        token: Ast.TokenIndex,
     };
 
     pub fn init(alloc: Allocator) Config {
@@ -411,7 +431,7 @@ pub const Config = struct {
         try self.options.append(self.alloc, .{ .key = key, .value = value });
     }
 
-    pub fn addPlugin(self: *Config, plugin: []const u8) !void {
+    pub fn addPlugin(self: *Config, plugin: PluginRef) !void {
         try self.plugins.append(self.alloc, plugin);
     }
 
@@ -467,6 +487,7 @@ pub fn deinit(self: *Self) void {
     self.open_currencies.deinit(self.alloc);
     self.tagslinks.deinit(self.alloc);
     self.meta.deinit(self.alloc);
+    self.synth_display_locs.deinit(self.alloc);
     self.config.deinit();
 
     self.accounts.deinit(self.alloc);
@@ -865,8 +886,8 @@ pub const BalanceView = struct {
         return .{ .file_id = v.file, .index = v.account_token };
     }
 
-    pub fn amountCurrencyText(v: BalanceView) ?[]const u8 {
-        return v.data.currencyTextOpt(v.amount_currency);
+    pub fn amountCurrencyText(v: BalanceView) []const u8 {
+        return v.data.currencyText(v.amount_currency);
     }
 };
 
@@ -1183,14 +1204,17 @@ fn rebuildFromFiles(self: *Self) !void {
 
     self.clearRecords();
     // Reset per-file token_interned tables (the indices are about to be
-    // re-assigned by Sema).
-    for (self.files.items) |*f| {
+    // re-assigned by Sema). Skip the synth file: its tokens are owned by
+    // the plugin runner and have no AST nodes for Sema to walk.
+    for (self.files.items, 0..) |*f, i| {
+        if (self.synth_file_id) |sid| if (i == sid) continue;
         const n = f.ast.tokens.items.len;
         f.token_interned.clearRetainingCapacity();
         try f.token_interned.appendNTimes(self.alloc, std.math.maxInt(u32), n);
     }
 
     for (self.files.items, 0..) |_, i| {
+        if (self.synth_file_id) |sid| if (i == sid) continue;
         const is_root = i == 0;
         var sem = Sema.init(self.alloc, self, @intCast(i), is_root);
         defer sem.deinit();
@@ -1199,6 +1223,68 @@ fn rebuildFromFiles(self: *Self) !void {
         // rebuild we don't currently re-walk them; the file set is unchanged.
         self.alloc.free(imports);
     }
+}
+
+/// Lazily allocate the synthetic file slot used for plugin-emitted entries.
+/// Returns its file_id. The slot persists across pipeline runs; the runner
+/// is responsible for replacing its contents via `replaceSynthFile`.
+pub fn ensureSynthFile(self: *Self) !u8 {
+    if (self.synth_file_id) |id| return id;
+    const empty: [:0]u8 = try self.alloc.allocSentinel(u8, 0, 0);
+    errdefer self.alloc.free(empty);
+
+    const ast = Ast{
+        .alloc = self.alloc,
+        .source = empty,
+        .tokens = .empty,
+        .nodes = .empty,
+        .extra_data = .empty,
+        .errors = .empty,
+    };
+
+    const uri = try Uri.from_raw(self.alloc, "file:///__plugin_synth__");
+    errdefer {
+        var u = uri;
+        u.deinit(self.alloc);
+    }
+
+    const file = File{
+        .uri = uri,
+        .source = empty,
+        .ast = ast,
+        .token_interned = .empty,
+        .errors = .empty,
+    };
+
+    if (self.files.items.len >= std.math.maxInt(u8)) return error.TooManyFiles;
+    try self.files.append(self.alloc, file);
+    const id: u8 = @intCast(self.files.items.len - 1);
+    self.synth_file_id = id;
+    return id;
+}
+
+/// Replace the contents of the synth file in place. Frees the previous
+/// contents. The slot id is preserved. `new_display_locs` must have one
+/// entry per token in `new_file.ast.tokens` and is taken by ownership.
+pub fn replaceSynthFile(self: *Self, new_file: File, new_display_locs: std.ArrayList(TokenLoc)) !void {
+    const id = self.synth_file_id orelse return error.NoSynthFile;
+    std.debug.assert(new_display_locs.items.len == new_file.ast.tokens.items.len);
+    var old = self.files.items[id];
+    old.deinit(self.alloc);
+    self.files.items[id] = new_file;
+    self.synth_display_locs.deinit(self.alloc);
+    self.synth_display_locs = new_display_locs;
+}
+
+/// Translate a `TokenLoc` for diagnostic display: synth-file references are
+/// remapped to the original source via `synth_display_locs`. Non-synth locs
+/// pass through unchanged.
+pub fn displayLoc(self: *const Self, loc: TokenLoc) TokenLoc {
+    const synth_id = self.synth_file_id orelse return loc;
+    if (loc.file_id != synth_id) return loc;
+    const idx = @intFromEnum(loc.index);
+    if (idx >= self.synth_display_locs.items.len) return loc;
+    return self.synth_display_locs.items[idx];
 }
 
 /// Append a synthetic posting (pad, pnl). Returns the new index.

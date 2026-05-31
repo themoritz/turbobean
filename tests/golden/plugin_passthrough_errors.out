@@ -1,0 +1,7 @@
+tests/golden/plugin_passthrough_errors.bean: [[31mError[0m] Account is not open or has been closed. Open it with an open entry
+
+    7 |   Expenses:NotOpened
+          [31m^^^^^^^^^^^^^^^^^^[0m
+
+Assets
+└ Cash
