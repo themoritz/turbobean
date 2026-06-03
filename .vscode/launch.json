@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug Zig app",
+      "program": "./zig-out/bin/turbobean",
+      "args": ["tree", "foo.bean"],
+      "cwd": "${workspaceFolder}",
+      "initCommands": [
+        "command script import /Users/moritz/Downloads/lldb_pretty_printers.py",
+        "type category enable zig.lang",
+        "type category enable zig.std"
+      ]
+    },
+    {
+      "type": "lldb",
+      "request": "attach",
+      "name": "Attach to Zig app",
+      "pid": "${command:pickProcess}",
+      "initCommands": [
+        "command script import /Users/moritz/Downloads/lldb_pretty_printers.py",
+        "type category enable zig.lang",
+        "type category enable zig.std"
+      ]
+    }
+  ]
+}
