@@ -1108,9 +1108,19 @@ pub fn loadFile(
     if (file_id >= std.math.maxInt(u8)) return error.TooManyFiles;
     try self.files_by_uri.put(self.files.items[file_id].uri.value, file_id);
 
+    try self.reserveRecords();
+
     var sem = Sema.init(self.alloc, self, @intCast(file_id), is_root);
     const imports = try sem.run(self.alloc);
     return .{ file_id, imports };
+}
+
+fn reserveRecords(self: *Self) !void {
+    var total: usize = 0;
+    for (self.files.items) |f| total += f.source.items.len;
+    try self.entries.ensureTotalCapacity(self.alloc, total / 60); // ~0.016/byte
+    try self.postings.ensureTotalCapacity(self.alloc, total / 45); // ~0.021/byte
+    try self.tagslinks.ensureTotalCapacity(self.alloc, total / 128); // ~0.006/byte
 }
 
 /// Replace one file's source and rebuild all merged record arrays from
@@ -1137,6 +1147,8 @@ fn rebuildFromFiles(self: *Self) !void {
         f.token_interned.clearRetainingCapacity();
         try f.token_interned.appendNTimes(self.alloc, std.math.maxInt(u32), n);
     }
+
+    try self.reserveRecords();
 
     var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer scratch.deinit();

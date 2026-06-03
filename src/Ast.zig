@@ -23,8 +23,10 @@ pub fn parse(self: *Self, alloc: std.mem.Allocator, uri: Uri, source: [:0]const 
     self.reset();
     self.source = source;
 
-    // Average 10 bytes per token:
-    try self.tokens.ensureTotalCapacity(alloc, source.len / 10);
+    try self.tokens.ensureTotalCapacity(alloc, source.len / 7); // ~0.13/byte
+    try self.nodes.ensureTotalCapacity(alloc, source.len / 14); // ~0.05/byte
+    try self.extra_data.ensureTotalCapacity(alloc, source.len / 3); // ~0.25/byte
+    //
     var lexer = Lexer.init(source);
     while (true) {
         const token = lexer.next();
