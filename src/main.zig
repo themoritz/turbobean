@@ -55,6 +55,10 @@ pub fn main(init: std.process.Init) !void {
     _ = iter.next();
 
     if (iter.next()) |command| {
+        if (std.mem.eql(u8, command, "ui")) {
+            try @import("ui/main.zig").run(arena, io);
+            return;
+        }
         if (std.mem.eql(u8, command, "lsp")) {
             try lsp.loop(arena, io);
             return;

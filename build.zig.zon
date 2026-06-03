@@ -16,6 +16,10 @@
             .url = "git+https://github.com/zig-gamedev/ztracy.git#d95d2a193b9f97944a17026c9a42b5d0f9a88c94",
             .hash = "ztracy-0.14.0-dev-zHJSqzUHGQAmhJybhlwtl1QKevUBw4M5YKZqPfWx2y99",
         },
+        .sokol = .{
+            .url = "git+https://github.com/floooh/sokol-zig.git#712ff4bf36761592656a7f648b2e80c59bfa6c95",
+            .hash = "sokol-0.1.0-pb1HK8RqNwCA1y9yR1y0VNeYPv0m2TxtWsQP9y3w6rrS",
+        },
     },
     .paths = .{
         "build.zig",

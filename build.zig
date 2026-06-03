@@ -1,5 +1,13 @@
 const std = @import("std");
+const sokol = @import("sokol");
 const GoldenTest = @import("build/GoldenTest.zig");
+
+/// Modules needed by the optional GPU UI (`-Dui`). Null when the UI is off,
+/// which keeps default and release builds free of any GPU/windowing deps.
+const UiMods = struct {
+    sokol: *std.Build.Module,
+    shaders: *std.Build.Module,
+};
 
 const zon_version = std.SemanticVersion.parse(@import("build.zig.zon").version) catch unreachable;
 
@@ -44,7 +52,23 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe_mod = createRootModule(b, target, optimize, options, ztracy);
+    // Build the GPU UI modules only when requested. sokol-shdc compiles the
+    // annotated GLSL down to a Zig module ("shaders") that exposes the shader
+    // descriptions and uniform-block structs.
+    const ui_mods: UiMods = blk: {
+        const dep_sokol = b.dependency("sokol", .{ .target = target, .optimize = optimize });
+        const sokol_mod = dep_sokol.module("sokol");
+        const shaders_mod = sokol.shdc.createModule(b, "shaders", sokol_mod, .{
+            .shdc_dep = dep_sokol.builder.dependency("shdc", .{}),
+            .input = "src/ui/shaders/quad.glsl",
+            .output = "quad.glsl.zig",
+            .slang = .{ .metal_macos = true },
+            .reflection = true,
+        }) catch @panic("failed to set up sokol-shdc");
+        break :blk .{ .sokol = sokol_mod, .shaders = shaders_mod };
+    };
+
+    const exe_mod = createRootModule(b, target, optimize, options, ztracy, ui_mods);
 
     // Create the executable
     const exe = b.addExecutable(.{
@@ -142,7 +166,7 @@ pub fn build(b: *std.Build) !void {
             const release_target = b.resolveTargetQuery(target_query);
             const release_exe = b.addExecutable(.{
                 .name = "turbobean",
-                .root_module = createRootModule(b, release_target, optimize, options, ztracy),
+                .root_module = createRootModule(b, release_target, optimize, options, ztracy, ui_mods),
             });
             if (embed_static) {
                 addAssetsOption(b, release_exe, release_target, optimize) catch |err| {
@@ -195,6 +219,7 @@ fn createRootModule(
     optimize: std.builtin.OptimizeMode,
     options: *std.Build.Step.Options,
     ztracy: *std.Build.Dependency,
+    ui_mods: UiMods,
 ) *std.Build.Module {
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -205,6 +230,8 @@ fn createRootModule(
     exe_mod.addImport("zts", b.dependency("zts", .{}).module("zts"));
     exe_mod.addImport("ztracy", ztracy.module("root"));
     exe_mod.addOptions("config", options);
+    exe_mod.addImport("sokol", ui_mods.sokol);
+    exe_mod.addImport("shaders", ui_mods.shaders);
     return exe_mod;
 }
 
