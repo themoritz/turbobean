@@ -18,7 +18,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.2
+          version: 0.16.0
 
       - name: Build release artifacts
         run: zig build release -Doptimize=ReleaseSafe -Dembed-static

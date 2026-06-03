@@ -4,7 +4,7 @@ A fast Beancount implementation in Zig, providing a CLI, LSP server, and Web UI.
 
 ## Building & Testing
 
-- **Zig version**: 0.15.2
+- **Zig version**: 0.16.0
 - **Build**: `zig build`
 - **Run**: `zig build run -- tree foo.bean`
 - **Run all unit tests**: `zig build test`
