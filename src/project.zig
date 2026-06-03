@@ -235,23 +235,52 @@ pub fn pipeline(self: *Self) !void {
 
     self.errors.clearRetainingCapacity();
     try self.balanceTransactions(scratch);
-    self.sortEntries();
+    try self.sortEntries(scratch);
     try self.refreshLspCache();
     try self.check(scratch);
 }
 
-/// Sort `data.entries` in place by date+time-of-day. Posting/TagLink/Meta
-/// arrays are unchanged — each Entry's `Range` fields keep pointing at a
-/// contiguous run regardless of the entry's position.
-pub fn sortEntries(self: *Self) void {
-    const Ctx = struct {
-        slice: Data.Entries.Slice,
+pub fn sortEntries(self: *Self, scratch: Allocator) !void {
+    const entries = &self.data.entries;
+    const n = entries.len;
+    if (n < 2) return;
 
-        pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
-            return Data.Entry.compare(ctx.slice.get(a), ctx.slice.get(b));
+    const dates = entries.items(.date);
+    const payloads = entries.items(.payload);
+
+    const perm = try scratch.alloc(u32, n);
+    const keys = try scratch.alloc(u32, n);
+    for (0..n) |i| {
+        perm[i] = @intCast(i);
+        keys[i] = Data.Entry.sortKey(dates[i], payloads[i]);
+    }
+
+    const Ctx = struct {
+        keys: []const u32,
+        pub fn lessThan(ctx: @This(), a: u32, b: u32) bool {
+            return ctx.keys[a] < ctx.keys[b];
         }
     };
-    self.data.entries.sort(Ctx{ .slice = self.data.entries.slice() });
+    std.mem.sort(u32, perm, Ctx{ .keys = keys }, Ctx.lessThan);
+
+    // Apply the permutation in place: each row is moved at most once by walking
+    // the cycle it belongs to (out[i] = old[perm[i]]). perm is consumed as the
+    // visited marker.
+    for (0..n) |i| {
+        if (perm[i] == i) continue;
+        const tmp = entries.get(i);
+        var j: usize = i;
+        while (true) {
+            const k = perm[j];
+            perm[j] = @intCast(j);
+            if (k == i) {
+                entries.set(j, tmp);
+                break;
+            }
+            entries.set(j, entries.get(k));
+            j = k;
+        }
+    }
 }
 
 pub fn check(self: *Self, scratch: Allocator) !void {

@@ -247,6 +247,12 @@ pub const Entry = struct {
             else => 2,
         };
     }
+
+    /// Packed key whose *ascending* order matches `compare`'s ordering
+    pub fn sortKey(date: Date, payload: Payload) u32 {
+        const packed_date: u32 = (date.year << 9) | (@as(u32, date.month) << 5) | date.day;
+        return (packed_date << 8) | timeOfDay(payload);
+    }
 };
 
 pub const Transaction = struct {
