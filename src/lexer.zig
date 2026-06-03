@@ -464,10 +464,13 @@ pub const Lexer = struct {
                     self.consume();
                     continue :state .string_backslash;
                 },
-                '\n' => {
+                // Fast path: plain ASCII string content, newlines included
+                // (strings may span lines).
+                0x01...'!', '#'...'[', ']'...0x7f => {
                     self.consume();
                     continue :state .string;
                 },
+                // non-ASCII (>= 0x80)
                 else => {
                     if (self.consumeUnicode(true)) |_| {
                         continue :state .string;
@@ -845,7 +848,7 @@ test "comments" {
 
 test "indent" {
     try testLex(
-        \\open 
+        \\open
         \\  close
     , &.{ .keyword_open, .eol, .indent, .keyword_close });
 }
