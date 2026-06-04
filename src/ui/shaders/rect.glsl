@@ -9,6 +9,8 @@ in vec4 i_color;
 in vec4 i_corner_radii;     // per corner: x=TL, y=TR, z=BR, w=BL (screen y down)
 in float i_edge_softness;
 in float i_border_thickness; // 0 = filled, >0 = outline of this width (px)
+in vec4 i_uv;                // glyph atlas source rect: xy=top-left, zw=bottom-right
+in float i_use_texture;      // 0 = SDF rect, 1 = sample the glyph atlas
 
 out vec2 dest_pos;
 out vec2 dest_center;
@@ -18,6 +20,8 @@ out vec4 color;
 out vec4 corner_radii;
 out float edge_softness;
 out float border_thickness;
+out vec2 frag_uv;
+out float use_texture;
 
 void main() {
     // 0->(0,0) 1->(1,0) 2->(0,1) 3->(1,1)
@@ -37,6 +41,8 @@ void main() {
     corner_radii = i_corner_radii;
     edge_softness = i_edge_softness;
     border_thickness = i_border_thickness;
+    frag_uv = mix(i_uv.xy, i_uv.zw, corner);
+    use_texture = i_use_texture;
 }
 
 @end
@@ -52,6 +58,11 @@ in vec4 color;
 in vec4 corner_radii;
 in float edge_softness;
 in float border_thickness;
+in vec2 frag_uv;
+in float use_texture;
+
+layout(binding=0) uniform texture2D atlas;
+layout(binding=0) uniform sampler smp;
 
 out vec4 frag_color;
 
@@ -70,6 +81,13 @@ float sdf(vec2 p, vec2 b, vec4 radii) {
 }
 
 void main() {
+    // Glyph path: the atlas stores coverage in the red channel.
+    if (use_texture > 0.5) {
+        float a = texture(sampler2D(atlas, smp), frag_uv).r;
+        frag_color = vec4(color.xyz, color.w * a);
+        return;
+    }
+
     vec2 softness_padding = vec2(max(0.0, edge_softness * 2.0 - 1.0));
     vec2 p = dest_pos - dest_center;
     vec2 half_size = dest_half_size - softness_padding;

@@ -7,6 +7,8 @@ const GoldenTest = @import("build/GoldenTest.zig");
 const UiMods = struct {
     sokol: *std.Build.Module,
     shaders: *std.Build.Module,
+    freetype: *std.Build.Module,
+    freetype_lib: *std.Build.Step.Compile,
 };
 
 const zon_version = std.SemanticVersion.parse(@import("build.zig.zon").version) catch unreachable;
@@ -65,7 +67,13 @@ pub fn build(b: *std.Build) !void {
             .slang = .{ .metal_macos = true },
             .reflection = true,
         }) catch @panic("failed to set up sokol-shdc");
-        break :blk .{ .sokol = sokol_mod, .shaders = shaders_mod };
+        const dep_ft = b.dependency("freetype", .{ .target = target, .optimize = optimize });
+        break :blk .{
+            .sokol = sokol_mod,
+            .shaders = shaders_mod,
+            .freetype = dep_ft.module("freetype"),
+            .freetype_lib = dep_ft.artifact("freetype"),
+        };
     };
 
     const exe_mod = createRootModule(b, target, optimize, options, ztracy, ui_mods);
@@ -232,6 +240,8 @@ fn createRootModule(
     exe_mod.addOptions("config", options);
     exe_mod.addImport("sokol", ui_mods.sokol);
     exe_mod.addImport("shaders", ui_mods.shaders);
+    exe_mod.addImport("freetype", ui_mods.freetype);
+    exe_mod.linkLibrary(ui_mods.freetype_lib);
     return exe_mod;
 }
 
