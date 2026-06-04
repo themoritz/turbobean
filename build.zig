@@ -60,8 +60,8 @@ pub fn build(b: *std.Build) !void {
         const sokol_mod = dep_sokol.module("sokol");
         const shaders_mod = sokol.shdc.createModule(b, "shaders", sokol_mod, .{
             .shdc_dep = dep_sokol.builder.dependency("shdc", .{}),
-            .input = "src/ui/shaders/quad.glsl",
-            .output = "quad.glsl.zig",
+            .input = "src/ui/shaders/rect.glsl",
+            .output = "rect.glsl.zig",
             .slang = .{ .metal_macos = true },
             .reflection = true,
         }) catch @panic("failed to set up sokol-shdc");

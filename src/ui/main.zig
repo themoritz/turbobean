@@ -25,6 +25,8 @@ var state: State = .{};
 const Rect = extern struct {
     rect: [4]f32,
     color: [4]f32,
+    corner_radius: f32,
+    edge_softness: f32,
 };
 
 pub fn run(alloc: std.mem.Allocator, io: std.Io) !void {
@@ -55,6 +57,15 @@ export fn init() void {
     desc.layout.buffers[0].step_func = .PER_INSTANCE;
     desc.layout.attrs[shd.ATTR_quad_i_rect] = .{ .format = .FLOAT4, .buffer_index = 0 };
     desc.layout.attrs[shd.ATTR_quad_i_color] = .{ .format = .FLOAT4, .buffer_index = 0 };
+    desc.layout.attrs[shd.ATTR_quad_i_corner_radius] = .{ .format = .FLOAT, .buffer_index = 0 };
+    desc.layout.attrs[shd.ATTR_quad_i_edge_softness] = .{ .format = .FLOAT, .buffer_index = 0 };
+    desc.colors[0].blend = .{
+        .enabled = true,
+        .src_factor_rgb = .SRC_ALPHA,
+        .dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
+        .src_factor_alpha = .ONE,
+        .dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
+    };
     state.pip = sg.makePipeline(desc);
 
     state.instances = sg.makeBuffer(.{
@@ -78,15 +89,18 @@ export fn frame() void {
     };
 
     const n = 2;
-    const offset: f32 = @floatCast(std.math.sin(state.time * 2));
     const rects: [2]Rect = .{
         Rect{
-            .color = .{ 0, 0, 1, 1 },
-            .rect = .{ 200, 100, 50, 50 },
+            .color = .{ 1, 0, 0, 1 },
+            .rect = .{ 100, 100, 130, 20 },
+            .corner_radius = 10,
+            .edge_softness = 1,
         },
         Rect{
-            .color = .{ 1, 0, 0, 1 },
-            .rect = .{ 100, 100, 100 + offset * 20, 20 },
+            .color = .{ 0, 1, 0, 0.5 },
+            .rect = .{ 200, 100, 50, 50 },
+            .corner_radius = 0,
+            .edge_softness = 4,
         },
     };
 
