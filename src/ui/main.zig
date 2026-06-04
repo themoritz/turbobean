@@ -23,10 +23,11 @@ const State = struct {
 var state: State = .{};
 
 const Rect = extern struct {
-    rect: [4]f32,
-    color: [4]f32,
-    corner_radius: f32,
+    rect: [4]f32, // x, y, w, h (pixels)
+    color: [4]f32, // rgba
+    corner_radii: [4]f32, // TL, TR, BR, BL (pixels)
     edge_softness: f32,
+    border_thickness: f32, // 0 = filled, >0 = outline width (pixels)
 };
 
 pub fn run(alloc: std.mem.Allocator, io: std.Io) !void {
@@ -57,8 +58,9 @@ export fn init() void {
     desc.layout.buffers[0].step_func = .PER_INSTANCE;
     desc.layout.attrs[shd.ATTR_quad_i_rect] = .{ .format = .FLOAT4, .buffer_index = 0 };
     desc.layout.attrs[shd.ATTR_quad_i_color] = .{ .format = .FLOAT4, .buffer_index = 0 };
-    desc.layout.attrs[shd.ATTR_quad_i_corner_radius] = .{ .format = .FLOAT, .buffer_index = 0 };
+    desc.layout.attrs[shd.ATTR_quad_i_corner_radii] = .{ .format = .FLOAT4, .buffer_index = 0 };
     desc.layout.attrs[shd.ATTR_quad_i_edge_softness] = .{ .format = .FLOAT, .buffer_index = 0 };
+    desc.layout.attrs[shd.ATTR_quad_i_border_thickness] = .{ .format = .FLOAT, .buffer_index = 0 };
     desc.colors[0].blend = .{
         .enabled = true,
         .src_factor_rgb = .SRC_ALPHA,
@@ -90,17 +92,21 @@ export fn frame() void {
 
     const n = 2;
     const rects: [2]Rect = .{
+        // Filled tab rect
         Rect{
             .color = .{ 1, 0, 0, 1 },
-            .rect = .{ 100, 100, 130, 20 },
-            .corner_radius = 10,
+            .rect = .{ 100, 100, 160, 90 },
+            .corner_radii = .{ 12, 12, 0, 0 }, // TL, TR, BR, BL
             .edge_softness = 1,
+            .border_thickness = 0,
         },
+        // Outline-only rect.
         Rect{
-            .color = .{ 0, 1, 0, 0.5 },
-            .rect = .{ 200, 100, 50, 50 },
-            .corner_radius = 0,
-            .edge_softness = 4,
+            .color = .{ 0, 1, 0, 1 },
+            .rect = .{ 200, 120, 120, 120 },
+            .corner_radii = @splat(20),
+            .edge_softness = 1,
+            .border_thickness = 1,
         },
     };
 
