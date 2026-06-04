@@ -15,10 +15,17 @@ const shd = @import("shaders");
 
 const State = struct {
     pip: sg.Pipeline = .{},
+    instances: sg.Buffer = .{},
+    bind: sg.Bindings = .{},
     pass_action: sg.PassAction = .{},
     time: f64 = 0,
 };
 var state: State = .{};
+
+const Rect = extern struct {
+    rect: [4]f32,
+    color: [4]f32,
+};
 
 pub fn run(alloc: std.mem.Allocator, io: std.Io) !void {
     _ = alloc;
@@ -41,11 +48,21 @@ export fn init() void {
         .logger = .{ .func = slog.func },
     });
 
-    // No vertex buffer: the vertex shader generates a fullscreen triangle from
-    // gl_VertexIndex, so the pipeline needs no vertex layout and no bindings.
-    state.pip = sg.makePipeline(.{
+    var desc = sg.PipelineDesc{
         .shader = sg.makeShader(shd.quadShaderDesc(sg.queryBackend())),
+        .primitive_type = .TRIANGLE_STRIP,
+    };
+    desc.layout.buffers[0].step_func = .PER_INSTANCE;
+    desc.layout.attrs[shd.ATTR_quad_i_rect] = .{ .format = .FLOAT4, .buffer_index = 0 };
+    desc.layout.attrs[shd.ATTR_quad_i_color] = .{ .format = .FLOAT4, .buffer_index = 0 };
+    state.pip = sg.makePipeline(desc);
+
+    state.instances = sg.makeBuffer(.{
+        .usage = .{ .stream_update = true },
+        .size = 2 * @sizeOf(Rect),
     });
+
+    state.bind.vertex_buffers[0] = state.instances;
 
     state.pass_action.colors[0] = .{
         .load_action = .CLEAR,
@@ -56,15 +73,30 @@ export fn init() void {
 export fn frame() void {
     state.time += sapp.frameDuration();
 
-    const fs_params = shd.FsParams{
+    const vs_params = shd.VsParams{
         .resolution = .{ sapp.widthf(), sapp.heightf() },
-        .time = @floatCast(state.time),
     };
+
+    const n = 2;
+    const offset: f32 = @floatCast(std.math.sin(state.time * 2));
+    const rects: [2]Rect = .{
+        Rect{
+            .color = .{ 0, 0, 1, 1 },
+            .rect = .{ 200, 100, 50, 50 },
+        },
+        Rect{
+            .color = .{ 1, 0, 0, 1 },
+            .rect = .{ 100, 100, 100 + offset * 20, 20 },
+        },
+    };
+
+    sg.updateBuffer(state.instances, sg.asRange(&rects));
 
     sg.beginPass(.{ .action = state.pass_action, .swapchain = sglue.swapchain() });
     sg.applyPipeline(state.pip);
-    sg.applyUniforms(shd.UB_fs_params, sg.asRange(&fs_params));
-    sg.draw(0, 3, 1);
+    sg.applyBindings(state.bind);
+    sg.applyUniforms(shd.UB_vs_params, sg.asRange(&vs_params));
+    sg.draw(0, 4, n);
     sg.endPass();
     sg.commit();
 }
