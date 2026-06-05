@@ -6,6 +6,7 @@ const sglue = sokol.glue;
 const slog = sokol.log;
 const shd = @import("shaders");
 const Atlas = @import("atlas.zig");
+const Ui = @import("ui.zig");
 
 // Default font + base size for the text demo. The atlas is rasterized at
 // base_pt * dpi_scale so it stays crisp on high-DPI displays.
@@ -24,6 +25,7 @@ const State = struct {
     bind: sg.Bindings = .{},
     pass_action: sg.PassAction = .{},
     atlas: Atlas = undefined,
+    ui: Ui = undefined,
     time: f64 = 0,
 };
 var state: State = .{};
@@ -105,6 +107,8 @@ export fn init() void {
         .load_action = .CLEAR,
         .clear_value = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
     };
+
+    state.ui = Ui.init(gpa);
 }
 
 /// Append one textured quad per glyph of `text` to `out`, returning the count.
@@ -209,14 +213,7 @@ export fn frame() void {
 
 export fn event(ev: [*c]const sapp.Event) void {
     const e = ev.*;
-    if (e.type != .KEY_DOWN) return;
-    if (e.modifiers & sapp.modifier_super == 0) return; // Cmd held
-    switch (e.key_code) {
-        .MINUS, .KP_SUBTRACT => font_pt = @max(min_pt, font_pt - 1),
-        .EQUAL, .KP_ADD => font_pt = @min(max_pt, font_pt + 1),
-        ._0, .KP_0 => font_pt = 18, // reset
-        else => {},
-    }
+    state.ui.handle_event(e);
 }
 
 export fn cleanup() void {
