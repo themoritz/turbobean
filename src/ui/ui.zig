@@ -2,6 +2,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Self = @This();
 const sapp = @import("sokol").app;
+const geom = @import("geom.zig");
+const Rect = geom.Rect;
+const Point = geom.Point;
+const main = @import("main.zig");
 
 widget_pool: std.heap.MemoryPool(Widget),
 widget_cache: std.AutoHashMap(Key, *Widget),
@@ -15,7 +19,7 @@ current_frame: u64,
 input: Input = .{},
 
 const Input = struct {
-    mouse_pos: ?[2]f32 = null,
+    mouse_pos: ?Point = null,
     mouse_down: bool = false,
     mouse_clicked: bool = false,
 };
@@ -24,7 +28,9 @@ pub fn handle_event(self: *Self, event: sapp.Event) void {
     self.input.mouse_clicked = false;
 
     switch (event.type) {
-        .MOUSE_MOVE => self.input.mouse_pos = .{ event.mouse_x, event.mouse_y },
+        .MOUSE_MOVE => {
+            self.input.mouse_pos = .{ .x = event.mouse_x, .y = event.mouse_y };
+        },
         .MOUSE_DOWN => {
             self.input.mouse_down = true;
             self.input.mouse_clicked = true;
@@ -56,8 +62,6 @@ const Key = struct {
         _ = str;
     }
 };
-
-const Rect = struct { x: f32, y: f32, w: f32, h: f32 };
 
 const Widget = struct {
     // Widget tree
@@ -101,18 +105,21 @@ const Widget = struct {
     }
 
     pub fn interact(self: *Widget, ui: *Self) Interaction {
-        _ = ui;
+        const hover = self.rect.contains(ui.input.mouse_down);
         return .{
             .widget = self,
-            // TODO:
-            .clicked = false,
+            .hover = hover,
+            .clicked = hover and ui.input.mouse_clicked,
+            .mouse_down = hover and ui.input.mouse_down,
         };
     }
 };
 
 const Interaction = struct {
     widget: *Widget,
+    hover: bool,
     clicked: bool,
+    mouse_down: bool,
 };
 
 pub fn Stack(comptime T: type) type {
@@ -205,4 +212,82 @@ pub fn prune(self: *Self, arena: Allocator) void {
 
     // Prune
     for (stale.items) |key| _ = self.widget_cache.remove(key);
+}
+
+pub fn layout(self: *Self, window: Rect) !void {
+    // Find root
+    if (self.widget_cache.count() == 0) return;
+    var root = self.widget_cache.valueIterator().next().?.*;
+    while (root.parent) |p| root = p;
+
+    // Calculate standalone sizes (pre-order)
+    layoutStandalone(root);
+
+    // Calculate upwards dependent sizes
+    layoutUpwardDependent(root, 0, window.w);
+    layoutUpwardDependent(root, 1, window.h);
+}
+
+fn layoutStandalone(w: *Widget) void {
+    // Self
+    for (0..1) |axis| {
+        const size = w.semantic_size[axis];
+        switch (size.kind) {
+            .pixels => {
+                if (axis == 0) w.rect.w = size.value;
+                if (axis == 1) w.rect.h = size.value;
+            },
+            else => {
+                // "not yet specified"
+                w.rect.w = std.math.floatMax(f32);
+                w.rect.h = std.math.floatMax(f32);
+            },
+        }
+    }
+
+    // Children
+    var current = w.first;
+    while (current) |c| {
+        layoutStandalone(c);
+        current = c.next;
+    }
+}
+
+fn layoutUpwardDependent(w: *Widget, axis: u1, available: ?f32) void {
+    // Self
+    const size = w.semantic_size[axis];
+    if (available) |av| {
+        switch (size.kind) {
+            .percent_of_parent => {
+                if (axis == 0) w.rect.w = av * size.value;
+                if (axis == 1) w.rect.h = av * size.value;
+            },
+            else => {},
+        }
+    }
+
+    // Children
+    var current = w.first;
+    while (current) |c| {
+        const av = switch (axis) {
+            0 => if (w.rect.w == std.math.floatMax(f32)) null else w.rect.w,
+            1 => if (w.rect.h == std.math.floatMax(f32)) null else w.rect.h,
+        };
+        layoutUpwardDependent(c, av);
+        current = c.next;
+    }
+}
+
+pub fn render(self: *const Self, instance_buf: []main.Rect) void {
+    const max = instance_buf.len;
+    var i = 0;
+    var it = self.widget_cache.valueIterator();
+    while (it.next()) |v| : (i += 1) {
+        if (i == max) break;
+        const w = v.*;
+        instance_buf[i] = main.Rect{
+            .rect = .{ w.rect.x, w.rect.y, w.rect.w, w.rect.h },
+            .color = w.bg_color,
+        };
+    }
 }
