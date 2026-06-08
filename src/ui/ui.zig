@@ -17,6 +17,7 @@ stack_pref_width: Stack(Size) = .init(.{}),
 stack_pref_height: Stack(Size) = .init(.{}),
 stack_pref_axis: Stack(u1) = .init(1),
 stack_bg_color: Stack([4]f32) = .init(.{ 1, 1, 1, 0 }),
+stack_border_thickness: Stack(f32) = .init(0),
 
 current_frame: u64,
 input: Input = .{},
@@ -80,6 +81,7 @@ const Widget = struct {
     semantic_size: [2]Size = @splat(.{}),
     semantic_child_layout_axis: u1 = 1,
     bg_color: [4]f32 = @splat(1),
+    border_thickness: f32 = 0,
 
     // Computed by layout algo
     computed_position: [2]f32 = @splat(0),
@@ -102,9 +104,12 @@ const Widget = struct {
             self.last = child;
             last.next = child;
             child.prev = last;
+            child.next = null;
         } else {
             self.last = child;
             self.first = child;
+            child.prev = null;
+            child.next = null;
         }
     }
 
@@ -155,7 +160,7 @@ pub fn Stack(comptime T: type) type {
             return last.value;
         }
 
-        pub fn clear(self: *Stack) void {
+        pub fn clear(self: *@This()) void {
             self.values.clearRetainingCapacity();
         }
     };
@@ -170,12 +175,21 @@ pub fn init(alloc: Allocator) Self {
     };
 }
 
+pub fn reset_stacks(self: *Self) void {
+    self.stack_parent.clear();
+    self.stack_pref_width.clear();
+    self.stack_pref_height.clear();
+    self.stack_pref_axis.clear();
+    self.stack_bg_color.clear();
+    self.stack_border_thickness.clear();
+}
+
 pub fn getWidget(self: *Self, key: Key, alloc: Allocator) !*Widget {
     const entry = try self.widget_cache.getOrPut(key);
     if (!entry.found_existing) {
-        const w = try self.widget_pool.create(alloc);
-        w.* = .{};
-        entry.value_ptr.* = w;
+        const new_w = try self.widget_pool.create(alloc);
+        new_w.* = .{};
+        entry.value_ptr.* = new_w;
     }
     const w = entry.value_ptr.*;
     w.last_frame_touched = self.current_frame;
@@ -191,12 +205,13 @@ pub fn mkWidget(self: *Self, key: Key, str: []const u8) !*Widget {
     w.semantic_size = .{ self.stack_pref_width.top(), self.stack_pref_height.top() };
     w.semantic_child_layout_axis = self.stack_pref_axis.top();
     w.bg_color = self.stack_bg_color.top();
+    w.border_thickness = self.stack_border_thickness.top();
     w.string = str;
 
     return w;
 }
 
-pub fn prune(self: *Self, arena: Allocator) void {
+pub fn prune(self: *Self, arena: Allocator) !void {
     // Collect stale widgets
     var stale = std.ArrayList(Key).empty;
     var it = self.widget_cache.iterator();
@@ -206,7 +221,7 @@ pub fn prune(self: *Self, arena: Allocator) void {
 
         if (w.last_frame_touched < self.current_frame) {
             self.widget_pool.destroy(w);
-            stale.append(arena, kv.key_ptr.*);
+            try stale.append(arena, kv.key_ptr.*);
         } else {
             // Delete tree structure for what's left
             w.parent = null;
@@ -262,6 +277,9 @@ fn layoutUpwardDependent(w: *Widget, axis: u1, available: f32) void {
         .percent_of_parent => {
             size = available * w.semantic_size[axis].value;
             w.computed_size[axis] = size;
+        },
+        .pixels => {
+            size = w.computed_size[axis];
         },
         else => {},
     }
@@ -331,12 +349,13 @@ pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
         const w = v.*;
         instance_buf[i] = main.Rect{
             .rect = .{
-                w.computed_position[0],
-                w.computed_position[1],
-                w.computed_size[0],
-                w.computed_size[1],
+                @floor(w.computed_position[0]),
+                @floor(w.computed_position[1]),
+                @floor(w.computed_size[0]),
+                @floor(w.computed_size[1]),
             },
             .color = w.bg_color,
+            .border_thickness = w.border_thickness,
         };
     }
     return i;

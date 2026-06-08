@@ -145,10 +145,13 @@ export fn frame() void {
         .resolution = .{ sapp.widthf(), sapp.heightf() },
     };
 
+    state.ui.current_frame = sapp.frameCount();
     buildUi(&state.ui, gpa) catch @panic("OOM");
     try state.ui.layout(.{ sapp.widthf(), sapp.heightf() });
 
     var count = state.ui.render(&instance_buf);
+    state.ui.prune(gpa) catch @panic("OOM");
+    state.ui.reset_stacks();
 
     // A couple of UI rects (SDF path).
     instance_buf[count] = .{
@@ -207,10 +210,32 @@ export fn cleanup() void {
 }
 
 fn buildUi(ui: *Ui, arena: std.mem.Allocator) !void {
-    const root = try ui.mkWidget(.{ .key = 0 }, "");
+    try ui.stack_pref_height.push(arena, .{ .kind = .children_sum });
+    try ui.stack_pref_width.push(arena, .{ .kind = .percent_of_parent, .value = 0.5 });
+    defer ui.stack_pref_width.pop();
 
-    try ui.stack_parent.push(arena, root);
-    defer ui.stack_parent.pop();
+    try ui.stack_border_thickness.pushNext(arena, 1);
+    try ui.stack_bg_color.pushNext(arena, .{ 1, 0, 0, 1 });
+    const root = try ui.mkWidget(.{ .key = 0 }, "root");
 
-    _ = try ui.mkWidget(.{ .key = 1 }, "A");
+    {
+        try ui.stack_parent.push(arena, root);
+
+        try ui.stack_pref_width.push(arena, .{ .kind = .pixels, .value = 100 });
+        try ui.stack_pref_height.push(arena, .{ .kind = .pixels, .value = 100 });
+
+        try ui.stack_bg_color.pushNext(arena, .{ 1, 1, 1, 0.1 });
+        _ = try ui.mkWidget(.{ .key = 1 }, "A");
+
+        try ui.stack_bg_color.pushNext(arena, .{ 1, 0, 1, 0.5 });
+        const b = try ui.mkWidget(.{ .key = 2 }, "B");
+
+        {
+            try ui.stack_parent.push(arena, b);
+
+            try ui.stack_pref_width.push(arena, .{ .kind = .percent_of_parent, .value = 0.5 });
+            try ui.stack_bg_color.pushNext(arena, .{ 1, 1, 0, 0.9 });
+            _ = try ui.mkWidget(.{ .key = 3 }, "C");
+        }
+    }
 }
