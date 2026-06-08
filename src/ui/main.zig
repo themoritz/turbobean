@@ -36,7 +36,7 @@ var gpa: std.mem.Allocator = undefined;
 // CPU-side instance scratch, uploaded each frame.
 var instance_buf: [max_instances]Rect = undefined;
 
-const Rect = extern struct {
+pub const Rect = extern struct {
     rect: [4]f32, // x, y, w, h (pixels)
     color: [4]f32, // rgba
     corner_radii: [4]f32 = @splat(0), // TL, TR, BR, BL (pixels)
@@ -145,7 +145,10 @@ export fn frame() void {
         .resolution = .{ sapp.widthf(), sapp.heightf() },
     };
 
-    var count: usize = 0;
+    buildUi(&state.ui, gpa) catch @panic("OOM");
+    try state.ui.layout(.{ sapp.widthf(), sapp.heightf() });
+
+    var count = state.ui.render(&instance_buf);
 
     // A couple of UI rects (SDF path).
     instance_buf[count] = .{
@@ -178,24 +181,6 @@ export fn frame() void {
         px,
         .{ 1, 1, 1, 1 },
     );
-    count += pushText(
-        instance_buf[count..],
-        a,
-        "0123456789 +-*/= $1,234.56",
-        100,
-        top + lm.line_height,
-        px,
-        .{ 0.2, 0.85, 1, 1 },
-    );
-    count += pushText(
-        instance_buf[count..],
-        a,
-        "the quick brown fox",
-        100,
-        top + lm.line_height * 2,
-        px,
-        .{ 0.8, 0.8, 0.8, 1 },
-    );
 
     // Upload any newly-rasterized glyphs, then the instance data (both must be
     // outside the render pass).
@@ -219,4 +204,13 @@ export fn event(ev: [*c]const sapp.Event) void {
 export fn cleanup() void {
     state.atlas.deinit();
     sg.shutdown();
+}
+
+fn buildUi(ui: *Ui, arena: std.mem.Allocator) !void {
+    const root = try ui.mkWidget(.{ .key = 0 }, "");
+
+    try ui.stack_parent.push(arena, root);
+    defer ui.stack_parent.pop();
+
+    _ = try ui.mkWidget(.{ .key = 1 }, "A");
 }

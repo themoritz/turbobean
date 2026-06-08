@@ -7,12 +7,15 @@ const Rect = geom.Rect;
 const Point = geom.Point;
 const main = @import("main.zig");
 
+alloc: Allocator,
+
 widget_pool: std.heap.MemoryPool(Widget),
 widget_cache: std.AutoHashMap(Key, *Widget),
 
 stack_parent: Stack(?*Widget) = .init(null),
 stack_pref_width: Stack(Size) = .init(.{}),
 stack_pref_height: Stack(Size) = .init(.{}),
+stack_pref_axis: Stack(u1) = .init(1),
 stack_bg_color: Stack([4]f32) = .init(.{ 1, 1, 1, 0 }),
 
 current_frame: u64,
@@ -65,22 +68,22 @@ const Key = struct {
 
 const Widget = struct {
     // Widget tree
-    first: ?*Widget,
-    last: ?*Widget,
-    next: ?*Widget,
-    prev: ?*Widget,
-    parent: ?*Widget,
+    first: ?*Widget = null,
+    last: ?*Widget = null,
+    next: ?*Widget = null,
+    prev: ?*Widget = null,
+    parent: ?*Widget = null,
 
     // Provided by builders
-    flags: Flags,
-    string: []const u8,
-    semantic_size: [2]Size,
-    bg_color: [4]f32,
+    flags: Flags = .{},
+    string: []const u8 = "",
+    semantic_size: [2]Size = @splat(.{}),
+    semantic_child_layout_axis: u1 = 1,
+    bg_color: [4]f32 = @splat(1),
 
     // Computed by layout algo
-    computed_rel_position: [2]f32,
-    computed_size: [2]f32,
-    rect: Rect,
+    computed_position: [2]f32 = @splat(0),
+    computed_size: [2]f32 = @splat(0),
 
     // Generation info
     last_frame_touched: u64 = 0,
@@ -91,6 +94,7 @@ const Widget = struct {
 
     const Flags = struct {
         clickable: bool = false,
+        floating: bool = false,
     };
 
     pub fn appendChild(self: *Widget, child: *Widget) void {
@@ -129,23 +133,23 @@ pub fn Stack(comptime T: type) type {
 
         const Node = struct { value: T, auto_pop: bool };
 
-        pub fn init(default: T) Stack(T) {
+        pub fn init(default: T) @This() {
             return .{ .default = default };
         }
 
-        pub fn push(self: *Stack, alloc: std.mem.Allocator, t: T) !void {
+        pub fn push(self: *@This(), alloc: std.mem.Allocator, t: T) !void {
             try self.values.append(alloc, .{ .value = t, .auto_pop = false });
         }
 
-        pub fn pushNext(self: *Stack, alloc: std.mem.Allocator, t: T) !void {
+        pub fn pushNext(self: *@This(), alloc: std.mem.Allocator, t: T) !void {
             try self.values.append(alloc, .{ .value = t, .auto_pop = true });
         }
 
-        pub fn pop(self: *Stack) void {
+        pub fn pop(self: *@This()) void {
             _ = self.values.pop();
         }
 
-        pub fn top(self: *Stack) T {
+        pub fn top(self: *@This()) T {
             const last = self.values.getLastOrNull() orelse return self.default;
             if (last.auto_pop) self.pop();
             return last.value;
@@ -159,6 +163,7 @@ pub fn Stack(comptime T: type) type {
 
 pub fn init(alloc: Allocator) Self {
     return .{
+        .alloc = alloc,
         .widget_cache = .init(alloc),
         .widget_pool = .empty,
         .current_frame = 0,
@@ -168,7 +173,8 @@ pub fn init(alloc: Allocator) Self {
 pub fn getWidget(self: *Self, key: Key, alloc: Allocator) !*Widget {
     const entry = try self.widget_cache.getOrPut(key);
     if (!entry.found_existing) {
-        const w = self.widget_pool.create(alloc);
+        const w = try self.widget_pool.create(alloc);
+        w.* = .{};
         entry.value_ptr.* = w;
     }
     const w = entry.value_ptr.*;
@@ -177,12 +183,13 @@ pub fn getWidget(self: *Self, key: Key, alloc: Allocator) !*Widget {
 }
 
 pub fn mkWidget(self: *Self, key: Key, str: []const u8) !*Widget {
-    const w = try self.getWidget(key);
+    const w = try self.getWidget(key, self.alloc);
 
     w.parent = self.stack_parent.top();
     if (w.parent) |parent| parent.appendChild(w);
 
     w.semantic_size = .{ self.stack_pref_width.top(), self.stack_pref_height.top() };
+    w.semantic_child_layout_axis = self.stack_pref_axis.top();
     w.bg_color = self.stack_bg_color.top();
     w.string = str;
 
@@ -214,80 +221,123 @@ pub fn prune(self: *Self, arena: Allocator) void {
     for (stale.items) |key| _ = self.widget_cache.remove(key);
 }
 
-pub fn layout(self: *Self, window: Rect) !void {
+pub fn layout(self: *Self, window: [2]f32) !void {
     // Find root
     if (self.widget_cache.count() == 0) return;
-    var root = self.widget_cache.valueIterator().next().?.*;
+    var it = self.widget_cache.valueIterator();
+    var root = it.next().?.*;
     while (root.parent) |p| root = p;
 
-    // Calculate standalone sizes (pre-order)
-    layoutStandalone(root);
-
-    // Calculate upwards dependent sizes
-    layoutUpwardDependent(root, 0, window.w);
-    layoutUpwardDependent(root, 1, window.h);
+    for (0..2) |ax| {
+        const axis: u1 = @intCast(ax);
+        layoutStandalone(root, axis);
+        layoutUpwardDependent(root, axis, window[axis]);
+        layoutDownwardDependent(root, axis);
+        root.computed_position[axis] = 0;
+        layoutComputePositions(root, axis);
+    }
 }
 
-fn layoutStandalone(w: *Widget) void {
+fn layoutStandalone(w: *Widget, axis: u1) void {
     // Self
-    for (0..1) |axis| {
-        const size = w.semantic_size[axis];
-        switch (size.kind) {
-            .pixels => {
-                if (axis == 0) w.rect.w = size.value;
-                if (axis == 1) w.rect.h = size.value;
-            },
-            else => {
-                // "not yet specified"
-                w.rect.w = std.math.floatMax(f32);
-                w.rect.h = std.math.floatMax(f32);
-            },
-        }
+    switch (w.semantic_size[axis].kind) {
+        .pixels => {
+            w.computed_size[axis] = w.semantic_size[axis].value;
+        },
+        else => {},
     }
 
     // Children
     var current = w.first;
     while (current) |c| {
-        layoutStandalone(c);
+        layoutStandalone(c, axis);
         current = c.next;
     }
 }
 
-fn layoutUpwardDependent(w: *Widget, axis: u1, available: ?f32) void {
+fn layoutUpwardDependent(w: *Widget, axis: u1, available: f32) void {
     // Self
-    const size = w.semantic_size[axis];
-    if (available) |av| {
-        switch (size.kind) {
-            .percent_of_parent => {
-                if (axis == 0) w.rect.w = av * size.value;
-                if (axis == 1) w.rect.h = av * size.value;
-            },
-            else => {},
-        }
+    var size = available;
+    switch (w.semantic_size[axis].kind) {
+        .percent_of_parent => {
+            size = available * w.semantic_size[axis].value;
+            w.computed_size[axis] = size;
+        },
+        else => {},
     }
 
     // Children
     var current = w.first;
     while (current) |c| {
-        const av = switch (axis) {
-            0 => if (w.rect.w == std.math.floatMax(f32)) null else w.rect.w,
-            1 => if (w.rect.h == std.math.floatMax(f32)) null else w.rect.h,
-        };
-        layoutUpwardDependent(c, av);
+        layoutUpwardDependent(c, axis, size);
         current = c.next;
     }
 }
 
-pub fn render(self: *const Self, instance_buf: []main.Rect) void {
+fn layoutDownwardDependent(w: *Widget, axis: u1) void {
+    // Children
+    var sum: f32 = 0;
+    var current = w.first;
+    while (current) |c| {
+        layoutDownwardDependent(c, axis);
+        current = c.next;
+        if (!c.flags.floating) {
+            if (w.semantic_child_layout_axis == axis) {
+                sum += c.computed_size[axis];
+            } else {
+                sum = @max(sum, c.computed_size[axis]);
+            }
+        }
+    }
+
+    // Self
+    switch (w.semantic_size[axis].kind) {
+        .children_sum => {
+            w.computed_size[axis] = sum;
+        },
+        else => {},
+    }
+}
+
+fn layoutComputePositions(w: *Widget, axis: u1) void {
+    // Self
+    var position: f32 = 0;
+    var current = w.first;
+    while (current) |c| {
+        c.computed_position[axis] = w.computed_position[axis] + position;
+        if (!c.flags.floating) {
+            if (w.semantic_child_layout_axis == axis) {
+                position += c.computed_size[axis];
+            }
+        }
+        current = c.next;
+    }
+
+    // Children
+    var current_rec = w.first;
+    while (current_rec) |c| {
+        layoutComputePositions(c, axis);
+        current_rec = c.next;
+    }
+}
+
+// Returns how many instances emitted
+pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
     const max = instance_buf.len;
-    var i = 0;
+    var i: usize = 0;
     var it = self.widget_cache.valueIterator();
     while (it.next()) |v| : (i += 1) {
         if (i == max) break;
         const w = v.*;
         instance_buf[i] = main.Rect{
-            .rect = .{ w.rect.x, w.rect.y, w.rect.w, w.rect.h },
+            .rect = .{
+                w.computed_position[0],
+                w.computed_position[1],
+                w.computed_size[0],
+                w.computed_size[1],
+            },
             .color = w.bg_color,
         };
     }
+    return i;
 }
