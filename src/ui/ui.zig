@@ -6,11 +6,13 @@ const geom = @import("geom.zig");
 const Rect = geom.Rect;
 const Point = geom.Point;
 const main = @import("main.zig");
+const Atlas = @import("atlas.zig");
 
 alloc: Allocator,
 
 widget_pool: std.heap.MemoryPool(Widget),
 widget_cache: std.AutoHashMap(Key, *Widget),
+atlas: *Atlas,
 
 stacks: AttributeStacks = .{},
 
@@ -35,6 +37,14 @@ pub const BuildAttributes = struct {
     bg_color: [4]f32 = .{ 1, 1, 1, 0 },
     border_thickness: f32 = 0,
     flags: Widget.Flags = .{},
+
+    /// Semantic size on the given layout axis (0 = width, 1 = height).
+    pub fn size(self: BuildAttributes, axis: u1) Size {
+        return switch (axis) {
+            0 => self.width,
+            1 => self.height,
+        };
+    }
 };
 
 /// Used for `push`
@@ -98,6 +108,7 @@ const Size = struct {
     const Kind = enum {
         null,
         pixels,
+        // `value` is padding in this case
         text_content,
         percent_of_parent,
         children_sum,
@@ -140,15 +151,10 @@ const Widget = struct {
     last: ?*Widget = null,
     next: ?*Widget = null,
     prev: ?*Widget = null,
-    parent: ?*Widget = null,
 
     // Provided by builders
-    flags: Flags = .{},
     string: []const u8 = "",
-    semantic_size: [2]Size = @splat(.{}),
-    semantic_child_layout_axis: u1 = 1,
-    bg_color: [4]f32 = @splat(1),
-    border_thickness: f32 = 0,
+    attrs: BuildAttributes = .{},
 
     // Computed by layout algo
     computed_position: [2]f32 = @splat(0),
@@ -248,11 +254,12 @@ pub fn Stack(comptime T: type) type {
     };
 }
 
-pub fn init(alloc: Allocator) Self {
+pub fn init(alloc: Allocator, atlas: *Atlas) Self {
     return .{
         .alloc = alloc,
         .widget_cache = .init(alloc),
         .widget_pool = .empty,
+        .atlas = atlas,
         .current_frame = 0,
     };
 }
@@ -261,6 +268,16 @@ pub fn reset_stacks(self: *Self) void {
     inline for (@typeInfo(AttributeStacks).@"struct".fields) |f| {
         @field(self.stacks, f.name).clear();
     }
+}
+
+/// Snapshot the current top of every attribute stack into a `BuildAttributes`.
+/// Reads each stack via `top()`, which auto-pops any `pushNext` entries.
+fn stacks_top(self: *Self) BuildAttributes {
+    var attrs: BuildAttributes = .{};
+    inline for (@typeInfo(BuildAttributes).@"struct".fields) |f| {
+        @field(attrs, f.name) = @field(self.stacks, f.name).top();
+    }
+    return attrs;
 }
 
 /// Push one style attribute, e.g. `ui.push(.{ .height = .{ .kind = .children_sum } })`.
@@ -322,19 +339,15 @@ pub fn getWidget(self: *Self, key: Key, alloc: Allocator) !*Widget {
 }
 
 pub fn mkWidget(self: *Self, str: []const u8, hash_arg: anytype) *Widget {
-    const parent = self.stacks.parent.top();
+    const attrs = self.stacks_top();
+    const parent = attrs.parent;
 
     const seed = if (parent) |p| p.key else Key.zero;
     const key = Key.fromString(seed, str, hash_arg);
     const w = self.getWidget(key, self.alloc) catch @panic("OOM");
 
-    w.parent = parent;
-    if (w.parent) |p| p.appendChild(w);
-
-    w.semantic_size = .{ self.stacks.width.top(), self.stacks.height.top() };
-    w.semantic_child_layout_axis = self.stacks.axis.top();
-    w.bg_color = self.stacks.bg_color.top();
-    w.border_thickness = self.stacks.border_thickness.top();
+    w.attrs = attrs;
+    if (parent) |p| p.appendChild(w);
     w.string = str;
 
     return w;
@@ -353,7 +366,7 @@ pub fn prune(self: *Self, arena: Allocator) void {
             stale.append(arena, kv.key_ptr.*) catch @panic("OOM");
         } else {
             // Delete tree structure for what's left
-            w.parent = null;
+            w.attrs.parent = null;
             w.first = null;
             w.last = null;
             w.prev = null;
@@ -370,11 +383,11 @@ pub fn layout(self: *Self, window: [2]f32) !void {
     if (self.widget_cache.count() == 0) return;
     var it = self.widget_cache.valueIterator();
     var root = it.next().?.*;
-    while (root.parent) |p| root = p;
+    while (root.attrs.parent) |p| root = p;
 
     for (0..2) |ax| {
         const axis: u1 = @intCast(ax);
-        layoutStandalone(root, axis);
+        self.layoutStandalone(root, axis);
         layoutUpwardDependent(root, axis, window[axis]);
         layoutDownwardDependent(root, axis);
         root.computed_position[axis] = 0;
@@ -382,11 +395,30 @@ pub fn layout(self: *Self, window: [2]f32) !void {
     }
 }
 
-fn layoutStandalone(w: *Widget, axis: u1) void {
+fn layoutStandalone(self: *Self, w: *Widget, axis: u1) void {
     // Self
-    switch (w.semantic_size[axis].kind) {
+    switch (w.attrs.size(axis).kind) {
         .pixels => {
-            w.computed_size[axis] = w.semantic_size[axis].value;
+            w.computed_size[axis] = w.attrs.size(axis).value;
+        },
+        .text_content => {
+            const px = main.textPx();
+            switch (axis) {
+                0 => {
+                    // Sum glyph advances across the string for the text width.
+                    var width: f32 = 0;
+                    for (w.string) |ch| {
+                        const g = self.atlas.glyph(@intCast(ch), px) orelse continue;
+                        width += g.advance;
+                    }
+                    w.computed_size[axis] = width + 2 * w.attrs.size(axis).value;
+                },
+                1 => {
+                    // A single line of text is one line height tall.
+                    const lm = self.atlas.lineMetrics(px);
+                    w.computed_size[axis] = lm.line_height + 2 * w.attrs.size(axis).value;
+                },
+            }
         },
         else => {},
     }
@@ -394,7 +426,7 @@ fn layoutStandalone(w: *Widget, axis: u1) void {
     // Children
     var current = w.first;
     while (current) |c| {
-        layoutStandalone(c, axis);
+        self.layoutStandalone(c, axis);
         current = c.next;
     }
 }
@@ -402,9 +434,9 @@ fn layoutStandalone(w: *Widget, axis: u1) void {
 fn layoutUpwardDependent(w: *Widget, axis: u1, available: f32) void {
     // Self
     var size = available;
-    switch (w.semantic_size[axis].kind) {
+    switch (w.attrs.size(axis).kind) {
         .percent_of_parent => {
-            size = available * w.semantic_size[axis].value;
+            size = available * w.attrs.size(axis).value;
             w.computed_size[axis] = size;
         },
         .pixels => {
@@ -428,8 +460,8 @@ fn layoutDownwardDependent(w: *Widget, axis: u1) void {
     while (current) |c| {
         layoutDownwardDependent(c, axis);
         current = c.next;
-        if (!c.flags.floating) {
-            if (w.semantic_child_layout_axis == axis) {
+        if (!c.attrs.flags.floating) {
+            if (w.attrs.axis == axis) {
                 sum += c.computed_size[axis];
             } else {
                 sum = @max(sum, c.computed_size[axis]);
@@ -438,7 +470,7 @@ fn layoutDownwardDependent(w: *Widget, axis: u1) void {
     }
 
     // Self
-    switch (w.semantic_size[axis].kind) {
+    switch (w.attrs.size(axis).kind) {
         .children_sum => {
             w.computed_size[axis] = sum;
         },
@@ -452,8 +484,8 @@ fn layoutComputePositions(w: *Widget, axis: u1) void {
     var current = w.first;
     while (current) |c| {
         c.computed_position[axis] = w.computed_position[axis] + position;
-        if (!c.flags.floating) {
-            if (w.semantic_child_layout_axis == axis) {
+        if (!c.attrs.flags.floating) {
+            if (w.attrs.axis == axis) {
                 position += c.computed_size[axis];
             }
         }
@@ -473,9 +505,11 @@ pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
     const max = instance_buf.len;
     var i: usize = 0;
     var it = self.widget_cache.valueIterator();
-    while (it.next()) |v| : (i += 1) {
+    while (it.next()) |v| {
         if (i == max) break;
         const w = v.*;
+
+        // Background / border quad for the widget itself.
         instance_buf[i] = main.Rect{
             .rect = .{
                 @floor(w.computed_position[0]),
@@ -483,9 +517,53 @@ pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
                 @floor(w.computed_size[0]),
                 @floor(w.computed_size[1]),
             },
-            .color = w.bg_color,
-            .border_thickness = w.border_thickness,
+            .color = w.attrs.bg_color,
+            .border_thickness = w.attrs.border_thickness,
         };
+        i += 1;
+
+        // Text glyph quads for widgets sized to their text content.
+        if (w.string.len != 0 and
+            (w.attrs.width.kind == .text_content or w.attrs.height.kind == .text_content))
+        {
+            i += self.renderText(w, instance_buf[i..]);
+        }
     }
     return i;
+}
+
+/// Emit one textured quad per glyph of `w.string`, baseline-aligned within the
+/// widget's box. Returns how many instances were written (bounded by `out.len`).
+fn renderText(self: *const Self, w: *Widget, out: []main.Rect) usize {
+    const px = main.textPx();
+    const lm = self.atlas.lineMetrics(px);
+
+    // Honor `value` padding stored on the text_content axes (see Size.Kind).
+    const pad_x = w.attrs.width.value;
+    const pad_y = w.attrs.height.value;
+
+    var pen_x: f32 = @round(w.computed_position[0] + pad_x);
+    const baseline: f32 = @round(w.computed_position[1] + pad_y + lm.ascent);
+
+    var n: usize = 0;
+    for (w.string) |ch| {
+        if (n == out.len) break;
+        const g = self.atlas.glyph(@intCast(ch), px) orelse continue;
+        if (g.w > 0 and g.h > 0) {
+            out[n] = .{
+                .rect = .{
+                    @round(pen_x + g.bearing_x),
+                    @round(baseline - g.bearing_y),
+                    g.w,
+                    g.h,
+                },
+                .color = .{ 1, 1, 1, 1 },
+                .uv = .{ g.u0, g.v0, g.u1, g.v1 },
+                .use_texture = 1,
+            };
+            n += 1;
+        }
+        pen_x += g.advance;
+    }
+    return n;
 }

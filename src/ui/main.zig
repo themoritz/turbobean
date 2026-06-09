@@ -17,6 +17,12 @@ var font_pt: f32 = 18;
 const min_pt: f32 = 6;
 const max_pt: f32 = 96;
 
+/// Current glyph rasterization size in framebuffer pixels (font_pt scaled by DPI).
+/// This is the same px the text path renders at, so layout measurements match.
+pub fn textPx() u32 {
+    return @intFromFloat(@round(font_pt * sapp.dpiScale()));
+}
+
 const max_instances = 4096;
 
 const State = struct {
@@ -108,34 +114,7 @@ export fn init() void {
         .clear_value = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
     };
 
-    state.ui = Ui.init(gpa);
-}
-
-/// Append one textured quad per glyph of `text` to `out`, returning the count.
-/// Positions are pixel-snapped (integer) for maximum crispness.
-fn pushText(out: []Rect, atlas: *Atlas, text: []const u8, x: f32, y: f32, px: u32, color: [4]f32) usize {
-    var n: usize = 0;
-    var pen_x: f32 = @round(x);
-    const baseline: f32 = @round(y);
-    for (text) |ch| {
-        const g = atlas.glyph(@intCast(ch), px) orelse continue;
-        if (g.w > 0 and g.h > 0 and n < out.len) {
-            out[n] = .{
-                .rect = .{
-                    @round(pen_x + g.bearing_x),
-                    @round(baseline - g.bearing_y),
-                    g.w,
-                    g.h,
-                },
-                .color = color,
-                .uv = .{ g.u0, g.v0, g.u1, g.v1 },
-                .use_texture = 1,
-            };
-            n += 1;
-        }
-        pen_x += g.advance;
-    }
-    return n;
+    state.ui = Ui.init(gpa, &state.atlas);
 }
 
 export fn frame() void {
@@ -149,45 +128,13 @@ export fn frame() void {
     buildUi(&state.ui, gpa);
     try state.ui.layout(.{ sapp.widthf(), sapp.heightf() });
 
-    var count = state.ui.render(&instance_buf);
+    const count = state.ui.render(&instance_buf);
     state.ui.prune(gpa);
     state.ui.reset_stacks();
 
-    // A couple of UI rects (SDF path).
-    instance_buf[count] = .{
-        .color = .{ 1, 0, 0, 1 },
-        .rect = .{ 100, 100, 160, 90 },
-        .corner_radii = .{ 12, 12, 0, 0 },
-        .edge_softness = 1,
-    };
-    count += 1;
-    instance_buf[count] = .{
-        .color = .{ 0, 1, 0, 1 },
-        .rect = .{ 300, 120, 120, 120 },
-        .corner_radii = @splat(20),
-        .edge_softness = 1,
-        .border_thickness = 1,
-    };
-    count += 1;
-
-    // Text (atlas path), rasterized at the current framebuffer-DPI px size.
-    const px: u32 = @intFromFloat(@round(font_pt * sapp.dpiScale()));
-    const a = &state.atlas;
-    const lm = a.lineMetrics(px);
-    const top = 40 + lm.ascent;
-    count += pushText(
-        instance_buf[count..],
-        a,
-        "Hello!",
-        100,
-        top,
-        px,
-        .{ 1, 1, 1, 1 },
-    );
-
     // Upload any newly-rasterized glyphs, then the instance data (both must be
     // outside the render pass).
-    a.flush();
+    state.atlas.flush();
     sg.updateBuffer(state.instances, sg.asRange(instance_buf[0..count]));
 
     sg.beginPass(.{ .action = state.pass_action, .swapchain = sglue.swapchain() });
@@ -227,13 +174,14 @@ fn buildUi(ui: *Ui, arena: std.mem.Allocator) void {
         ui.push(.{ .parent = root });
         defer ui.pop(.parent);
 
-        ui.push(.{ .width = .{ .kind = .pixels, .value = 100 } });
-        ui.push(.{ .height = .{ .kind = .pixels, .value = 100 } });
+        ui.pushNext(.{ .width = .{ .kind = .text_content, .value = 10 } });
+        ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 5 } });
 
-        ui.pushNext(.{ .bg_color = .{ 1, 1, 1, 0.1 } });
-        _ = ui.mkWidget("A", {});
+        ui.pushNext(.{ .bg_color = .{ 1, 1, 1, 0.3 } });
+        _ = ui.mkWidget("Apple", {});
 
         ui.pushNext(.{ .bg_color = .{ 1, 0, 1, 0.5 } });
+        ui.pushNext(.{ .height = .{ .kind = .pixels, .value = 100 } });
         const b = ui.mkWidget("B", {});
 
         {
