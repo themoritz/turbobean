@@ -12,12 +12,7 @@ alloc: Allocator,
 widget_pool: std.heap.MemoryPool(Widget),
 widget_cache: std.AutoHashMap(Key, *Widget),
 
-stack_parent: Stack(?*Widget) = .init(null),
-stack_pref_width: Stack(Size) = .init(.{}),
-stack_pref_height: Stack(Size) = .init(.{}),
-stack_pref_axis: Stack(u1) = .init(1),
-stack_bg_color: Stack([4]f32) = .init(.{ 1, 1, 1, 0 }),
-stack_border_thickness: Stack(f32) = .init(0),
+stacks: AttributeStacks = .{},
 
 current_frame: u64,
 input: Input = .{},
@@ -26,6 +21,54 @@ const Input = struct {
     mouse_pos: ?Point = null,
     mouse_down: bool = false,
     mouse_clicked: bool = false,
+};
+
+/// Single source of truth for every attribute:
+/// - field name is the attribute name used in `push`/`pop`
+/// - field type is what gets stacked
+/// - field default is the value `top()` returns when the stack is empty
+pub const BuildAttributes = struct {
+    parent: ?*Widget = null,
+    width: Size = .{},
+    height: Size = .{},
+    axis: u1 = 1,
+    bg_color: [4]f32 = .{ 1, 1, 1, 0 },
+    border_thickness: f32 = 0,
+};
+
+/// Used for `push`
+pub const Attribute = blk: {
+    const style_fields = @typeInfo(BuildAttributes).@"struct".fields;
+    const n = style_fields.len;
+    var names: [n][]const u8 = undefined;
+    var types: [n]type = undefined;
+    var values: [n]usize = undefined;
+    for (style_fields, 0..) |sf, i| {
+        names[i] = sf.name;
+        types[i] = sf.type;
+        values[i] = i;
+    }
+    const Tag = @Enum(usize, .exhaustive, &names, &values);
+    break :blk @Union(.auto, Tag, &names, &types, &@splat(.{}));
+};
+
+/// Used for `pop`
+pub const AttributeTag = std.meta.Tag(Attribute);
+
+/// A struct with one `Stack(FieldType)` per `BuildAtrribute` field
+const AttributeStacks = blk: {
+    const style_fields = @typeInfo(BuildAttributes).@"struct".fields;
+    var names: [style_fields.len][]const u8 = undefined;
+    var types: [style_fields.len]type = undefined;
+    var attrs: [style_fields.len]std.builtin.Type.StructField.Attributes = undefined;
+    for (style_fields, 0..) |sf, i| {
+        const S = Stack(sf.type);
+        names[i] = sf.name;
+        types[i] = S;
+        // Seed each stack with the matching Style field's default.
+        attrs[i] = .{ .default_value_ptr = @ptrCast(&@as(S, .{ .default = sf.defaultValue().? })) };
+    }
+    break :blk @Struct(.auto, null, &names, &types, &attrs);
 };
 
 pub fn handle_event(self: *Self, event: sapp.Event) void {
@@ -200,12 +243,33 @@ pub fn init(alloc: Allocator) Self {
 }
 
 pub fn reset_stacks(self: *Self) void {
-    self.stack_parent.clear();
-    self.stack_pref_width.clear();
-    self.stack_pref_height.clear();
-    self.stack_pref_axis.clear();
-    self.stack_bg_color.clear();
-    self.stack_border_thickness.clear();
+    inline for (@typeInfo(AttributeStacks).@"struct".fields) |f| {
+        @field(self.stacks, f.name).clear();
+    }
+}
+
+/// Push one style attribute, e.g. `ui.push(.{ .height = .{ .kind = .children_sum } })`.
+/// The arg is an anonymous struct with exactly one field naming the attribute.
+pub fn push(self: *Self, attr: Attribute) void {
+    switch (attr) {
+        inline else => |value, tag| {
+            @field(self.stacks, @tagName(tag)).push(self.alloc, value) catch @panic("OOM");
+        },
+    }
+}
+
+/// Like `push`, but the value is auto-popped after the next `mkWidget` reads it.
+pub fn pushNext(self: *Self, attr: Attribute) void {
+    switch (attr) {
+        inline else => |value, tag| {
+            @field(self.stacks, @tagName(tag)).pushNext(self.alloc, value) catch @panic("OOM");
+        },
+    }
+}
+
+/// Pop one style attribute, e.g. `ui.pop(.height)`.
+pub fn pop(self: *Self, comptime tag: AttributeTag) void {
+    @field(self.stacks, @tagName(tag)).pop();
 }
 
 pub fn getWidget(self: *Self, key: Key, alloc: Allocator) !*Widget {
@@ -220,26 +284,26 @@ pub fn getWidget(self: *Self, key: Key, alloc: Allocator) !*Widget {
     return w;
 }
 
-pub fn mkWidget(self: *Self, str: []const u8, hash_arg: anytype) !*Widget {
-    const parent = self.stack_parent.top();
+pub fn mkWidget(self: *Self, str: []const u8, hash_arg: anytype) *Widget {
+    const parent = self.stacks.parent.top();
 
     const seed = if (parent) |p| p.key else Key.zero;
     const key = Key.fromString(seed, str, hash_arg);
-    const w = try self.getWidget(key, self.alloc);
+    const w = self.getWidget(key, self.alloc) catch @panic("OOM");
 
     w.parent = parent;
     if (w.parent) |p| p.appendChild(w);
 
-    w.semantic_size = .{ self.stack_pref_width.top(), self.stack_pref_height.top() };
-    w.semantic_child_layout_axis = self.stack_pref_axis.top();
-    w.bg_color = self.stack_bg_color.top();
-    w.border_thickness = self.stack_border_thickness.top();
+    w.semantic_size = .{ self.stacks.width.top(), self.stacks.height.top() };
+    w.semantic_child_layout_axis = self.stacks.axis.top();
+    w.bg_color = self.stacks.bg_color.top();
+    w.border_thickness = self.stacks.border_thickness.top();
     w.string = str;
 
     return w;
 }
 
-pub fn prune(self: *Self, arena: Allocator) !void {
+pub fn prune(self: *Self, arena: Allocator) void {
     // Collect stale widgets
     var stale = std.ArrayList(Key).empty;
     var it = self.widget_cache.iterator();
@@ -249,7 +313,7 @@ pub fn prune(self: *Self, arena: Allocator) !void {
 
         if (w.last_frame_touched < self.current_frame) {
             self.widget_pool.destroy(w);
-            try stale.append(arena, kv.key_ptr.*);
+            stale.append(arena, kv.key_ptr.*) catch @panic("OOM");
         } else {
             // Delete tree structure for what's left
             w.parent = null;

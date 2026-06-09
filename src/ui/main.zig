@@ -146,11 +146,11 @@ export fn frame() void {
     };
 
     state.ui.current_frame = sapp.frameCount();
-    buildUi(&state.ui, gpa) catch @panic("OOM");
+    buildUi(&state.ui, gpa);
     try state.ui.layout(.{ sapp.widthf(), sapp.heightf() });
 
     var count = state.ui.render(&instance_buf);
-    state.ui.prune(gpa) catch @panic("OOM");
+    state.ui.prune(gpa);
     state.ui.reset_stacks();
 
     // A couple of UI rects (SDF path).
@@ -209,33 +209,37 @@ export fn cleanup() void {
     sg.shutdown();
 }
 
-fn buildUi(ui: *Ui, arena: std.mem.Allocator) !void {
-    try ui.stack_pref_height.push(arena, .{ .kind = .children_sum });
-    try ui.stack_pref_width.push(arena, .{ .kind = .percent_of_parent, .value = 0.5 });
-    defer ui.stack_pref_width.pop();
+fn buildUi(ui: *Ui, arena: std.mem.Allocator) void {
+    _ = arena;
+    ui.push(.{ .height = .{ .kind = .children_sum } });
+    defer ui.pop(.height);
+    ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
+    defer ui.pop(.width);
 
-    try ui.stack_border_thickness.pushNext(arena, 1);
-    try ui.stack_bg_color.pushNext(arena, .{ 1, 0, 0, 1 });
-    const root = try ui.mkWidget("root", {});
+    ui.pushNext(.{ .border_thickness = 1 });
+    ui.pushNext(.{ .bg_color = .{ 1, 0, 0, 1 } });
+    const root = ui.mkWidget("root", {});
 
     {
-        try ui.stack_parent.push(arena, root);
+        ui.push(.{ .parent = root });
+        defer ui.pop(.parent);
 
-        try ui.stack_pref_width.push(arena, .{ .kind = .pixels, .value = 100 });
-        try ui.stack_pref_height.push(arena, .{ .kind = .pixels, .value = 100 });
+        ui.push(.{ .width = .{ .kind = .pixels, .value = 100 } });
+        ui.push(.{ .height = .{ .kind = .pixels, .value = 100 } });
 
-        try ui.stack_bg_color.pushNext(arena, .{ 1, 1, 1, 0.1 });
-        _ = try ui.mkWidget("A", {});
+        ui.pushNext(.{ .bg_color = .{ 1, 1, 1, 0.1 } });
+        _ = ui.mkWidget("A", {});
 
-        try ui.stack_bg_color.pushNext(arena, .{ 1, 0, 1, 0.5 });
-        const b = try ui.mkWidget("B", {});
+        ui.pushNext(.{ .bg_color = .{ 1, 0, 1, 0.5 } });
+        const b = ui.mkWidget("B", {});
 
         {
-            try ui.stack_parent.push(arena, b);
+            ui.push(.{ .parent = b });
+            defer ui.pop(.parent);
 
-            try ui.stack_pref_width.push(arena, .{ .kind = .percent_of_parent, .value = 0.5 });
-            try ui.stack_bg_color.pushNext(arena, .{ 1, 1, 0, 0.9 });
-            _ = try ui.mkWidget("C", 1);
+            ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
+            ui.pushNext(.{ .bg_color = .{ 1, 1, 0, 0.9 } });
+            _ = ui.mkWidget("C", 1);
         }
     }
 }
