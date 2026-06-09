@@ -178,7 +178,7 @@ export fn frame() void {
     count += pushText(
         instance_buf[count..],
         a,
-        "Hello, Iosevka!",
+        "Hello!",
         100,
         top,
         px,
@@ -216,7 +216,7 @@ fn buildUi(ui: *Ui, arena: std.mem.Allocator) !void {
 
     try ui.stack_border_thickness.pushNext(arena, 1);
     try ui.stack_bg_color.pushNext(arena, .{ 1, 0, 0, 1 });
-    const root = try ui.mkWidget(.{ .key = 0 }, "root");
+    const root = try ui.mkWidget("root", {});
 
     {
         try ui.stack_parent.push(arena, root);
@@ -225,17 +225,17 @@ fn buildUi(ui: *Ui, arena: std.mem.Allocator) !void {
         try ui.stack_pref_height.push(arena, .{ .kind = .pixels, .value = 100 });
 
         try ui.stack_bg_color.pushNext(arena, .{ 1, 1, 1, 0.1 });
-        _ = try ui.mkWidget(.{ .key = 1 }, "A");
+        _ = try ui.mkWidget("A", {});
 
         try ui.stack_bg_color.pushNext(arena, .{ 1, 0, 1, 0.5 });
-        const b = try ui.mkWidget(.{ .key = 2 }, "B");
+        const b = try ui.mkWidget("B", {});
 
         {
             try ui.stack_parent.push(arena, b);
 
             try ui.stack_pref_width.push(arena, .{ .kind = .percent_of_parent, .value = 0.5 });
             try ui.stack_bg_color.pushNext(arena, .{ 1, 1, 0, 0.9 });
-            _ = try ui.mkWidget(.{ .key = 3 }, "C");
+            _ = try ui.mkWidget("C", 1);
         }
     }
 }

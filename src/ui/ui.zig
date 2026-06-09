@@ -54,6 +54,7 @@ const Size = struct {
     const Kind = enum {
         null,
         pixels,
+        text_content,
         percent_of_parent,
         children_sum,
     };
@@ -62,8 +63,30 @@ const Size = struct {
 const Key = struct {
     key: u64,
 
-    pub fn fromString(str: []const u8) Key {
-        _ = str;
+    pub const zero = Key{ .key = 0 };
+
+    // Seed from parent. Add str to the hash and optionally hash_arg
+    pub fn fromString(seed: Key, str: []const u8, hash_arg: anytype) Key {
+        var state = std.hash.Wyhash.init(seed.key);
+        state.update(str);
+        const type_info = @typeInfo(@TypeOf(hash_arg));
+        switch (type_info) {
+            .int,
+            => {
+                const bytes: []const u8 = std.mem.asBytes(&hash_arg);
+                state.update(bytes);
+            },
+            .comptime_int => {
+                const bytes: []const u8 = std.mem.asBytes(&@as(u32, hash_arg));
+                state.update(bytes);
+            },
+            .void => {},
+            else => {
+                @compileLog(hash_arg);
+                @compileError("Can't handle type of hash_arg");
+            },
+        }
+        return .{ .key = state.final() };
     }
 };
 
@@ -88,6 +111,7 @@ const Widget = struct {
     computed_size: [2]f32 = @splat(0),
 
     // Generation info
+    key: Key,
     last_frame_touched: u64 = 0,
 
     // Persistent data
@@ -188,7 +212,7 @@ pub fn getWidget(self: *Self, key: Key, alloc: Allocator) !*Widget {
     const entry = try self.widget_cache.getOrPut(key);
     if (!entry.found_existing) {
         const new_w = try self.widget_pool.create(alloc);
-        new_w.* = .{};
+        new_w.* = .{ .key = key };
         entry.value_ptr.* = new_w;
     }
     const w = entry.value_ptr.*;
@@ -196,11 +220,15 @@ pub fn getWidget(self: *Self, key: Key, alloc: Allocator) !*Widget {
     return w;
 }
 
-pub fn mkWidget(self: *Self, key: Key, str: []const u8) !*Widget {
+pub fn mkWidget(self: *Self, str: []const u8, hash_arg: anytype) !*Widget {
+    const parent = self.stack_parent.top();
+
+    const seed = if (parent) |p| p.key else Key.zero;
+    const key = Key.fromString(seed, str, hash_arg);
     const w = try self.getWidget(key, self.alloc);
 
-    w.parent = self.stack_parent.top();
-    if (w.parent) |parent| parent.appendChild(w);
+    w.parent = parent;
+    if (w.parent) |p| p.appendChild(w);
 
     w.semantic_size = .{ self.stack_pref_width.top(), self.stack_pref_height.top() };
     w.semantic_child_layout_axis = self.stack_pref_axis.top();
