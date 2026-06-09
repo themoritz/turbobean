@@ -216,6 +216,9 @@ fn buildUi(ui: *Ui, arena: std.mem.Allocator) void {
     ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
     defer ui.pop(.width);
 
+    ui.pushFlags(.{ .clickable = true });
+    ui.addFlagsNext(.{ .draw_border = true });
+
     ui.pushNext(.{ .border_thickness = 1 });
     ui.pushNext(.{ .bg_color = .{ 1, 0, 0, 1 } });
     const root = ui.mkWidget("root", {});

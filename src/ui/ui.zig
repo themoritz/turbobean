@@ -34,6 +34,7 @@ pub const BuildAttributes = struct {
     axis: u1 = 1,
     bg_color: [4]f32 = .{ 1, 1, 1, 0 },
     border_thickness: f32 = 0,
+    flags: Widget.Flags = .{},
 };
 
 /// Used for `push`
@@ -161,9 +162,18 @@ const Widget = struct {
     hot_t: f32 = 0,
     active_t: f32 = 0,
 
-    const Flags = struct {
+    const Flags = packed struct {
         clickable: bool = false,
         floating: bool = false,
+        draw_border: bool = false,
+
+        pub fn merge(a: Flags, b: Flags) Flags {
+            return @bitCast(@as(u3, @bitCast(a)) | @as(u3, @bitCast(b)));
+        }
+
+        pub fn without(a: Flags, b: Flags) Flags {
+            return @bitCast(@as(u3, @bitCast(a)) & ~@as(u3, @bitCast(b)));
+        }
     };
 
     pub fn appendChild(self: *Widget, child: *Widget) void {
@@ -227,6 +237,11 @@ pub fn Stack(comptime T: type) type {
             return last.value;
         }
 
+        pub fn peek_top(self: *@This()) T {
+            const last = self.values.getLastOrNull() orelse return self.default;
+            return last.value;
+        }
+
         pub fn clear(self: *@This()) void {
             self.values.clearRetainingCapacity();
         }
@@ -270,6 +285,28 @@ pub fn pushNext(self: *Self, attr: Attribute) void {
 /// Pop one style attribute, e.g. `ui.pop(.height)`.
 pub fn pop(self: *Self, comptime tag: AttributeTag) void {
     @field(self.stacks, @tagName(tag)).pop();
+}
+
+pub fn pushFlags(self: *Self, flags: Widget.Flags) void {
+    self.push(.{ .flags = flags });
+}
+
+pub fn pushFlagsNext(self: *Self, flags: Widget.Flags) void {
+    self.pushNext(.{ .flags = flags });
+}
+
+pub fn addFlags(self: *Self, flags: Widget.Flags) void {
+    const current = self.stacks.flags.peek_top();
+    self.pushFlags(current.merge(flags));
+}
+
+pub fn addFlagsNext(self: *Self, flags: Widget.Flags) void {
+    const current = self.stacks.flags.peek_top();
+    self.pushFlagsNext(current.merge(flags));
+}
+
+pub fn popFlags(self: *Self) void {
+    self.pop(.flags);
 }
 
 pub fn getWidget(self: *Self, key: Key, alloc: Allocator) !*Widget {
