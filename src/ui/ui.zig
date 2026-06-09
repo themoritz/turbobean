@@ -19,11 +19,39 @@ stacks: AttributeStacks = .{},
 current_frame: u64,
 input: Input = .{},
 
+// Widget the mouse is over (hot)
+hot_key: ?Key = null,
+/// Widget being pressed (active)
+active_key: ?Key = null,
+
+// Per-second ease rates for the hot/active interpolation
+const hot_rate: f32 = 20;
+const active_rate: f32 = 30;
+
 const Input = struct {
     mouse_pos: ?Point = null,
     mouse_down: bool = false,
-    mouse_clicked: bool = false,
+    // Edge flags: set by events, consumed (cleared) once per frame in update_interactions.
+    mouse_pressed: bool = false,
+    mouse_released: bool = false,
 };
+
+pub fn handle_event(self: *Self, event: sapp.Event) void {
+    switch (event.type) {
+        .MOUSE_MOVE => {
+            self.input.mouse_pos = .{ .x = event.mouse_x, .y = event.mouse_y };
+        },
+        .MOUSE_DOWN => {
+            self.input.mouse_down = true;
+            self.input.mouse_pressed = true;
+        },
+        .MOUSE_UP => {
+            self.input.mouse_down = false;
+            self.input.mouse_released = true;
+        },
+        else => {},
+    }
+}
 
 /// Single source of truth for every attribute:
 /// - field name is the attribute name used in `push`/`pop`
@@ -40,6 +68,7 @@ pub const BuildAttributes = struct {
     corner_radii: [4]f32 = @splat(0), // TL, TR, BR, BL (pixels)
     font_size: f32 = 18, // points; scaled by DPI at raster time
     font_color: [4]f32 = .{ 1, 1, 1, 1 },
+    hover_cursor: sapp.MouseCursor = .DEFAULT, // cursor shown while this widget is hot
     flags: Widget.Flags = .{},
 
     /// Semantic size on the given layout axis (0 = width, 1 = height).
@@ -85,24 +114,6 @@ const AttributeStacks = blk: {
     }
     break :blk @Struct(.auto, null, &names, &types, &attrs);
 };
-
-pub fn handle_event(self: *Self, event: sapp.Event) void {
-    self.input.mouse_clicked = false;
-
-    switch (event.type) {
-        .MOUSE_MOVE => {
-            self.input.mouse_pos = .{ .x = event.mouse_x, .y = event.mouse_y };
-        },
-        .MOUSE_DOWN => {
-            self.input.mouse_down = true;
-            self.input.mouse_clicked = true;
-        },
-        .MOUSE_UP => {
-            self.input.mouse_down = false;
-        },
-        else => {},
-    }
-}
 
 const Size = struct {
     kind: Kind = .null,
@@ -150,6 +161,9 @@ const Key = struct {
 };
 
 const Widget = struct {
+    // Convenience back-pointer
+    ui: *Self,
+
     // Widget tree
     first: ?*Widget = null,
     last: ?*Widget = null,
@@ -200,22 +214,54 @@ const Widget = struct {
         }
     }
 
-    pub fn interact(self: *Widget, ui: *Self) Interaction {
-        const hover = self.rect.contains(ui.input.mouse_down);
+    /// Laid-out bounds in framebuffer pixels.
+    pub fn rect(self: *const Widget) Rect {
+        return .{
+            .x = self.computed_position[0],
+            .y = self.computed_position[1],
+            .w = self.computed_size[0],
+            .h = self.computed_size[1],
+        };
+    }
+
+    /// This frame's interaction signal for the widget. Built from the hot/active
+    /// keys resolved last frame plus this frame's pending press/release edges, so
+    /// it reflects one frame of latency (standard for the cached immediate-mode
+    /// model). Call it during build, e.g. `if (w.interact().clicked) ...`.
+    pub fn interact(self: *Widget) Interaction {
+        const ui = self.ui;
+        const is_hot = if (ui.hot_key) |k| k.key == self.key.key else false;
+        const is_active = if (ui.active_key) |k| k.key == self.key.key else false;
         return .{
             .widget = self,
-            .hover = hover,
-            .clicked = hover and ui.input.mouse_clicked,
-            .mouse_down = hover and ui.input.mouse_down,
+            .hover = is_hot,
+            .pressed = is_hot and ui.input.mouse_pressed,
+            .held = is_active,
+            // A click is a release over the same widget the press started on.
+            .clicked = is_active and ui.input.mouse_released,
         };
+    }
+
+    fn hitTest(w: *Widget, p: Point) ?*Widget {
+        // Children
+        var current = w.first;
+        while (current) |c| {
+            if (c.hitTest(p)) |h| return h;
+            current = c.next;
+        }
+
+        // Self
+        if (w.attrs.flags.clickable and w.rect().contains(p)) return w;
+        return null;
     }
 };
 
 const Interaction = struct {
     widget: *Widget,
-    hover: bool,
-    clicked: bool,
-    mouse_down: bool,
+    hover: bool, // cursor is over the widget (it is the hot widget)
+    pressed: bool, // mouse went down on it this frame
+    held: bool, // it is the active widget (button held down on it)
+    clicked: bool, // released on it this frame after the press started there
 };
 
 pub fn Stack(comptime T: type) type {
@@ -334,7 +380,7 @@ pub fn getWidget(self: *Self, key: Key, alloc: Allocator) !*Widget {
     const entry = try self.widget_cache.getOrPut(key);
     if (!entry.found_existing) {
         const new_w = try self.widget_pool.create(alloc);
-        new_w.* = .{ .key = key };
+        new_w.* = .{ .key = key, .ui = self };
         entry.value_ptr.* = new_w;
     }
     const w = entry.value_ptr.*;
@@ -382,24 +428,63 @@ pub fn prune(self: *Self, arena: Allocator) void {
     for (stale.items) |key| _ = self.widget_cache.remove(key);
 }
 
-pub fn layout(self: *Self, window: [2]f32) !void {
-    // Find root
-    if (self.widget_cache.count() == 0) return;
+/// Topmost widget in the cache (one with no parent). Null if the cache is empty.
+fn root(self: *Self) ?*Widget {
+    if (self.widget_cache.count() == 0) return null;
     var it = self.widget_cache.valueIterator();
-    var root = it.next().?.*;
-    while (root.attrs.parent) |p| root = p;
+    var r = it.next().?.*;
+    while (r.attrs.parent) |p| r = p;
+    return r;
+}
+
+pub fn layout(self: *Self, window: [2]f32) !void {
+    const root_w = self.root() orelse return;
 
     for (0..2) |ax| {
         const axis: u1 = @intCast(ax);
-        self.layoutStandalone(root, axis);
-        layoutUpwardDependent(root, axis, window[axis]);
-        layoutDownwardDependent(root, axis);
-        root.computed_position[axis] = 0;
-        layoutComputePositions(root, axis);
+        layoutStandalone(root_w, axis);
+        layoutUpwardDependent(root_w, axis, window[axis]);
+        layoutDownwardDependent(root_w, axis);
+        root_w.computed_position[axis] = 0;
+        layoutComputePositions(root_w, axis);
     }
 }
 
-fn layoutStandalone(self: *Self, w: *Widget, axis: u1) void {
+/// - Resolve hot/active state from the box tree
+/// - Advance each widget's `hot_t`/`active_t` toward its target
+/// - Applies the hot widget's `hover_cursor`.
+pub fn updateInteractions(self: *Self, dt: f32) void {
+    const hot: ?*Widget = blk: {
+        if (self.input.mouse_pos) |mp| {
+            if (self.root()) |r| break :blk r.hitTest(mp);
+        }
+        break :blk null;
+    };
+    self.hot_key = if (hot) |h| h.key else null;
+
+    // Press starts an interaction on the hot widget, release ends it.
+    if (self.input.mouse_pressed) self.active_key = self.hot_key;
+    if (self.input.mouse_released) self.active_key = null;
+    self.input.mouse_pressed = false;
+    self.input.mouse_released = false;
+
+    sapp.setMouseCursor(if (hot) |h| h.attrs.hover_cursor else .DEFAULT);
+
+    // Frame-rate-independent exponential ease toward the 0/1 targets.
+    const hot_k = 1 - @exp(-hot_rate * dt);
+    const active_k = 1 - @exp(-active_rate * dt);
+    var it = self.widget_cache.valueIterator();
+    while (it.next()) |v| {
+        const w = v.*;
+        const is_hot: f32 = if (self.hot_key) |k| @floatFromInt(@intFromBool(k.key == w.key.key)) else 0;
+        const is_active = if (self.active_key) |k| k.key == w.key.key else false;
+        w.hot_t += hot_k * (is_hot - w.hot_t);
+        // Snap to 1 while held so a press reads instantly; decay smoothly on release.
+        w.active_t = if (is_active) 1 else w.active_t + active_k * (0 - w.active_t);
+    }
+}
+
+fn layoutStandalone(w: *Widget, axis: u1) void {
     // Self
     switch (w.attrs.size(axis).kind) {
         .pixels => {
@@ -409,17 +494,16 @@ fn layoutStandalone(self: *Self, w: *Widget, axis: u1) void {
             const px = main.ptToPx(w.attrs.font_size);
             switch (axis) {
                 0 => {
-                    // Sum glyph advances across the string for the text width.
+                    // Sum glyph advances across the string
                     var width: f32 = 0;
                     for (w.string) |ch| {
-                        const g = self.atlas.glyph(@intCast(ch), px) orelse continue;
+                        const g = w.ui.atlas.glyph(@intCast(ch), px) orelse continue;
                         width += g.advance;
                     }
                     w.computed_size[axis] = width + 2 * w.attrs.size(axis).value;
                 },
                 1 => {
-                    // A single line of text is one line height tall.
-                    const lm = self.atlas.lineMetrics(px);
+                    const lm = w.ui.atlas.lineMetrics(px);
                     w.computed_size[axis] = lm.line_height + 2 * w.attrs.size(axis).value;
                 },
             }
@@ -430,7 +514,7 @@ fn layoutStandalone(self: *Self, w: *Widget, axis: u1) void {
     // Children
     var current = w.first;
     while (current) |c| {
-        self.layoutStandalone(c, axis);
+        layoutStandalone(c, axis);
         current = c.next;
     }
 }
@@ -528,6 +612,23 @@ pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
             .border_color = w.attrs.border_color,
         };
         i += 1;
+
+        // Hover/press indicator: a translucent white overlay that grows as the
+        // widget becomes hot and brightens further while it's held.
+        const highlight = 0.10 * w.hot_t + 0.18 * w.active_t;
+        if (highlight > 0.001 and i < max) {
+            instance_buf[i] = main.Rect{
+                .rect = .{
+                    @floor(w.computed_position[0]),
+                    @floor(w.computed_position[1]),
+                    @floor(w.computed_size[0]),
+                    @floor(w.computed_size[1]),
+                },
+                .color = .{ 1, 1, 1, highlight },
+                .corner_radii = w.attrs.corner_radii,
+            };
+            i += 1;
+        }
 
         // Text glyph quads for widgets sized to their text content.
         if (w.string.len != 0 and

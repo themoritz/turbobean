@@ -32,6 +32,7 @@ const State = struct {
     pass_action: sg.PassAction = .{},
     atlas: Atlas = undefined,
     ui: Ui = undefined,
+    app: App = .{ .open = false },
     time: f64 = 0,
 };
 var state: State = .{};
@@ -127,8 +128,9 @@ export fn frame() void {
     };
 
     state.ui.current_frame = sapp.frameCount();
-    buildUi(&state.ui, gpa);
+    state.app.buildUi(&state.ui);
     try state.ui.layout(.{ sapp.widthf(), sapp.heightf() });
+    state.ui.updateInteractions(@floatCast(sapp.frameDuration()));
 
     const count = state.ui.render(&instance_buf);
     state.ui.prune(gpa);
@@ -158,43 +160,51 @@ export fn cleanup() void {
     sg.shutdown();
 }
 
-fn buildUi(ui: *Ui, arena: std.mem.Allocator) void {
-    _ = arena;
-    ui.push(.{ .height = .{ .kind = .children_sum } });
-    defer ui.pop(.height);
-    ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
-    defer ui.pop(.width);
+const App = struct {
+    open: bool,
 
-    ui.pushFlags(.{ .clickable = true });
-    ui.addFlagsNext(.{ .draw_border = true });
+    fn buildUi(app: *App, ui: *Ui) void {
+        ui.push(.{ .height = .{ .kind = .children_sum } });
+        defer ui.pop(.height);
+        ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
+        defer ui.pop(.width);
 
-    ui.pushNext(.{ .border_thickness = 1 });
-    ui.pushNext(.{ .border_color = .{ 1, 0, 0, 1 } });
-    ui.pushNext(.{ .corner_radii = @splat(10) });
-    const root = ui.mkWidget("root", {});
+        ui.pushFlagsNext(.{ .clickable = true });
+        ui.addFlagsNext(.{ .draw_border = true });
 
-    {
-        ui.push(.{ .parent = root });
-        defer ui.pop(.parent);
+        ui.pushNext(.{ .border_thickness = 1 });
+        ui.pushNext(.{ .border_color = .{ 1, 0, 0, 1 } });
+        ui.pushNext(.{ .corner_radii = @splat(10) });
+        ui.pushNext(.{ .hover_cursor = .POINTING_HAND });
+        const root = ui.mkWidget("root", {});
 
-        ui.pushNext(.{ .width = .{ .kind = .text_content, .value = 10 } });
-        ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 5 } });
-        ui.pushNext(.{ .bg_color = .{ 1, 1, 1, 0.3 } });
-        _ = ui.mkWidget("Apple", {});
-
-        ui.pushNext(.{ .bg_color = .{ 1, 0, 1, 0.5 } });
-        ui.pushNext(.{ .height = .{ .kind = .pixels, .value = 100 } });
-        const b = ui.mkWidget("B", {});
+        if (root.interact().clicked) app.open = !app.open;
 
         {
-            ui.push(.{ .parent = b });
+            ui.push(.{ .parent = root });
             defer ui.pop(.parent);
 
-            ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
-            ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 40 } });
-            ui.pushNext(.{ .font_size = 25 });
-            ui.pushNext(.{ .bg_color = .{ 1, 1, 0, 0.9 } });
-            _ = ui.mkWidget("C", 1);
+            ui.pushNext(.{ .width = .{ .kind = .text_content, .value = 10 } });
+            ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 5 } });
+            ui.pushNext(.{ .bg_color = .{ 1, 1, 1, 0.3 } });
+            _ = ui.mkWidget("Apple", {});
+
+            if (app.open) {
+                ui.pushNext(.{ .bg_color = .{ 1, 0, 1, 0.5 } });
+                ui.pushNext(.{ .height = .{ .kind = .pixels, .value = 100 } });
+                const b = ui.mkWidget("B", {});
+
+                if (root.interact().held) {
+                    ui.push(.{ .parent = b });
+                    defer ui.pop(.parent);
+
+                    ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
+                    ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 40 } });
+                    ui.pushNext(.{ .font_size = 25 });
+                    ui.pushNext(.{ .bg_color = .{ 1, 1, 0, 0.9 } });
+                    _ = ui.mkWidget("C", 1);
+                }
+            }
         }
     }
-}
+};
