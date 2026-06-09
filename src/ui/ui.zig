@@ -36,6 +36,10 @@ pub const BuildAttributes = struct {
     axis: u1 = 1,
     bg_color: [4]f32 = .{ 1, 1, 1, 0 },
     border_thickness: f32 = 0,
+    border_color: [4]f32 = .{ 1, 1, 1, 1 },
+    corner_radii: [4]f32 = @splat(0), // TL, TR, BR, BL (pixels)
+    font_size: f32 = 18, // points; scaled by DPI at raster time
+    font_color: [4]f32 = .{ 1, 1, 1, 1 },
     flags: Widget.Flags = .{},
 
     /// Semantic size on the given layout axis (0 = width, 1 = height).
@@ -402,7 +406,7 @@ fn layoutStandalone(self: *Self, w: *Widget, axis: u1) void {
             w.computed_size[axis] = w.attrs.size(axis).value;
         },
         .text_content => {
-            const px = main.textPx();
+            const px = main.ptToPx(w.attrs.font_size);
             switch (axis) {
                 0 => {
                     // Sum glyph advances across the string for the text width.
@@ -509,7 +513,8 @@ pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
         if (i == max) break;
         const w = v.*;
 
-        // Background / border quad for the widget itself.
+        // Background + border quad for the widget itself. The shader fills the
+        // interior with `color` and the ring with `border_color`.
         instance_buf[i] = main.Rect{
             .rect = .{
                 @floor(w.computed_position[0]),
@@ -518,7 +523,9 @@ pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
                 @floor(w.computed_size[1]),
             },
             .color = w.attrs.bg_color,
+            .corner_radii = w.attrs.corner_radii,
             .border_thickness = w.attrs.border_thickness,
+            .border_color = w.attrs.border_color,
         };
         i += 1;
 
@@ -535,7 +542,7 @@ pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
 /// Emit one textured quad per glyph of `w.string`, baseline-aligned within the
 /// widget's box. Returns how many instances were written (bounded by `out.len`).
 fn renderText(self: *const Self, w: *Widget, out: []main.Rect) usize {
-    const px = main.textPx();
+    const px = main.ptToPx(w.attrs.font_size);
     const lm = self.atlas.lineMetrics(px);
 
     // Honor `value` padding stored on the text_content axes (see Size.Kind).
@@ -557,7 +564,7 @@ fn renderText(self: *const Self, w: *Widget, out: []main.Rect) usize {
                     g.w,
                     g.h,
                 },
-                .color = .{ 1, 1, 1, 1 },
+                .color = w.attrs.font_color,
                 .uv = .{ g.u0, g.v0, g.u1, g.v1 },
                 .use_texture = 1,
             };

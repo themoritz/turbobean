@@ -11,6 +11,7 @@ in float i_edge_softness;
 in float i_border_thickness; // 0 = filled, >0 = outline of this width (px)
 in vec4 i_uv;                // glyph atlas source rect: xy=top-left, zw=bottom-right
 in float i_use_texture;      // 0 = SDF rect, 1 = sample the glyph atlas
+in vec4 i_border_color;      // ring color when border_thickness > 0
 
 out vec2 dest_pos;
 out vec2 dest_center;
@@ -22,6 +23,7 @@ out float edge_softness;
 out float border_thickness;
 out vec2 frag_uv;
 out float use_texture;
+out vec4 border_color;
 
 void main() {
     // 0->(0,0) 1->(1,0) 2->(0,1) 3->(1,1)
@@ -43,6 +45,7 @@ void main() {
     border_thickness = i_border_thickness;
     frag_uv = mix(i_uv.xy, i_uv.zw, corner);
     use_texture = i_use_texture;
+    border_color = i_border_color;
 }
 
 @end
@@ -60,6 +63,7 @@ in float edge_softness;
 in float border_thickness;
 in vec2 frag_uv;
 in float use_texture;
+in vec4 border_color;
 
 layout(binding=0) uniform texture2D atlas;
 layout(binding=0) uniform sampler smp;
@@ -97,17 +101,21 @@ void main() {
     // Outer edge coverage (anti-aliased).
     float outer = 1.0 - smoothstep(0.0, 2.0 * edge_softness, dist);
 
-    float coverage;
     if (border_thickness > 0.0) {
-        // Inner shape is the rect shrunk by the border width; subtracting its
-        // coverage leaves a ring `border_thickness` px wide.
+        // Interior is the rect shrunk by the border width; the leftover ring
+        // (outer - inner) is `border_thickness` px wide. Fill interior with
+        // `color`, ring with `border_color`, then composite the two disjoint
+        // regions (premultiplied add -> straight alpha).
         float inner = 1.0 - smoothstep(0.0, 2.0 * edge_softness, dist + border_thickness);
-        coverage = outer - inner;
+        float ring = outer - inner;
+        float fill_a = color.w * inner;
+        float ring_a = border_color.w * ring;
+        float a = fill_a + ring_a;
+        vec3 rgb = color.xyz * fill_a + border_color.xyz * ring_a;
+        frag_color = a > 0.0 ? vec4(rgb / a, a) : vec4(0.0);
     } else {
-        coverage = outer;
+        frag_color = vec4(color.xyz, color.w * outer);
     }
-
-    frag_color = vec4(color.xyz, color.w * coverage);
 }
 
 @end

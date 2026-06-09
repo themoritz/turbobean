@@ -17,10 +17,10 @@ var font_pt: f32 = 18;
 const min_pt: f32 = 6;
 const max_pt: f32 = 96;
 
-/// Current glyph rasterization size in framebuffer pixels (font_pt scaled by DPI).
-/// This is the same px the text path renders at, so layout measurements match.
-pub fn textPx() u32 {
-    return @intFromFloat(@round(font_pt * sapp.dpiScale()));
+/// Convert a point size to framebuffer pixels at the current DPI. Layout and the
+/// renderer both go through this so a widget's measured and drawn text agree.
+pub fn ptToPx(pt: f32) u32 {
+    return @intFromFloat(@round(pt * sapp.dpiScale()));
 }
 
 const max_instances = 4096;
@@ -50,6 +50,7 @@ pub const Rect = extern struct {
     border_thickness: f32 = 0, // 0 = filled, >0 = outline width (pixels)
     uv: [4]f32 = @splat(0), // glyph atlas source rect (u0,v0,u1,v1)
     use_texture: f32 = 0, // 0 = SDF rect, 1 = sample glyph atlas
+    border_color: [4]f32 = @splat(0), // ring color when border_thickness > 0
 };
 
 pub fn run(alloc: std.mem.Allocator, io: std.Io) !void {
@@ -86,6 +87,7 @@ export fn init() void {
     desc.layout.attrs[shd.ATTR_quad_i_border_thickness] = .{ .format = .FLOAT, .buffer_index = 0 };
     desc.layout.attrs[shd.ATTR_quad_i_uv] = .{ .format = .FLOAT4, .buffer_index = 0 };
     desc.layout.attrs[shd.ATTR_quad_i_use_texture] = .{ .format = .FLOAT, .buffer_index = 0 };
+    desc.layout.attrs[shd.ATTR_quad_i_border_color] = .{ .format = .FLOAT4, .buffer_index = 0 };
     desc.colors[0].blend = .{
         .enabled = true,
         .src_factor_rgb = .SRC_ALPHA,
@@ -167,7 +169,8 @@ fn buildUi(ui: *Ui, arena: std.mem.Allocator) void {
     ui.addFlagsNext(.{ .draw_border = true });
 
     ui.pushNext(.{ .border_thickness = 1 });
-    ui.pushNext(.{ .bg_color = .{ 1, 0, 0, 1 } });
+    ui.pushNext(.{ .border_color = .{ 1, 0, 0, 1 } });
+    ui.pushNext(.{ .corner_radii = @splat(10) });
     const root = ui.mkWidget("root", {});
 
     {
@@ -176,7 +179,6 @@ fn buildUi(ui: *Ui, arena: std.mem.Allocator) void {
 
         ui.pushNext(.{ .width = .{ .kind = .text_content, .value = 10 } });
         ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 5 } });
-
         ui.pushNext(.{ .bg_color = .{ 1, 1, 1, 0.3 } });
         _ = ui.mkWidget("Apple", {});
 
@@ -189,6 +191,8 @@ fn buildUi(ui: *Ui, arena: std.mem.Allocator) void {
             defer ui.pop(.parent);
 
             ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
+            ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 40 } });
+            ui.pushNext(.{ .font_size = 25 });
             ui.pushNext(.{ .bg_color = .{ 1, 1, 0, 0.9 } });
             _ = ui.mkWidget("C", 1);
         }
