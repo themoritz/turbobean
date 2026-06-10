@@ -429,7 +429,7 @@ pub fn prune(self: *Self, arena: Allocator) void {
 }
 
 /// Topmost widget in the cache (one with no parent). Null if the cache is empty.
-fn root(self: *Self) ?*Widget {
+fn root(self: *const Self) ?*Widget {
     if (self.widget_cache.count() == 0) return null;
     var it = self.widget_cache.valueIterator();
     var r = it.next().?.*;
@@ -590,15 +590,36 @@ fn layoutComputePositions(w: *Widget, axis: u1) void {
 
 // Returns how many instances emitted
 pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
+    const r = self.root() orelse return 0;
+    return self.renderRec(r, instance_buf);
+}
+
+fn renderRec(self: *const Self, w: *Widget, instance_buf: []main.Rect) usize {
     const max = instance_buf.len;
     var i: usize = 0;
-    var it = self.widget_cache.valueIterator();
-    while (it.next()) |v| {
-        if (i == max) break;
-        const w = v.*;
 
-        // Background + border quad for the widget itself. The shader fills the
-        // interior with `color` and the ring with `border_color`.
+    // Self
+
+    // Background + border quad for the widget itself. The shader fills the
+    // interior with `color` and the ring with `border_color`.
+    instance_buf[i] = main.Rect{
+        .rect = .{
+            @floor(w.computed_position[0]),
+            @floor(w.computed_position[1]),
+            @floor(w.computed_size[0]),
+            @floor(w.computed_size[1]),
+        },
+        .color = w.attrs.bg_color,
+        .corner_radii = w.attrs.corner_radii,
+        .border_thickness = w.attrs.border_thickness,
+        .border_color = w.attrs.border_color,
+    };
+    i += 1;
+
+    // Hover/press indicator: a translucent white overlay that grows as the
+    // widget becomes hot and brightens further while it's held.
+    const highlight = 0.10 * w.hot_t + 0.18 * w.active_t;
+    if (highlight > 0.001 and i < max) {
         instance_buf[i] = main.Rect{
             .rect = .{
                 @floor(w.computed_position[0]),
@@ -606,37 +627,26 @@ pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
                 @floor(w.computed_size[0]),
                 @floor(w.computed_size[1]),
             },
-            .color = w.attrs.bg_color,
+            .color = .{ 1, 1, 1, highlight },
             .corner_radii = w.attrs.corner_radii,
-            .border_thickness = w.attrs.border_thickness,
-            .border_color = w.attrs.border_color,
         };
         i += 1;
-
-        // Hover/press indicator: a translucent white overlay that grows as the
-        // widget becomes hot and brightens further while it's held.
-        const highlight = 0.10 * w.hot_t + 0.18 * w.active_t;
-        if (highlight > 0.001 and i < max) {
-            instance_buf[i] = main.Rect{
-                .rect = .{
-                    @floor(w.computed_position[0]),
-                    @floor(w.computed_position[1]),
-                    @floor(w.computed_size[0]),
-                    @floor(w.computed_size[1]),
-                },
-                .color = .{ 1, 1, 1, highlight },
-                .corner_radii = w.attrs.corner_radii,
-            };
-            i += 1;
-        }
-
-        // Text glyph quads for widgets sized to their text content.
-        if (w.string.len != 0 and
-            (w.attrs.width.kind == .text_content or w.attrs.height.kind == .text_content))
-        {
-            i += self.renderText(w, instance_buf[i..]);
-        }
     }
+
+    // Text glyph quads for widgets sized to their text content.
+    if (w.string.len != 0 and
+        (w.attrs.width.kind == .text_content or w.attrs.height.kind == .text_content))
+    {
+        i += self.renderText(w, instance_buf[i..]);
+    }
+
+    // Children
+    var current = w.first;
+    while (current) |c| {
+        i += self.renderRec(c, instance_buf[i..]);
+        current = c.next;
+    }
+
     return i;
 }
 
