@@ -5,6 +5,7 @@ layout(binding=0) uniform vs_params {
 };
 
 in vec4 i_rect;
+in vec4 i_clip;
 in vec4 i_color;
 in vec4 i_corner_radii;     // per corner: x=TL, y=TR, z=BR, w=BL (screen y down)
 in float i_edge_softness;
@@ -16,12 +17,14 @@ in vec4 i_border_color;      // ring color when border_thickness > 0
 out vec2 dest_pos;
 out vec2 dest_center;
 out vec2 dest_half_size;
+
+out vec2 frag_uv;
+
 // Passthrough
 out vec4 color;
 out vec4 corner_radii;
 out float edge_softness;
 out float border_thickness;
-out vec2 frag_uv;
 out float use_texture;
 out vec4 border_color;
 
@@ -29,21 +32,25 @@ void main() {
     // 0->(0,0) 1->(1,0) 2->(0,1) 3->(1,1)
     vec2 corner = vec2(float(gl_VertexIndex & 1), float((gl_VertexIndex >> 1) & 1));
 
-    vec2 px  = i_rect.xy + corner * i_rect.zw;   // pixel-space position of this corner
-    vec2 ndc = (px / resolution) * 2.0 - 1.0;    // pixels -> normalized device coords
-    ndc.y = -ndc.y;                              // flip: pixels go top-down, NDC bottom-up
+    vec2 px = i_rect.xy + corner * i_rect.zw;                   // pixel-space position of this corner
+    vec2 clamped = clamp(px, i_clip.xy, i_clip.xy + i_clip.zw); // clamp to clip rect
+    vec2 ndc = (clamped / resolution) * 2.0 - 1.0;              // pixels -> normalized device coords
+    ndc.y = -ndc.y;                                             // flip: pixels go top-down, NDC bottom-up
 
     gl_Position = vec4(ndc, 0.0, 1.0);
 
-    dest_pos = px;
+    dest_pos = clamped;
     dest_half_size = 0.5 * i_rect.zw;
     dest_center = i_rect.xy + dest_half_size;
 
+    vec2 t = (clamped - i_rect.xy) / i_rect.zw;
+    frag_uv = mix(i_uv.xy, i_uv.zw, t);
+
+    // Pass thru
     color = i_color;
     corner_radii = i_corner_radii;
     edge_softness = i_edge_softness;
     border_thickness = i_border_thickness;
-    frag_uv = mix(i_uv.xy, i_uv.zw, corner);
     use_texture = i_use_texture;
     border_color = i_border_color;
 }
@@ -57,11 +64,11 @@ void main() {
 in vec2 dest_pos;
 in vec2 dest_center;
 in vec2 dest_half_size;
+in vec2 frag_uv;
 in vec4 color;
 in vec4 corner_radii;
 in float edge_softness;
 in float border_thickness;
-in vec2 frag_uv;
 in float use_texture;
 in vec4 border_color;
 

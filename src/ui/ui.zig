@@ -190,13 +190,14 @@ const Widget = struct {
         clickable: bool = false,
         floating: bool = false,
         draw_border: bool = false,
+        clip: bool = false,
 
         pub fn merge(a: Flags, b: Flags) Flags {
-            return @bitCast(@as(u3, @bitCast(a)) | @as(u3, @bitCast(b)));
+            return @bitCast(@as(u4, @bitCast(a)) | @as(u4, @bitCast(b)));
         }
 
         pub fn without(a: Flags, b: Flags) Flags {
-            return @bitCast(@as(u3, @bitCast(a)) & ~@as(u3, @bitCast(b)));
+            return @bitCast(@as(u4, @bitCast(a)) & ~@as(u4, @bitCast(b)));
         }
     };
 
@@ -589,61 +590,73 @@ fn layoutComputePositions(w: *Widget, axis: u1) void {
 }
 
 // Returns how many instances emitted
-pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
+pub fn render(self: *const Self, window: [2]f32, instance_buf: []main.Rect) usize {
     const r = self.root() orelse return 0;
-    return self.renderRec(r, instance_buf);
+    const clip = Rect{ .x = 0, .y = 0, .w = window[0], .h = window[1] };
+    var clip_stack = std.ArrayList(Rect).empty;
+    clip_stack.append(self.alloc, clip) catch @panic("OOM");
+    return self.renderRec(r, &clip_stack, instance_buf);
 }
 
-fn renderRec(self: *const Self, w: *Widget, instance_buf: []main.Rect) usize {
+fn renderRec(self: *const Self, w: *Widget, clip_stack: *std.ArrayList(Rect), instance_buf: []main.Rect) usize {
     const max = instance_buf.len;
     var i: usize = 0;
 
     // Self
 
-    // Background + border quad for the widget itself. The shader fills the
-    // interior with `color` and the ring with `border_color`.
-    instance_buf[i] = main.Rect{
-        .rect = .{
-            @floor(w.computed_position[0]),
-            @floor(w.computed_position[1]),
-            @floor(w.computed_size[0]),
-            @floor(w.computed_size[1]),
-        },
-        .color = w.attrs.bg_color,
-        .corner_radii = w.attrs.corner_radii,
-        .border_thickness = w.attrs.border_thickness,
-        .border_color = w.attrs.border_color,
+    if (w.attrs.flags.clip) {
+        const intersection = w.rect().intersect(clip_stack.getLast());
+        clip_stack.append(self.alloc, intersection) catch @panic("OOM");
+    }
+    defer if (w.attrs.flags.clip) {
+        _ = clip_stack.pop();
     };
-    i += 1;
 
-    // Hover/press indicator: a translucent white overlay that grows as the
-    // widget becomes hot and brightens further while it's held.
-    const highlight = 0.10 * w.hot_t + 0.18 * w.active_t;
-    if (highlight > 0.001 and i < max) {
+    const clip_top = clip_stack.getLast();
+    const clip = clip_top.asArray();
+
+    // Cull subtree if it's completely clipped
+    if (clip_top.isEmpty()) return i;
+
+    // Cull self if rect is completely clipped
+    if (!w.rect().intersect(clip_top).isEmpty()) {
+        // Background + border quad for the widget itself. The shader fills the
+        // interior with `color` and the ring with `border_color`.
         instance_buf[i] = main.Rect{
-            .rect = .{
-                @floor(w.computed_position[0]),
-                @floor(w.computed_position[1]),
-                @floor(w.computed_size[0]),
-                @floor(w.computed_size[1]),
-            },
-            .color = .{ 1, 1, 1, highlight },
+            .rect = w.rect().asArray(),
+            .clip = clip,
+            .color = w.attrs.bg_color,
             .corner_radii = w.attrs.corner_radii,
+            .border_thickness = w.attrs.border_thickness,
+            .border_color = w.attrs.border_color,
         };
         i += 1;
-    }
 
-    // Text glyph quads for widgets sized to their text content.
-    if (w.string.len != 0 and
-        (w.attrs.width.kind == .text_content or w.attrs.height.kind == .text_content))
-    {
-        i += self.renderText(w, instance_buf[i..]);
+        // Hover/press indicator: a translucent white overlay that grows as the
+        // widget becomes hot and brightens further while it's held.
+        const highlight = 0.10 * w.hot_t + 0.18 * w.active_t;
+        if (highlight > 0.001 and i < max) {
+            instance_buf[i] = main.Rect{
+                .rect = w.rect().asArray(),
+                .clip = clip,
+                .color = .{ 1, 1, 1, highlight },
+                .corner_radii = w.attrs.corner_radii,
+            };
+            i += 1;
+        }
+
+        // Text glyph quads for widgets sized to their text content.
+        if (w.string.len != 0 and
+            (w.attrs.width.kind == .text_content or w.attrs.height.kind == .text_content))
+        {
+            i += self.renderText(w, clip, instance_buf[i..]);
+        }
     }
 
     // Children
     var current = w.first;
     while (current) |c| {
-        i += self.renderRec(c, instance_buf[i..]);
+        i += self.renderRec(c, clip_stack, instance_buf[i..]);
         current = c.next;
     }
 
@@ -652,7 +665,7 @@ fn renderRec(self: *const Self, w: *Widget, instance_buf: []main.Rect) usize {
 
 /// Emit one textured quad per glyph of `w.string`, baseline-aligned within the
 /// widget's box. Returns how many instances were written (bounded by `out.len`).
-fn renderText(self: *const Self, w: *Widget, out: []main.Rect) usize {
+fn renderText(self: *const Self, w: *Widget, clip: [4]f32, out: []main.Rect) usize {
     const px = ptToPx(w.attrs.font_size);
     const lm = self.atlas.lineMetrics(px);
 
@@ -675,6 +688,7 @@ fn renderText(self: *const Self, w: *Widget, out: []main.Rect) usize {
                     g.w,
                     g.h,
                 },
+                .clip = clip,
                 .color = w.attrs.font_color,
                 .uv = .{ g.u0, g.v0, g.u1, g.v1 },
                 .use_texture = 1,

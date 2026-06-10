@@ -31,6 +31,7 @@ var instance_buf: [max_instances]Rect = undefined;
 
 pub const Rect = extern struct {
     rect: [4]f32, // x, y, w, h (pixels)
+    clip: [4]f32,
     color: [4]f32, // rgba
     corner_radii: [4]f32 = @splat(0), // TL, TR, BR, BL (pixels)
     edge_softness: f32 = 0,
@@ -68,6 +69,7 @@ export fn init() void {
     };
     desc.layout.buffers[0].step_func = .PER_INSTANCE;
     desc.layout.attrs[shd.ATTR_quad_i_rect] = .{ .format = .FLOAT4, .buffer_index = 0 };
+    desc.layout.attrs[shd.ATTR_quad_i_clip] = .{ .format = .FLOAT4, .buffer_index = 0 };
     desc.layout.attrs[shd.ATTR_quad_i_color] = .{ .format = .FLOAT4, .buffer_index = 0 };
     desc.layout.attrs[shd.ATTR_quad_i_corner_radii] = .{ .format = .FLOAT4, .buffer_index = 0 };
     desc.layout.attrs[shd.ATTR_quad_i_edge_softness] = .{ .format = .FLOAT, .buffer_index = 0 };
@@ -108,6 +110,7 @@ export fn init() void {
 
 export fn frame() void {
     state.time += sapp.frameDuration();
+    const window: [2]f32 = .{ sapp.widthf(), sapp.heightf() };
 
     // Future: Collect input and apply commands
 
@@ -116,13 +119,13 @@ export fn frame() void {
     state.app.buildUi(&state.ui);
 
     // Layout
-    try state.ui.layout(.{ sapp.widthf(), sapp.heightf() });
+    try state.ui.layout(window);
 
     // Interact
     state.ui.updateInteractions(@floatCast(sapp.frameDuration()));
 
     // Render
-    const count = state.ui.render(&instance_buf);
+    const count = state.ui.render(window, &instance_buf);
 
     // Cleanup
     state.ui.prune(gpa);
@@ -167,7 +170,7 @@ const App = struct {
         ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
         defer ui.pop(.width);
 
-        ui.pushFlagsNext(.{ .clickable = true });
+        ui.pushFlagsNext(.{ .clickable = true, .clip = true });
         ui.addFlagsNext(.{ .draw_border = true });
 
         ui.pushNext(.{ .border_thickness = 1 });
@@ -197,7 +200,7 @@ const App = struct {
                     defer ui.pop(.parent);
 
                     ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
-                    ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 40 } });
+                    ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 80 } });
                     ui.pushNext(.{ .font_size = 25 });
                     ui.pushNext(.{ .bg_color = .{ 1, 1, 0, 0.9 } });
                     _ = ui.mkWidget("C", 1);
