@@ -491,7 +491,7 @@ fn layoutStandalone(w: *Widget, axis: u1) void {
             w.computed_size[axis] = w.attrs.size(axis).value;
         },
         .text_content => {
-            const px = main.ptToPx(w.attrs.font_size);
+            const px = ptToPx(w.attrs.font_size);
             switch (axis) {
                 0 => {
                     // Sum glyph advances across the string
@@ -643,7 +643,7 @@ pub fn render(self: *const Self, instance_buf: []main.Rect) usize {
 /// Emit one textured quad per glyph of `w.string`, baseline-aligned within the
 /// widget's box. Returns how many instances were written (bounded by `out.len`).
 fn renderText(self: *const Self, w: *Widget, out: []main.Rect) usize {
-    const px = main.ptToPx(w.attrs.font_size);
+    const px = ptToPx(w.attrs.font_size);
     const lm = self.atlas.lineMetrics(px);
 
     // Honor `value` padding stored on the text_content axes (see Size.Kind).
@@ -674,4 +674,11 @@ fn renderText(self: *const Self, w: *Widget, out: []main.Rect) usize {
         pen_x += g.advance;
     }
     return n;
+}
+
+/// Convert a point size to framebuffer pixels at the current DPI. Layout and
+/// the renderer both go through this so a widget's measured and drawn text
+/// agree.
+pub fn ptToPx(pt: f32) u32 {
+    return @intFromFloat(@round(pt * sapp.dpiScale()));
 }

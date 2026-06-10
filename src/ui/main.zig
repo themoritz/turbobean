@@ -8,22 +8,7 @@ const shd = @import("shaders");
 const Atlas = @import("atlas.zig");
 const Ui = @import("ui.zig");
 
-// Default font + base size for the text demo. The atlas is rasterized at
-// base_pt * dpi_scale so it stays crisp on high-DPI displays.
 const font_path: [:0]const u8 = "/Users/moritz/code/Iosevka-main/dist/iosevka-custom/ttf-unhinted/iosevka-custom-regular.ttf";
-
-// Current font size in points. Adjustable at runtime with Cmd -/= (Cmd+0 resets).
-var font_pt: f32 = 18;
-const min_pt: f32 = 6;
-const max_pt: f32 = 96;
-
-/// Convert a point size to framebuffer pixels at the current DPI. Layout and the
-/// renderer both go through this so a widget's measured and drawn text agree.
-pub fn ptToPx(pt: f32) u32 {
-    return @intFromFloat(@round(pt * sapp.dpiScale()));
-}
-
-const max_instances = 4096;
 
 const State = struct {
     pip: sg.Pipeline = .{},
@@ -41,6 +26,7 @@ var state: State = .{};
 var gpa: std.mem.Allocator = undefined;
 
 // CPU-side instance scratch, uploaded each frame.
+const max_instances = 4096;
 var instance_buf: [max_instances]Rect = undefined;
 
 pub const Rect = extern struct {
@@ -123,23 +109,35 @@ export fn init() void {
 export fn frame() void {
     state.time += sapp.frameDuration();
 
-    const vs_params = shd.VsParams{
-        .resolution = .{ sapp.widthf(), sapp.heightf() },
-    };
+    // Future: Collect input and apply commands
 
+    // Build UI
     state.ui.current_frame = sapp.frameCount();
     state.app.buildUi(&state.ui);
+
+    // Layout
     try state.ui.layout(.{ sapp.widthf(), sapp.heightf() });
+
+    // Interact
     state.ui.updateInteractions(@floatCast(sapp.frameDuration()));
 
+    // Render
     const count = state.ui.render(&instance_buf);
+
+    // Cleanup
     state.ui.prune(gpa);
     state.ui.reset_stacks();
+
+    // GPU pipeline:
 
     // Upload any newly-rasterized glyphs, then the instance data (both must be
     // outside the render pass).
     state.atlas.flush();
     sg.updateBuffer(state.instances, sg.asRange(instance_buf[0..count]));
+
+    const vs_params = shd.VsParams{
+        .resolution = .{ sapp.widthf(), sapp.heightf() },
+    };
 
     sg.beginPass(.{ .action = state.pass_action, .swapchain = sglue.swapchain() });
     sg.applyPipeline(state.pip);
