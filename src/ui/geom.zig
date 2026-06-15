@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const Point = struct {
     x: f32,
     y: f32,
@@ -42,3 +44,16 @@ pub const Rect = struct {
         };
     }
 };
+
+pub fn clamp(comptime T: type, a: T, x: T, b: T) T {
+    if (x < a) return a;
+    if (x > b) return b;
+    return x;
+}
+
+test clamp {
+    const x: f32 = 0.3;
+    try std.testing.expectEqual(x, clamp(f32, 0, x, 1));
+    try std.testing.expectEqual(0, clamp(f32, 0, -1, 1));
+    try std.testing.expectEqual(1, clamp(f32, 0, 2, 1));
+}

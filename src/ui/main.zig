@@ -178,47 +178,15 @@ const App = struct {
     open: bool,
 
     fn buildUi(app: *App, ui: *Ui) void {
-        ui.push(.{ .height = .{ .kind = .children_sum } });
-        defer ui.pop(.height);
-        ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
-        defer ui.pop(.width);
+        _ = app;
 
-        ui.pushFlagsNext(.{ .clickable = true, .clip = true });
-        ui.addFlagsNext(.{ .draw_border = true });
+        ui.pushNext(.{ .height = .{ .kind = .percent_of_parent, .value = 1 } });
+        ui.pushNext(.{ .width = .{ .kind = .percent_of_parent, .value = 1 } });
+        ui.startVertical();
+        defer ui.endVertical();
 
-        ui.pushNext(.{ .border_thickness = 1 });
-        ui.pushNext(.{ .border_color = .{ 1, 0, 0, 1 } });
-        ui.pushNext(.{ .corner_radii = @splat(10) });
-        ui.pushNext(.{ .hover_cursor = .POINTING_HAND });
-        const root = ui.mkWidget("root", {});
-
-        if (root.interact().clicked) app.open = !app.open;
-
-        {
-            ui.push(.{ .parent = root });
-            defer ui.pop(.parent);
-
-            ui.pushNext(.{ .width = .{ .kind = .text_content, .value = 10 } });
-            ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 5 } });
-            ui.pushNext(.{ .bg_color = .{ 1, 1, 1, 0.3 } });
-            _ = ui.mkWidget("Apple", {});
-
-            if (app.open) {
-                ui.pushNext(.{ .bg_color = .{ 1, 0, 1, 0.5 } });
-                ui.pushNext(.{ .height = .{ .kind = .pixels, .value = 100 } });
-                const b = ui.mkWidget("B", {});
-
-                if (root.interact().held) {
-                    ui.push(.{ .parent = b });
-                    defer ui.pop(.parent);
-
-                    ui.push(.{ .width = .{ .kind = .percent_of_parent, .value = 0.5 } });
-                    ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 80 } });
-                    ui.pushNext(.{ .font_size = 25 });
-                    ui.pushNext(.{ .bg_color = .{ 1, 1, 0, 0.9 } });
-                    _ = ui.mkWidget("C", 1);
-                }
-            }
-        }
+        _ = ui.button("Click me!");
+        ui.filler();
+        _ = ui.button("Me too!");
     }
 };

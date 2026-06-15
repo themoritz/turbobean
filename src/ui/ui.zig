@@ -122,7 +122,7 @@ const AttributeStacks = blk: {
 const Size = struct {
     kind: Kind = .null,
     value: f32 = 0,
-    strictness: f32 = 0,
+    strictness: f32 = 1,
 
     const Kind = enum {
         null,
@@ -233,7 +233,7 @@ const Widget = struct {
     /// keys resolved last frame plus this frame's pending press/release edges, so
     /// it reflects one frame of latency (standard for the cached immediate-mode
     /// model). Call it during build, e.g. `if (w.interact().clicked) ...`.
-    pub fn interact(self: *Widget) Interaction {
+    pub fn interact(self: *Widget) Signal {
         const ui = self.ui;
         const is_hot = if (ui.hot_key) |k| k.key == self.key.key else false;
         const is_active = if (ui.active_key) |k| k.key == self.key.key else false;
@@ -259,9 +259,23 @@ const Widget = struct {
         if (w.attrs.flags.clickable and w.rect().contains(p)) return w;
         return null;
     }
+
+    pub const ChildIterator = struct {
+        next_child: ?*Widget,
+
+        pub fn next(it: *ChildIterator) ?*Widget {
+            const result = it.next_child orelse return null;
+            it.next_child = result.next;
+            return result;
+        }
+    };
+
+    fn iterChildren(self: *Widget) ChildIterator {
+        return .{ .next_child = self.first };
+    }
 };
 
-const Interaction = struct {
+const Signal = struct {
     widget: *Widget,
     hover: bool, // cursor is over the widget (it is the hot widget)
     pressed: bool, // mouse went down on it this frame
@@ -450,7 +464,8 @@ pub fn layout(self: *Self, window: [2]f32) !void {
         layoutStandalone(root_w, axis);
         layoutUpwardDependent(root_w, axis, window[axis]);
         layoutDownwardDependent(root_w, axis);
-        root_w.computed_position[axis] = 0;
+        layoutEnforceConstraints(root_w, axis);
+        root_w.computed_position[axis] = 0; // Bootstrap root, children flow from this
         layoutComputePositions(root_w, axis);
     }
 }
@@ -568,6 +583,59 @@ fn layoutDownwardDependent(w: *Widget, axis: u1) void {
             w.computed_size[axis] = sum;
         },
         else => {},
+    }
+}
+
+fn layoutEnforceConstraints(w: *Widget, axis: u1) void {
+    // Self
+
+    // Non-layout axis:
+    if (w.attrs.axis != axis) {
+        var current = w.first;
+        while (current) |c| {
+            c.computed_size[axis] = @min(c.computed_size[axis], w.computed_size[axis]);
+            current = c.next;
+        }
+    }
+
+    // Layout axis:
+    if (w.attrs.axis == axis) {
+        const allowed_size = w.computed_size[axis];
+        var total_size: f32 = 0;
+        var total_weighted_size: f32 = 0;
+
+        var children = w.iterChildren();
+        while (children.next()) |c| {
+            total_size += c.computed_size[axis];
+            total_weighted_size += c.computed_size[axis] * (1 - c.attrs.size(axis).strictness);
+        }
+
+        const violation = total_size - allowed_size;
+        if (violation > 0 and total_weighted_size > 0) {
+            var fixups_sum: f32 = 0;
+            var fixups = std.ArrayList(f32).empty;
+
+            children = w.iterChildren();
+            while (children.next()) |c| {
+                const fixup = @max(0, c.computed_size[axis] * (1 - c.attrs.size(axis).strictness));
+                fixups.append(w.ui.alloc, fixup) catch @panic("OOM");
+                fixups_sum += fixup;
+            }
+
+            children = w.iterChildren();
+            var i: usize = 0;
+            while (children.next()) |c| : (i += 1) {
+                var fixup_pct: f32 = violation / total_weighted_size;
+                fixup_pct = geom.clamp(f32, 0, fixup_pct, 1);
+                c.computed_size[axis] -= fixups.items[i] * fixup_pct;
+            }
+        }
+    }
+
+    // Children
+    var children = w.iterChildren();
+    while (children.next()) |c| {
+        layoutEnforceConstraints(c, axis);
     }
 }
 
@@ -703,4 +771,47 @@ fn renderText(self: *Self, w: *Widget, clip: [4]f32) void {
 /// agree.
 pub fn ptToPx(pt: f32) u32 {
     return @intFromFloat(@round(pt * sapp.dpiScale()));
+}
+
+/////////////
+// WIDGETS //
+/////////////
+
+pub fn button(ui: *Self, str: []const u8) Signal {
+    ui.pushNext(.{ .hover_cursor = .POINTING_HAND });
+    ui.pushNext(.{ .corner_radii = @splat(10) });
+    ui.pushNext(.{ .width = .{ .kind = .text_content, .value = 7 } });
+    ui.pushNext(.{ .height = .{ .kind = .text_content, .value = 5 } });
+    ui.pushNext(.{ .border_thickness = 2 });
+    ui.pushNext(.{ .border_color = .{ 0.5, 0.5, 0.5, 1.0 } });
+    ui.pushNext(.{ .bg_color = .{ 0.3, 0.3, 0.3, 1.0 } });
+    ui.pushFlagsNext(.{ .clickable = true });
+    const w = ui.mkWidget(str, {});
+    return w.interact();
+}
+
+pub fn startVertical(ui: *Self) void {
+    ui.pushNext(.{ .axis = 1 });
+    const w = ui.mkWidget("", {});
+    ui.push(.{ .parent = w });
+}
+
+pub fn endVertical(ui: *Self) void {
+    ui.pop(.parent);
+}
+
+pub fn startHorizontal(ui: *Self) void {
+    ui.pushNext(.{ .axis = 0 });
+    const w = ui.mkWidget("", {});
+    ui.push(.{ .parent = w });
+}
+
+pub fn endHorizontal(ui: *Self) void {
+    ui.pop(.parent);
+}
+
+pub fn filler(ui: *Self) void {
+    ui.pushNext(.{ .width = .{ .kind = .percent_of_parent, .value = 1, .strictness = 0 } });
+    ui.pushNext(.{ .height = .{ .kind = .percent_of_parent, .value = 1, .strictness = 0 } });
+    _ = ui.mkWidget("f", {});
 }
