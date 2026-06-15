@@ -14,6 +14,10 @@ widget_pool: std.heap.MemoryPool(Widget),
 widget_cache: std.AutoHashMap(Key, *Widget),
 atlas: *Atlas,
 
+// This frame's render output; cleared (capacity retained) at the start of
+// each `render` call, so steady-state frames don't allocate.
+instances: std.ArrayList(main.Rect) = .empty,
+
 stacks: AttributeStacks = .{},
 
 current_frame: u64,
@@ -589,19 +593,21 @@ fn layoutComputePositions(w: *Widget, axis: u1) void {
     }
 }
 
-// Returns how many instances emitted
-pub fn render(self: *const Self, window: [2]f32, instance_buf: []main.Rect) usize {
-    const r = self.root() orelse return 0;
+/// Emit this frame's instances (pre-order DFS over the widget tree).
+/// The returned slice points into `self.instances` and is valid until the
+/// next call.
+pub fn render(self: *Self, window: [2]f32) []main.Rect {
+    self.instances.clearRetainingCapacity();
+    const r = self.root() orelse return self.instances.items;
     const clip = Rect{ .x = 0, .y = 0, .w = window[0], .h = window[1] };
     var clip_stack = std.ArrayList(Rect).empty;
+    defer clip_stack.deinit(self.alloc);
     clip_stack.append(self.alloc, clip) catch @panic("OOM");
-    return self.renderRec(r, &clip_stack, instance_buf);
+    self.renderRec(r, &clip_stack);
+    return self.instances.items;
 }
 
-fn renderRec(self: *const Self, w: *Widget, clip_stack: *std.ArrayList(Rect), instance_buf: []main.Rect) usize {
-    const max = instance_buf.len;
-    var i: usize = 0;
-
+fn renderRec(self: *Self, w: *Widget, clip_stack: *std.ArrayList(Rect)) void {
     // Self
 
     if (w.attrs.flags.clip) {
@@ -616,56 +622,52 @@ fn renderRec(self: *const Self, w: *Widget, clip_stack: *std.ArrayList(Rect), in
     const clip = clip_top.asArray();
 
     // Cull subtree if it's completely clipped
-    if (clip_top.isEmpty()) return i;
+    if (clip_top.isEmpty()) return;
 
     // Cull self if rect is completely clipped
     if (!w.rect().intersect(clip_top).isEmpty()) {
         // Background + border quad for the widget itself. The shader fills the
         // interior with `color` and the ring with `border_color`.
-        instance_buf[i] = main.Rect{
+        self.instances.append(self.alloc, .{
             .rect = w.rect().asArray(),
             .clip = clip,
             .color = w.attrs.bg_color,
             .corner_radii = w.attrs.corner_radii,
             .border_thickness = w.attrs.border_thickness,
             .border_color = w.attrs.border_color,
-        };
-        i += 1;
+        }) catch @panic("OOM");
 
         // Hover/press indicator: a translucent white overlay that grows as the
         // widget becomes hot and brightens further while it's held.
         const highlight = 0.10 * w.hot_t + 0.18 * w.active_t;
-        if (highlight > 0.001 and i < max) {
-            instance_buf[i] = main.Rect{
+        if (highlight > 0.001) {
+            self.instances.append(self.alloc, .{
                 .rect = w.rect().asArray(),
                 .clip = clip,
                 .color = .{ 1, 1, 1, highlight },
                 .corner_radii = w.attrs.corner_radii,
-            };
-            i += 1;
+            }) catch @panic("OOM");
         }
 
         // Text glyph quads for widgets sized to their text content.
         if (w.string.len != 0 and
             (w.attrs.width.kind == .text_content or w.attrs.height.kind == .text_content))
         {
-            i += self.renderText(w, clip, instance_buf[i..]);
+            self.renderText(w, clip);
         }
     }
 
     // Children
     var current = w.first;
     while (current) |c| {
-        i += self.renderRec(c, clip_stack, instance_buf[i..]);
+        self.renderRec(c, clip_stack);
         current = c.next;
     }
-
-    return i;
 }
 
 /// Emit one textured quad per glyph of `w.string`, baseline-aligned within the
-/// widget's box. Returns how many instances were written (bounded by `out.len`).
-fn renderText(self: *const Self, w: *Widget, clip: [4]f32, out: []main.Rect) usize {
+/// widget's box.
+fn renderText(self: *Self, w: *Widget, clip: [4]f32) void {
     const px = ptToPx(w.attrs.font_size);
     const lm = self.atlas.lineMetrics(px);
 
@@ -676,12 +678,10 @@ fn renderText(self: *const Self, w: *Widget, clip: [4]f32, out: []main.Rect) usi
     var pen_x: f32 = @round(w.computed_position[0] + pad_x);
     const baseline: f32 = @round(w.computed_position[1] + pad_y + lm.ascent);
 
-    var n: usize = 0;
     for (w.string) |ch| {
-        if (n == out.len) break;
         const g = self.atlas.glyph(@intCast(ch), px) orelse continue;
         if (g.w > 0 and g.h > 0) {
-            out[n] = .{
+            self.instances.append(self.alloc, .{
                 .rect = .{
                     @round(pen_x + g.bearing_x),
                     @round(baseline - g.bearing_y),
@@ -692,12 +692,10 @@ fn renderText(self: *const Self, w: *Widget, clip: [4]f32, out: []main.Rect) usi
                 .color = w.attrs.font_color,
                 .uv = .{ g.u0, g.v0, g.u1, g.v1 },
                 .use_texture = 1,
-            };
-            n += 1;
+            }) catch @panic("OOM");
         }
         pen_x += g.advance;
     }
-    return n;
 }
 
 /// Convert a point size to framebuffer pixels at the current DPI. Layout and

@@ -13,6 +13,9 @@ const font_path: [:0]const u8 = "/Users/moritz/code/Iosevka-main/dist/iosevka-cu
 const State = struct {
     pip: sg.Pipeline = .{},
     instances: sg.Buffer = .{},
+    // Instance capacity of `instances`; grown geometrically when a frame
+    // emits more.
+    gpu_capacity: usize = 0,
     bind: sg.Bindings = .{},
     pass_action: sg.PassAction = .{},
     atlas: Atlas = undefined,
@@ -25,9 +28,7 @@ var state: State = .{};
 // Allocator stashed for the C-ABI init callback (which takes no args).
 var gpa: std.mem.Allocator = undefined;
 
-// CPU-side instance scratch, uploaded each frame.
-const max_instances = 4096;
-var instance_buf: [max_instances]Rect = undefined;
+const initial_gpu_instances = 4096;
 
 pub const Rect = extern struct {
     rect: [4]f32, // x, y, w, h (pixels)
@@ -86,9 +87,10 @@ export fn init() void {
     };
     state.pip = sg.makePipeline(desc);
 
+    state.gpu_capacity = initial_gpu_instances;
     state.instances = sg.makeBuffer(.{
         .usage = .{ .stream_update = true },
-        .size = max_instances * @sizeOf(Rect),
+        .size = state.gpu_capacity * @sizeOf(Rect),
     });
     state.bind.vertex_buffers[0] = state.instances;
 
@@ -125,7 +127,7 @@ export fn frame() void {
     state.ui.updateInteractions(@floatCast(sapp.frameDuration()));
 
     // Render
-    const count = state.ui.render(window, &instance_buf);
+    const instances = state.ui.render(window);
 
     // Cleanup
     state.ui.prune(gpa);
@@ -136,7 +138,18 @@ export fn frame() void {
     // Upload any newly-rasterized glyphs, then the instance data (both must be
     // outside the render pass).
     state.atlas.flush();
-    sg.updateBuffer(state.instances, sg.asRange(instance_buf[0..count]));
+    if (instances.len > state.gpu_capacity) {
+        sg.destroyBuffer(state.instances);
+        state.gpu_capacity = std.math.ceilPowerOfTwoAssert(usize, instances.len);
+        state.instances = sg.makeBuffer(.{
+            .usage = .{ .stream_update = true },
+            .size = state.gpu_capacity * @sizeOf(Rect),
+        });
+        state.bind.vertex_buffers[0] = state.instances;
+    }
+    if (instances.len > 0) {
+        sg.updateBuffer(state.instances, sg.asRange(instances));
+    }
 
     const vs_params = shd.VsParams{
         .resolution = .{ sapp.widthf(), sapp.heightf() },
@@ -146,7 +159,7 @@ export fn frame() void {
     sg.applyPipeline(state.pip);
     sg.applyBindings(state.bind);
     sg.applyUniforms(shd.UB_vs_params, sg.asRange(&vs_params));
-    sg.draw(0, 4, @intCast(count));
+    sg.draw(0, 4, @intCast(instances.len));
     sg.endPass();
     sg.commit();
 }
