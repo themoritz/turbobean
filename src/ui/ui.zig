@@ -249,10 +249,9 @@ const Widget = struct {
 
     fn hitTest(w: *Widget, p: Point) ?*Widget {
         // Children
-        var current = w.first;
-        while (current) |c| {
+        var children = w.iterChildren();
+        while (children.next()) |c| {
             if (c.hitTest(p)) |h| return h;
-            current = c.next;
         }
 
         // Self
@@ -532,10 +531,9 @@ fn layoutStandalone(w: *Widget, axis: u1) void {
     }
 
     // Children
-    var current = w.first;
-    while (current) |c| {
+    var children = w.iterChildren();
+    while (children.next()) |c| {
         layoutStandalone(c, axis);
-        current = c.next;
     }
 }
 
@@ -554,20 +552,18 @@ fn layoutUpwardDependent(w: *Widget, axis: u1, available: f32) void {
     }
 
     // Children
-    var current = w.first;
-    while (current) |c| {
+    var children = w.iterChildren();
+    while (children.next()) |c| {
         layoutUpwardDependent(c, axis, size);
-        current = c.next;
     }
 }
 
 fn layoutDownwardDependent(w: *Widget, axis: u1) void {
     // Children
     var sum: f32 = 0;
-    var current = w.first;
-    while (current) |c| {
+    var children = w.iterChildren();
+    while (children.next()) |c| {
         layoutDownwardDependent(c, axis);
-        current = c.next;
         if (!c.attrs.flags.floating) {
             if (w.attrs.axis == axis) {
                 sum += c.computed_size[axis];
@@ -591,10 +587,9 @@ fn layoutEnforceConstraints(w: *Widget, axis: u1) void {
 
     // Non-layout axis:
     if (w.attrs.axis != axis) {
-        var current = w.first;
-        while (current) |c| {
+        var children = w.iterChildren();
+        while (children.next()) |c| {
             c.computed_size[axis] = @min(c.computed_size[axis], w.computed_size[axis]);
-            current = c.next;
         }
     }
 
@@ -642,22 +637,20 @@ fn layoutEnforceConstraints(w: *Widget, axis: u1) void {
 fn layoutComputePositions(w: *Widget, axis: u1) void {
     // Self
     var position: f32 = 0;
-    var current = w.first;
-    while (current) |c| {
+    var children = w.iterChildren();
+    while (children.next()) |c| {
         c.computed_position[axis] = w.computed_position[axis] + position;
         if (!c.attrs.flags.floating) {
             if (w.attrs.axis == axis) {
                 position += c.computed_size[axis];
             }
         }
-        current = c.next;
     }
 
     // Children
-    var current_rec = w.first;
-    while (current_rec) |c| {
+    children = w.iterChildren();
+    while (children.next()) |c| {
         layoutComputePositions(c, axis);
-        current_rec = c.next;
     }
 }
 
@@ -726,10 +719,9 @@ fn renderRec(self: *Self, w: *Widget, clip_stack: *std.ArrayList(Rect)) void {
     }
 
     // Children
-    var current = w.first;
-    while (current) |c| {
+    var children = w.iterChildren();
+    while (children.next()) |c| {
         self.renderRec(c, clip_stack);
-        current = c.next;
     }
 }
 
