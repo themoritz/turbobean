@@ -178,16 +178,18 @@ const App = struct {
     open: bool,
 
     fn buildUi(app: *App, ui: *Ui) void {
-        _ = app;
-
         ui.pushNext(.{ .height = .{ .kind = .percent_of_parent, .value = 1 } });
         ui.pushNext(.{ .width = .{ .kind = .percent_of_parent, .value = 1 } });
         ui.startVertical();
         defer ui.endVertical();
 
-        _ = ui.button("Click me!");
+        if (ui.button("Click me!").clicked) {
+            app.open = !app.open;
+        }
         ui.filler(0);
-        _ = ui.button("Me too!");
+        if (app.open) {
+            _ = ui.button("Me too!");
+        }
         ui.filler(1);
     }
 };
