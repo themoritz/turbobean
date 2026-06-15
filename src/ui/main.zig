@@ -186,7 +186,8 @@ const App = struct {
         defer ui.endVertical();
 
         _ = ui.button("Click me!");
-        ui.filler();
+        ui.filler(0);
         _ = ui.button("Me too!");
+        ui.filler(1);
     }
 };

@@ -802,8 +802,8 @@ pub fn endHorizontal(ui: *Self) void {
     ui.pop(.parent);
 }
 
-pub fn filler(ui: *Self) void {
+pub fn filler(ui: *Self, hash_arg: anytype) void {
     ui.pushNext(.{ .width = .{ .kind = .percent_of_parent, .value = 1, .strictness = 0 } });
     ui.pushNext(.{ .height = .{ .kind = .percent_of_parent, .value = 1, .strictness = 0 } });
-    _ = ui.mkWidget("f", {});
+    _ = ui.mkWidget("f", hash_arg);
 }
