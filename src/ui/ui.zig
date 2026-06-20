@@ -126,7 +126,7 @@ const AttributeStacks = blk: {
 };
 
 const Size = struct {
-    kind: Kind = .null,
+    kind: Kind = .text_content,
     value: f32 = 0,
     strictness: f32 = 1,
 
@@ -254,14 +254,38 @@ const Widget = struct {
     }
 
     fn hitTest(w: *Widget, p: Point) ?*Widget {
-        // Children
+        var clip_stack = std.ArrayList(Rect).empty;
+        clip_stack.append(w.ui.alloc, Rect{
+            .x = 0,
+            .y = 0,
+            .w = sapp.widthf(),
+            .h = sapp.heightf(),
+        }) catch @panic("OOM");
+        return w.hitTestRec(p, &clip_stack);
+    }
+
+    fn hitTestRec(w: *Widget, p: Point, clip_stack: *std.ArrayList(Rect)) ?*Widget {
+        if (w.attrs.flags.clip) {
+            const intersection = w.rect().intersect(clip_stack.getLast());
+            clip_stack.append(w.ui.alloc, intersection) catch @panic("OOM");
+        }
+        defer if (w.attrs.flags.clip) {
+            _ = clip_stack.pop();
+        };
+
+        const clip_top = clip_stack.getLast();
+
+        // Can't hit anything if clip rect is empty
+        if (clip_top.isEmpty()) return null;
+
+        // Post order, first child that hits wins
         var children = w.iterChildren();
         while (children.next()) |c| {
-            if (c.hitTest(p)) |h| return h;
+            if (c.hitTestRec(p, clip_stack)) |h| return h;
         }
 
         // Self
-        if (w.attrs.flags.clickable and w.rect().contains(p)) return w;
+        if (w.attrs.flags.clickable and w.rect().intersect(clip_top).contains(p)) return w;
         return null;
     }
 

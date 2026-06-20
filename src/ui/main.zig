@@ -20,7 +20,7 @@ const State = struct {
     pass_action: sg.PassAction = .{},
     atlas: Atlas = undefined,
     ui: Ui = undefined,
-    app: App = .{ .open = false },
+    app: App = .{ .index = 0 },
     time: f64 = 0,
 };
 var state: State = .{};
@@ -175,21 +175,21 @@ export fn cleanup() void {
 }
 
 const App = struct {
-    open: bool,
+    index: usize,
 
     fn buildUi(app: *App, ui: *Ui) void {
-        ui.pushNext(.{ .height = .{ .kind = .percent_of_parent, .value = 1 } });
+        ui.pushNext(.{ .height = .{ .kind = .percent_of_parent, .value = 0.5 } });
         ui.pushNext(.{ .width = .{ .kind = .percent_of_parent, .value = 1 } });
+        ui.pushFlagsNext(.{ .clip = true });
         ui.startVertical();
         defer ui.endVertical();
 
-        if (ui.button("Click me!").clicked) {
-            app.open = !app.open;
+        _ = ui.mkWidget(std.fmt.allocPrint(ui.alloc, "{d}", .{app.index}) catch @panic("OOM"), {});
+
+        for (0..30) |i| {
+            if (ui.button(std.fmt.allocPrint(ui.alloc, "Click me {d}!", .{i}) catch @panic("OOM")).clicked) {
+                app.index = i;
+            }
         }
-        ui.filler(0);
-        if (app.open) {
-            _ = ui.button("Me too!");
-        }
-        ui.filler(1);
     }
 };
