@@ -21,6 +21,7 @@ instances: std.ArrayList(main.Rect) = .empty,
 stacks: AttributeStacks = .{},
 
 current_frame: u64,
+debug_mode: bool = false,
 input: Input = .{},
 
 // Widget the mouse is over (hot)
@@ -52,6 +53,11 @@ pub fn handle_event(self: *Self, event: sapp.Event) void {
         .MOUSE_UP => {
             self.input.mouse_down = false;
             self.input.mouse_released = true;
+        },
+        .KEY_UP => {
+            if (event.key_code == .D and event.modifiers & sapp.modifier_ctrl != 0) {
+                self.debug_mode = !self.debug_mode;
+            }
         },
         else => {},
     }
@@ -707,6 +713,17 @@ fn renderRec(self: *Self, w: *Widget, clip_stack: *std.ArrayList(Rect)) void {
                 .clip = clip,
                 .color = .{ 1, 1, 1, highlight },
                 .corner_radii = w.attrs.corner_radii,
+            }) catch @panic("OOM");
+        }
+
+        // Debug mode
+        if (self.debug_mode) {
+            self.instances.append(self.alloc, .{
+                .rect = w.rect().asArray(),
+                .clip = clip,
+                .color = @splat(0),
+                .border_color = .{ 0, 1, 0, 0.5 },
+                .border_thickness = 1,
             }) catch @panic("OOM");
         }
 
