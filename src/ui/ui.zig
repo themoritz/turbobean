@@ -195,6 +195,8 @@ const Widget = struct {
     // Computed by layout algo
     computed_position: [2]f32 = @splat(0),
     computed_size: [2]f32 = @splat(0),
+    /// Combined size of all laid out children
+    bounds: [2]f32 = @splat(0),
 
     // Generation info
     key: Key,
@@ -303,8 +305,10 @@ const Widget = struct {
                 self.view_offset.y -= event.scroll_y * 16;
 
                 if (self.attrs.flags.view_clamp) {
-                    self.view_offset.x = geom.clamp(f32, 0, self.view_offset.x, self.computed_size[0]);
-                    self.view_offset.y = geom.clamp(f32, 0, self.view_offset.y, self.computed_size[1]);
+                    const max_view_offset_x = @max(0, self.bounds[0] - self.computed_size[0]);
+                    const max_view_offset_y = @max(0, self.bounds[1] - self.computed_size[1]);
+                    self.view_offset.x = geom.clamp(f32, 0, self.view_offset.x, max_view_offset_x);
+                    self.view_offset.y = geom.clamp(f32, 0, self.view_offset.y, max_view_offset_y);
                 }
 
                 taken = true;
@@ -728,15 +732,20 @@ fn layoutEnforceConstraints(w: *Widget, axis: u1) void {
 fn layoutComputePositions(w: *Widget, axis: u1) void {
     // Self
     var position: f32 = 0;
+    var bounds: f32 = 0;
     var children = w.iterChildren();
     while (children.next()) |c| {
         c.computed_position[axis] = w.computed_position[axis] + position - w.view_offset.asArray()[axis];
         if (!c.attrs.flags.floating) {
             if (w.attrs.axis == axis) {
                 position += c.computed_size[axis];
+                bounds += c.computed_size[axis];
+            } else {
+                bounds = @max(bounds, c.computed_size[axis]);
             }
         }
     }
+    w.bounds[axis] = bounds;
 
     // Children
     children = w.iterChildren();
