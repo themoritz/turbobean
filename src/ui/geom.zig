@@ -1,8 +1,17 @@
 const std = @import("std");
 
 pub const Point = struct {
-    x: f32,
-    y: f32,
+    x: f32 = 0,
+    y: f32 = 0,
+
+    pub fn asArray(self: Point) [2]f32 {
+        return .{ self.x, self.y };
+    }
+
+    pub fn add(self: *Point, other: Point) void {
+        self.x += other.x;
+        self.y += other.y;
+    }
 };
 
 pub const Rect = struct {

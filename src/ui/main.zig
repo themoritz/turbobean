@@ -120,18 +120,7 @@ export fn frame() void {
     state.ui.current_frame = sapp.frameCount();
     state.app.buildUi(&state.ui);
 
-    // Layout
-    try state.ui.layout(window);
-
-    // Interact
-    state.ui.updateInteractions(@floatCast(sapp.frameDuration()));
-
-    // Render
-    const instances = state.ui.render(window);
-
-    // Cleanup
-    state.ui.prune(gpa);
-    state.ui.reset_stacks();
+    const instances = state.ui.buildEnd(window, @floatCast(sapp.frameDuration()));
 
     // GPU pipeline:
 
@@ -180,8 +169,8 @@ const App = struct {
     fn buildUi(app: *App, ui: *Ui) void {
         ui.pushNext(.{ .height = .{ .kind = .percent_of_parent, .value = 0.5 } });
         ui.pushNext(.{ .width = .{ .kind = .percent_of_parent, .value = 1 } });
-        ui.pushFlagsNext(.{ .clip = true });
-        ui.startVertical();
+        ui.pushFlagsNext(.{ .clip = true, .scroll = true });
+        _ = ui.startVertical().interact();
         defer ui.endVertical();
 
         _ = ui.mkWidget(std.fmt.allocPrint(ui.alloc, "{d}", .{app.index}) catch @panic("OOM"), {});

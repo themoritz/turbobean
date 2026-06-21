@@ -13,6 +13,8 @@ alloc: Allocator,
 widget_pool: std.heap.MemoryPool(Widget),
 widget_cache: std.AutoHashMap(Key, *Widget),
 atlas: *Atlas,
+events: Events = .{},
+mouse_pos: Point = .{},
 
 // This frame's render output; cleared (capacity retained) at the start of
 // each `render` call, so steady-state frames don't allocate.
@@ -22,9 +24,8 @@ stacks: AttributeStacks = .{},
 
 current_frame: u64,
 debug_mode: bool = false,
-input: Input = .{},
 
-// Widget the mouse is over (hot)
+/// Widget the mouse is over (hot)
 hot_key: ?Key = null,
 /// Widget being pressed (active)
 active_key: ?Key = null,
@@ -33,33 +34,39 @@ active_key: ?Key = null,
 const hot_rate: f32 = 20;
 const active_rate: f32 = 30;
 
-const Input = struct {
-    mouse_pos: ?Point = null,
-    mouse_down: bool = false,
-    // Edge flags: set by events, consumed (cleared) once per frame in update_interactions.
-    mouse_pressed: bool = false,
-    mouse_released: bool = false,
+const Events = struct {
+    events: std.ArrayList(sapp.Event) = .empty,
+    head: usize = 0,
+
+    pub fn push(self: *Events, alloc: Allocator, event: sapp.Event) void {
+        self.events.append(alloc, event) catch @panic("OOM");
+    }
+
+    pub fn eat(self: *Events) void {
+        self.head += 1;
+    }
+
+    pub fn pendingEvents(self: *Events) []sapp.Event {
+        return self.events.items[self.head..];
+    }
 };
 
 pub fn handle_event(self: *Self, event: sapp.Event) void {
     switch (event.type) {
-        .MOUSE_MOVE => {
-            self.input.mouse_pos = .{ .x = event.mouse_x, .y = event.mouse_y };
-        },
-        .MOUSE_DOWN => {
-            self.input.mouse_down = true;
-            self.input.mouse_pressed = true;
-        },
-        .MOUSE_UP => {
-            self.input.mouse_down = false;
-            self.input.mouse_released = true;
-        },
         .KEY_UP => {
             if (event.key_code == .D and event.modifiers & sapp.modifier_ctrl != 0) {
                 self.debug_mode = !self.debug_mode;
             }
         },
         else => {},
+    }
+    switch (event.type) {
+        .MOUSE_MOVE => {
+            self.mouse_pos = Point{ .x = event.mouse_x, .y = event.mouse_y };
+        },
+        else => {
+            self.events.push(self.alloc, event);
+        },
     }
 }
 
@@ -175,6 +182,7 @@ const Widget = struct {
     ui: *Self,
 
     // Widget tree
+    parent: ?*Widget = null,
     first: ?*Widget = null,
     last: ?*Widget = null,
     next: ?*Widget = null,
@@ -195,12 +203,15 @@ const Widget = struct {
     // Persistent data
     hot_t: f32 = 0,
     active_t: f32 = 0,
+    view_offset: Point = .{},
 
     const Flags = packed struct {
         clickable: bool = false,
         floating: bool = false,
         draw_border: bool = false,
         clip: bool = false,
+        scroll: bool = false,
+        view_clamp: bool = true,
 
         pub fn merge(a: Flags, b: Flags) Flags {
             return @bitCast(@as(u4, @bitCast(a)) | @as(u4, @bitCast(b)));
@@ -223,6 +234,7 @@ const Widget = struct {
             child.prev = null;
             child.next = null;
         }
+        child.parent = self;
     }
 
     /// Laid-out bounds in framebuffer pixels.
@@ -235,58 +247,81 @@ const Widget = struct {
         };
     }
 
-    /// This frame's interaction signal for the widget. Built from the hot/active
-    /// keys resolved last frame plus this frame's pending press/release edges, so
-    /// it reflects one frame of latency (standard for the cached immediate-mode
-    /// model). Call it during build, e.g. `if (w.interact().clicked) ...`.
+    pub fn isActive(self: *const Widget) bool {
+        if (self.ui.active_key) |active| {
+            return active.key == self.key.key;
+        }
+        return false;
+    }
+
+    /// This frame's interaction signal for the widget. Needs to be called for the widget to receive
+    /// events at all, even if the return value is discarded.
     pub fn interact(self: *Widget) Signal {
-        const ui = self.ui;
-        const is_hot = if (ui.hot_key) |k| k.key == self.key.key else false;
-        const is_active = if (ui.active_key) |k| k.key == self.key.key else false;
-        return .{
-            .widget = self,
-            .hover = is_hot,
-            .pressed = is_hot and ui.input.mouse_pressed,
-            .held = is_active,
-            // A click is a release over the same widget the press started on.
-            .clicked = is_active and ui.input.mouse_released,
-        };
-    }
-
-    fn hitTest(w: *Widget, p: Point) ?*Widget {
-        var clip_stack = std.ArrayList(Rect).empty;
-        clip_stack.append(w.ui.alloc, Rect{
-            .x = 0,
-            .y = 0,
-            .w = sapp.widthf(),
-            .h = sapp.heightf(),
-        }) catch @panic("OOM");
-        return w.hitTestRec(p, &clip_stack);
-    }
-
-    fn hitTestRec(w: *Widget, p: Point, clip_stack: *std.ArrayList(Rect)) ?*Widget {
-        if (w.attrs.flags.clip) {
-            const intersection = w.rect().intersect(clip_stack.getLast());
-            clip_stack.append(w.ui.alloc, intersection) catch @panic("OOM");
-        }
-        defer if (w.attrs.flags.clip) {
-            _ = clip_stack.pop();
-        };
-
-        const clip_top = clip_stack.getLast();
-
-        // Can't hit anything if clip rect is empty
-        if (clip_top.isEmpty()) return null;
-
-        // Post order, first child that hits wins
-        var children = w.iterChildren();
-        while (children.next()) |c| {
-            if (c.hitTestRec(p, clip_stack)) |h| return h;
+        // Clipped interaction rect
+        var ancestors = self.iterAncestors();
+        var clip = self.rect();
+        while (ancestors.next()) |a| {
+            if (a.attrs.flags.clip) {
+                clip = clip.intersect(a.rect());
+            }
         }
 
-        // Self
-        if (w.attrs.flags.clickable and w.rect().intersect(clip_top).contains(p)) return w;
-        return null;
+        var result = Signal{ .widget = self };
+
+        // Process events
+        for (self.ui.events.pendingEvents()) |event| {
+            var taken = false;
+            const contains_mouse = clip.contains(Point{ .x = event.mouse_x, .y = event.mouse_y });
+
+            // Mouse press in box
+            if (self.attrs.flags.clickable and event.type == .MOUSE_DOWN and contains_mouse) {
+                self.ui.hot_key = self.key;
+                self.ui.active_key = self.key;
+                result.pressed = true;
+                taken = true;
+            }
+
+            // Mouse release in active box
+            if (self.attrs.flags.clickable and event.type == .MOUSE_UP and self.isActive() and contains_mouse) {
+                self.ui.active_key = null;
+                result.clicked = true;
+                result.released = true;
+                taken = true;
+            }
+
+            // Mouse release outside active box
+            if (self.attrs.flags.clickable and event.type == .MOUSE_UP and self.isActive() and !contains_mouse) {
+                self.ui.hot_key = null;
+                self.ui.active_key = null;
+                result.released = true;
+                taken = true;
+            }
+
+            // Scrolling
+            if (self.attrs.flags.scroll and event.type == .MOUSE_SCROLL and contains_mouse) {
+                self.view_offset.x -= event.scroll_x * 16;
+                self.view_offset.y -= event.scroll_y * 16;
+
+                if (self.attrs.flags.view_clamp) {
+                    self.view_offset.x = geom.clamp(f32, 0, self.view_offset.x, self.computed_size[0]);
+                    self.view_offset.y = geom.clamp(f32, 0, self.view_offset.y, self.computed_size[1]);
+                }
+
+                taken = true;
+            }
+
+            if (taken) self.ui.events.eat();
+        }
+
+        // Hover
+        if (clip.contains(self.ui.mouse_pos)) {
+            result.hover = true;
+            if (self.attrs.flags.clickable and self.ui.hot_key == null) {
+                self.ui.hot_key = self.key;
+            }
+        }
+
+        return result;
     }
 
     pub const ChildIterator = struct {
@@ -302,14 +337,32 @@ const Widget = struct {
     fn iterChildren(self: *Widget) ChildIterator {
         return .{ .next_child = self.first };
     }
+
+    pub const AncestorIterator = struct {
+        next_parent: ?*Widget,
+
+        pub fn next(it: *AncestorIterator) ?*Widget {
+            const result = it.next_parent orelse return null;
+            it.next_parent = result.parent;
+            return result;
+        }
+    };
+
+    fn iterAncestors(self: *Widget) AncestorIterator {
+        return .{ .next_parent = self.parent };
+    }
 };
 
 const Signal = struct {
     widget: *Widget,
-    hover: bool, // cursor is over the widget (it is the hot widget)
-    pressed: bool, // mouse went down on it this frame
-    held: bool, // it is the active widget (button held down on it)
-    clicked: bool, // released on it this frame after the press started there
+    /// Mouse went down on it this frame
+    pressed: bool = false,
+    /// Released on it this frame after the press started there
+    clicked: bool = false,
+    /// Released on it this frame (press may have started somewhere else)
+    released: bool = false,
+    /// Mouse is over this box
+    hover: bool = false,
 };
 
 pub fn Stack(comptime T: type) type {
@@ -451,7 +504,32 @@ pub fn mkWidget(self: *Self, str: []const u8, hash_arg: anytype) *Widget {
     return w;
 }
 
-pub fn prune(self: *Self, arena: Allocator) void {
+pub fn buildEnd(self: *Self, window: [2]f32, frame_duration: f32) []main.Rect {
+    // Layout
+    self.layout(window);
+
+    // Animate
+    self.animate(frame_duration);
+
+    // Set cursor
+    const cursor = if (self.hot_key) |hot|
+        self.widget_cache.get(hot).?.attrs.hover_cursor
+    else
+        .DEFAULT;
+    sapp.setMouseCursor(cursor);
+
+    // Render
+    const instances = self.render(window);
+
+    // Cleanup
+    self.prune();
+    self.reset_stacks();
+    self.hot_key = null;
+
+    return instances;
+}
+
+fn prune(self: *Self) void {
     // Collect stale widgets
     var stale = std.ArrayList(Key).empty;
     var it = self.widget_cache.iterator();
@@ -461,7 +539,7 @@ pub fn prune(self: *Self, arena: Allocator) void {
 
         if (w.last_frame_touched < self.current_frame) {
             self.widget_pool.destroy(w);
-            stale.append(arena, kv.key_ptr.*) catch @panic("OOM");
+            stale.append(self.alloc, kv.key_ptr.*) catch @panic("OOM");
         } else {
             // Delete tree structure for what's left
             w.attrs.parent = null;
@@ -485,7 +563,7 @@ fn root(self: *const Self) ?*Widget {
     return r;
 }
 
-pub fn layout(self: *Self, window: [2]f32) !void {
+fn layout(self: *Self, window: [2]f32) void {
     const root_w = self.root() orelse return;
 
     for (0..2) |ax| {
@@ -499,29 +577,12 @@ pub fn layout(self: *Self, window: [2]f32) !void {
     }
 }
 
-/// - Resolve hot/active state from the box tree
 /// - Advance each widget's `hot_t`/`active_t` toward its target
-/// - Applies the hot widget's `hover_cursor`.
-pub fn updateInteractions(self: *Self, dt: f32) void {
-    const hot: ?*Widget = blk: {
-        if (self.input.mouse_pos) |mp| {
-            if (self.root()) |r| break :blk r.hitTest(mp);
-        }
-        break :blk null;
-    };
-    self.hot_key = if (hot) |h| h.key else null;
-
-    // Press starts an interaction on the hot widget, release ends it.
-    if (self.input.mouse_pressed) self.active_key = self.hot_key;
-    if (self.input.mouse_released) self.active_key = null;
-    self.input.mouse_pressed = false;
-    self.input.mouse_released = false;
-
-    sapp.setMouseCursor(if (hot) |h| h.attrs.hover_cursor else .DEFAULT);
-
+fn animate(self: *Self, dt: f32) void {
     // Frame-rate-independent exponential ease toward the 0/1 targets.
     const hot_k = 1 - @exp(-hot_rate * dt);
     const active_k = 1 - @exp(-active_rate * dt);
+
     var it = self.widget_cache.valueIterator();
     while (it.next()) |v| {
         const w = v.*;
@@ -669,7 +730,7 @@ fn layoutComputePositions(w: *Widget, axis: u1) void {
     var position: f32 = 0;
     var children = w.iterChildren();
     while (children.next()) |c| {
-        c.computed_position[axis] = w.computed_position[axis] + position;
+        c.computed_position[axis] = w.computed_position[axis] + position - w.view_offset.asArray()[axis];
         if (!c.attrs.flags.floating) {
             if (w.attrs.axis == axis) {
                 position += c.computed_size[axis];
@@ -687,7 +748,7 @@ fn layoutComputePositions(w: *Widget, axis: u1) void {
 /// Emit this frame's instances (pre-order DFS over the widget tree).
 /// The returned slice points into `self.instances` and is valid until the
 /// next call.
-pub fn render(self: *Self, window: [2]f32) []main.Rect {
+fn render(self: *Self, window: [2]f32) []main.Rect {
     self.instances.clearRetainingCapacity();
     const r = self.root() orelse return self.instances.items;
     const clip = Rect{ .x = 0, .y = 0, .w = window[0], .h = window[1] };
@@ -823,10 +884,11 @@ pub fn button(ui: *Self, str: []const u8) Signal {
     return w.interact();
 }
 
-pub fn startVertical(ui: *Self) void {
+pub fn startVertical(ui: *Self) *Widget {
     ui.pushNext(.{ .axis = 1 });
     const w = ui.mkWidget("", {});
     ui.push(.{ .parent = w });
+    return w;
 }
 
 pub fn endVertical(ui: *Self) void {
